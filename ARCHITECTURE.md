@@ -1,0 +1,287 @@
+# Neon Genesis Universal Harvester (UH2S) — текущее состояние и архитектура
+
+> Документ описывает фактическое состояние кода на момент анализа (коммит `ab6f371 init`).
+> Назначение — зафиксировать «as is» перед обсуждением развития.
+
+## 1. Назначение проекта
+
+Веб-приложение — «конструктор» для сбора и обработки данных из разнородных источников
+через простой скриптовый интерфейс. Идея близка к «MCP для человека или агента»:
+пользователь (или, в перспективе, LLM-агент) пишет короткий скрипт на собственном DSL,
+а движок выполняет шаги по разным коннекторам (Elastic, SQL, NetBox, GitLab, YouTrack,
+Ollama/llama.cpp и т.д.), связывает их результаты в единый граф зависимостей,
+агрегирует через pandas и при необходимости отправляет уведомления.
+
+Ключевые сущности предметной области:
+- **source** — коннектор к внешней системе (как именно ходить за данными);
+- **script** — сохранённый скрипт-сценарий на DSL;
+- **notifier** — канал уведомлений (Mattermost, Telegram);
+- **llm** — описание языковой модели (раздел в работе);
+- **secret** — зашифрованный секрет (токен/пароль), привязанный к `system:account`.
+
+## 2. Технологический стек
+
+| Слой | Технология |
+|------|-----------|
+| Web/UI | [NiceGUI](https://nicegui.io/) поверх FastAPI/Starlette/Uvicorn |
+| Редактор кода / таблицы | CodeMirror, AG Grid, Mermaid (всё через NiceGUI) |
+| Обработка данных | pandas, numpy, duckdb |
+| БД приложения | SQLite **или** PostgreSQL (выбирается конфигом) |
+| Аутентификация | локальная (bcrypt) + опционально Keycloak (OIDC) |
+| Шифрование конфигов/секретов | `cryptography.fernet` (симметричный master key) |
+| Логирование | `syslog` + stdout (JSON-строки) |
+| Коннекторы | elasticsearch, opensearch-py, psycopg2, pymssql, mysql, dnspython, pynetbox, requests, llama_cpp, pexpect/pyotp (teleport) |
+
+Управления зависимостями нет: **отсутствуют** `requirements.txt`, `pyproject.toml`,
+`Dockerfile`, `README`. Список пакетов восстанавливается только из `import`-ов.
+
+## 3. Структура репозитория
+
+```
+UH2S/
+├── front.py                      # точка входа: CLI-аргументы, маршруты NiceGUI, middleware, запуск
+├── engine.py                     # ОРКЕСТРАТОР выполнения распарсенного скрипта (commands_executor)
+├── base64_json_object_creator.ipynb  # утилита: генерация зашифрованных конфигов запуска
+├── .gitignore
+└── app/
+    ├── engine.py                 # ПАРСЕР DSL + реестр источников/функций + инъекции + run_command
+    ├── interface.py              # вся UI-логика NiceGUI (login_page, main_page, draw_*)
+    ├── db.py                     # доступ к БД: объекты, секреты, пользователи, сети
+    ├── login.py                  # локальная аутентификация (bcrypt)
+    ├── validation.py             # regex-валидация имён/паролей, проверка статуса пользователя, IP-whitelist
+    ├── crptgrphy.py              # encrypt/decrypt через Fernet
+    ├── logging.py                # обёртка над syslog, формат лог-сообщения
+    ├── notify.py                 # отправка уведомлений (Mattermost, Telegram)
+    ├── llm.py                    # каркас LLM-пайплайна (заглушки)
+    ├── parse_errors.py           # разбор ошибок (вспомогательное)
+    └── sources/                  # коннекторы к источникам данных (по файлу на систему)
+        ├── elastic.py / elastic_requests.py / opensearch.py / manticoresearch.py
+        ├── postgresql.py / mysql.py / mssql.py / sqlite3.py / duckdb.py
+        ├── netbox.py / dns.py / gitlab.py / youtrack.py / iris.py / grafana.py / teleport.py
+        ├── pandas.py             # in-memory агрегации/преобразования
+        ├── ollama.py / llama.py  # LLM-инференс
+        ├── universal_harvester.py # запуск вложенного сценария (рекурсия)
+        ├── requests.py           # заготовка
+        └── additional/
+            ├── elastic2python.py # конвертер Elastic-ответов
+            └── flatten.py        # уплощение вложенных структур
+```
+
+## 4. Поток выполнения (runtime)
+
+```
+front.py:main()
+  ├─ парсит CLI-аргументы (зашифрованные db_conf и storage_key, SSL, host/port, keycloak)
+  ├─ decrypt(NICEGUI_STORAGE_KEY)          # crptgrphy.py
+  ├─ db_init(current_state)                # db.py — создаёт таблицы, сидит дефолтного юзера
+  ├─ инициализирует KeycloakOpenID (опц.)
+  ├─ AuthMiddleware                        # редирект на /login для неаутентифицированных
+  └─ регистрирует страницы NiceGUI:
+        /login            -> interface.login_page()
+        /login/callback   -> обмен OIDC code на токены
+        /                 -> interface.main_page()
+        /api/...          -> ЗАКОММЕНТИРОВАН (API-запуск сценариев через curl)
+
+interface.main_page()
+  └─ меню: Settings | Secrets | Objects | AI | Harvester | Logout
+        Harvester -> draw_harvester(): редактор скрипта -> кнопка Execute
+
+draw_harvester() Execute:
+  ├─ command_parser(text)          # app/engine.py — текст -> list команд (dict)
+  └─ commands_executor(commands)   # engine.py (корневой) — выполнение
+```
+
+### Конвейер `commands_executor` (корневой `engine.py`)
+
+1. **DEF/CALC** — собирает переменные (`CALC` пока «pass», не реализован).
+2. **Инъекция переменных** — `process_injections` подставляет переменные в параметры команд.
+3. **GET (резолв)** — для каждой команды `GET`:
+   - получает объект `source`/`script` из БД по имени (`get_actual_object_by_name`);
+   - **проверка ролей**: роль пользователя должна быть в `roles` объекта (или `fullmaster`);
+   - определяет тип источника и функцию из `ENGINE_SOURCES_AND_FUNCTIONS_MAP`;
+   - валидирует наличие и типы параметров;
+   - подгружает секреты (`get_secret`) в `source.json.key.value`.
+4. **Зависимости** — `get_command_dependency` строит граф зависимостей: для SQL-источников
+   парсит `FROM/JOIN`, для pandas/ollama берёт `target_data`, для `APPLY` — имя входных данных.
+5. **Поэтапное выполнение** — цикл по «стадиям»: на каждой выполняются команды, чьи зависимости
+   уже готовы, до тех пор пока есть что выполнять. Сейчас выполнение **последовательное**
+   (блок с `multiprocessing.Pool` закомментирован).
+6. **NOTIFY** — выполняется в конце: резолвит notifier-объект, проверяет права и конфиг
+   уведомлений пользователя, вызывает функцию-отправитель.
+7. **SAVE/SHOW/PRINT** — заглушки (`SHOW`/`PRINT` должен рисовать интерфейс, пока не реализовано).
+
+### Модель данных в рантайме
+
+Сквозь все функции передаётся словарь **`current_state`** (сессия + конфиг: имя/версия приложения,
+master key, зашифрованный `db_conf`, имя пользователя и роли, IP, темы UI, ссылки, keycloak-флаги).
+Почти каждая функция возвращает кортеж-конвенцию:
+
+```python
+(success: bool, message: str, func_name: str, payload)
+```
+
+## 5. Скриптовый DSL
+
+Команды разделяются символом `|`, комментарии — `/* ... */`. Распознанные команды:
+
+| Команда | Назначение | Статус |
+|---------|-----------|--------|
+| `DEF <value> AS <name>` | объявить переменную (ввод параметров) | работает |
+| `CALC a + b AS c` | арифметика над переменными | **парсится, но не исполняется** |
+| `GET source:func(params) AS data` | получить данные из источника | работает (частично, см. §9) |
+| `GET APPLY:<data>(col AS x):[unique] source:func(...) AS d` | построчное применение функции к данным (fan-out + дедуп) | работает |
+| `NOTIFY notifier("текст")` | отправить уведомление | работает |
+| `SAVE` | сохранить данные в storage | заглушка |
+| `SHOW` / `PRINT` | вывод таблиц/графиков в UI | заглушка |
+
+### Подстановка переменных (`process_injections`)
+
+Собственный механизм инъекций (замена встроенного `%()s`), позволяющий вставлять типизированные
+значения в JSON-параметры с указанием типа суффиксом:
+`%(name)s` строка · `%(name)i` int · `%(name)f` float · `%(name)b` bool ·
+`%(name)l`/`%(name)d` list/dict · `%(name)x` сырая вставка без кавычек.
+После инъекций результат проверяется на валидность JSON.
+
+## 6. Хранилище (схема БД)
+
+`db_init` создаёт таблицы (DDL совместим с SQLite и PostgreSQL):
+
+| Таблица | Поля | Назначение |
+|---------|------|-----------|
+| `access_networks` | cidr, allow, comment | IP-whitelist для доступа |
+| `users` | enabled, name, pass(bcrypt), roles(json), json | пользователи и роли |
+| `secrets` | system, account, secret(Fernet), comment | зашифрованные секреты |
+| `objects` | name, roles(json), version, timestamp, type, owner, json | версионируемые source/script/notifier/llm |
+| `executions` | id, owner, timestamp, status, json | журнал запусков (**не используется в коде**) |
+| `storage` | id, owner, execution, json | сохранённые результаты (**не используется**) |
+
+Сидируется: сеть `127.0.0.0/8` (allow) и пользователь `harvester` с ролью `fullmaster`
+(bcrypt-хэш зашит в DDL).
+
+**Версионирование объектов**: новый объект — `version=1`; правки создают новую версию
+(`create_new_object_version`), актуальной считается `MAX(version)`. История доступна в UI
+(Objects → версии → CodeMirror diff вручную).
+
+### Модель ролей
+- `fullmaster` — доступ ко всему;
+- `objects_admin`, `secrets_admin` — разделы UI;
+- произвольные роли на объектах — доступ к конкретным source/notifier при выполнении скрипта.
+
+## 7. Безопасность (как устроено сейчас)
+
+- **Конфиги запуска зашифрованы** Fernet master key; `db_conf` и `storage_key` передаются
+  как зашифрованные строки в CLI. Готовятся через ноутбук `base64_json_object_creator.ipynb`.
+- **Секреты** хранятся в БД в зашифрованном виде, расшифровываются на лету при выполнении.
+- **Аутентификация**: bcrypt-проверка пароля + искусственная задержка 1с против перебора;
+  опционально Keycloak OIDC.
+- **Авторизация**: проверка ролей при доступе к разделам UI и при выполнении `GET`/`NOTIFY`.
+- **Сетевой контроль**: проверка IP клиента против `access_networks` (CIDR-whitelist).
+- **HTTPS**: NiceGUI поднимается с `ssl_certfile`/`ssl_keyfile`.
+
+## 8. Источники данных (коннекторы)
+
+Реестр — `ENGINE_SOURCES_AND_FUNCTIONS_MAP` в `app/engine.py`. Заявлено:
+
+| Источник | Функции | Состояние |
+|----------|---------|-----------|
+| `elastic` (client) | generic_query, aggs_query, pid_hierarchy, pid_siblings | реализован |
+| `elastic_requests` | query, aggs_query, pid_* | реализован |
+| `opensearch` | generic_query, aggs_query | реализован |
+| `manticoresearch` | sql_query | реализован |
+| `postgresql` / `mysql` / `mssql` | query (prep + final) | реализован |
+| `sqlite3_im` / `duckdb_im` | in-memory query над собранными данными | реализован |
+| `netbox` | finder, search_cidr_by_ip | реализован |
+| `dns` | resolve | реализован |
+| `gitlab` | get_namespace_owner, search | реализован |
+| `youtrack` | search_in_project/all_projects/all_articles | реализован |
+| `irp_iris` | get_all_alerts | реализован |
+| `pandas_im` | dynamic_aggr, aggr, time_grouper_aggr, shift, union | реализован |
+| `ollama` / `llama` | chat | реализован |
+| `universal_harvester` | local_scenario (вложенные сценарии) | **ссылается на несуществующие модули** |
+| `teleport`, `grafana`, `python_requests` | — | **закомментированы / заглушки** |
+
+## 9. Текущее состояние и зрелость (важно)
+
+Проект — **рабочий прототип в середине рефакторинга**. Ключевые наблюдения:
+
+1. **Рассинхрон сигнатур функций-источников.** Движок (`app/engine.py:run_command`)
+   вызывает коннектор как `func(parameters, source_object, data_map, current_state)` — 4 аргумента.
+   При этом только часть файлов обновлена под эту сигнатуру:
+   - **4-арг (совместимы):** `duckdb`, `sqlite3`, `pandas`, `netbox`, `elastic_requests.query`;
+   - **6-арг (`data_map, source, query, step, parameters, current_state`) — НЕ запустятся**
+     через текущий движок: `postgresql`, `mysql`, `mssql`, `elastic(client)`, `opensearch`,
+     `gitlab`, `youtrack`, `iris`, `manticoresearch`, `ollama`, `llama`, `universal_harvester` и др.
+
+   То есть большинство коннекторов фактически сломаны под актуальный оркестратор —
+   это след миграции с «старого» движка (со `step`/раздельными `query`/`parameters`) на новый.
+
+2. **`universal_harvester.py`** импортирует `app.database.scenarios` и `app.engine.scenarios`,
+   которых в дереве нет (`app/engine.py` — модуль, не пакет). Это код из другой ветки развития
+   (полноценная подсистема «сценариев» с асинхронным запуском и ожиданием), сюда не перенесённой.
+
+3. **Не реализовано:** `CALC`, `SAVE`, `SHOW`/`PRINT` (вывод результатов в UI — `draw_harvester`
+   после выполнения только показывает `ui.notify`, таблицы данных/переменных не строятся).
+   Разделы **AI** (`draw_ai`) и **Settings** — каркасы без логики; `app/llm.py` — заглушки.
+
+4. **Параллелизм отключён:** `multiprocessing.Pool` закомментирован, выполнение последовательное;
+   декларированные `max_threads`/`threads_limit` и `get_source_threads_pool` не задействованы.
+
+5. **API-эндпоинт** (`/api/scenario/...` для запуска через curl) полностью закомментирован.
+
+6. **Захардкоженные значения в `front.py`:** `MASTER_KEY` и дефолтные зашифрованные `db_conf`/
+   `storage_key` лежат прямо в коде (строки 46, 53, 59).
+
+## 10. Технический долг и риски
+
+### Безопасность (соответствие моим baseline-правилам — критично)
+
+- **[Высокий] SQL-инъекции.** В `app/db.py` запросы строятся f-string-конкатенацией с
+  пользовательским вводом: `get_actual_object_by_name` (`name`, `type`),
+  `get_object_by_name_and_version`, `create_new_object*`, `update_secret*`, `create_secret`,
+  `delete_secret`, `get_all_object_versions`. Имена объектов/секретов/комментарии попадают в SQL
+  без параметризации. *Только* `get_secret` и `get_user_by_username` частично используют
+  плейсхолдеры. **Ремедиация:** перевести все запросы на параметризованные (`?`/`%s`),
+  как уже сделано в `get_secret`. Нарушает MUST «2.2 SQL Injection».
+- **[Высокий] Секреты в коде.** `MASTER_KEY` и зашифрованные конфиги зашиты в `front.py`.
+  Master key компрометирует всё шифрование секретов и конфигов. **Ремедиация:** только
+  runtime-инъекция (env/secret manager), ввод через `pwinput` (закомментированный код это
+  предполагал). Нарушает MUST «2.9 Secrets in Code».
+- **[Средний] Открытый редирект в OIDC callback** (`/login/callback`): `redirect_uri`
+  формируется из `itself_link`, валидация ответа Keycloak минимальна — стоит проверять.
+- **[Средний] Валидация токена.** Keycloak: проверяется userinfo, но не валидируются явно
+  `token_use`/`aud`/issuer на стороне приложения (чеклист п.1).
+- **[Низкий] Логи.** Стоит проверить, что в stdout/syslog не утекают значения секретов при отладке.
+
+### Инженерные
+
+- Нет управления зависимостями, README, контейнеризации, тестов, CI.
+- Дублирование: CSS/тема и блок проверки ролей копируются в каждый `draw_*`.
+- `interface.py` (~980 строк) и `app/engine.py` (~1100 строк) — монолитные, требуют декомпозиции.
+- Конвенция возврата `(bool, str, str, payload)` единообразна, но многословна и не типизирована.
+- Опечатки в именах (`crptgrphy.py`, `nane`, `dynamica_agg_dict`).
+
+## 11. Сильные стороны (что хорошо как фундамент)
+
+- Чёткая декларативная **карта источников/функций** — легко добавлять коннекторы.
+- **Граф зависимостей** между шагами + `APPLY` (fan-out по строкам) — выразительный DSL.
+- Версионирование объектов и разделение source/script/notifier — продуманная объектная модель.
+- Единая модель `current_state`, сквозное логирование, шифрование секретов «из коробки».
+- Идея «in-memory SQL/pandas поверх собранных данных» (duckdb/sqlite3/pandas) — мощный приём
+  для джойнов разнородных источников.
+
+## 12. Возможные направления развития (для обсуждения)
+
+Краткие тезисы — детально обсудим отдельно:
+
+1. **Стабилизация ядра:** унифицировать сигнатуру коннекторов, починить 6-арг источники,
+   закрыть SQL-инъекции, вынести master key из кода. Без этого остальное не имеет смысла.
+2. **Завершить DSL-петлю:** реализовать `SHOW`/`PRINT` (вывод таблиц/графиков в UI), `SAVE`
+   (таблицы `storage`/`executions` уже есть), `CALC`.
+3. **API/MCP-слой:** оживить `/api/...`; представить каждый source как MCP-tool, чтобы
+   внешний агент мог вызывать коннекторы — это прямо отвечает идее «MCP-конструктор».
+4. **AI-режим:** довести `app/llm.py` — агент, который из NL-запроса собирает DSL-скрипт,
+   используя реестр источников как инструменты (function calling).
+5. **Качество:** requirements/pyproject, Dockerfile, тесты на парсер и движок, CI.
+
+---
+*Документ сгенерирован при анализе кодовой базы; правьте по мере развития проекта.*
