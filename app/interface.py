@@ -429,7 +429,7 @@ def main_page(keycloak_openid, current_state):
         logout()
 
     with ui.header(elevated=True) as top_panel:
-        with ui.row():
+        with ui.row().classes('items-center'):
             menu_items = [
                 ("Settings", "Настройки", 'pets' , None),#lambda: draw_users(interface_container, current_state)),
                 ("Secrets", "Хранилище секретов", 'key', lambda: draw_secrets(interface_container, current_state)),
@@ -443,7 +443,16 @@ def main_page(keycloak_openid, current_state):
                 menu_item.on('click', function)
             ui.switch('Light Theme', value=theme == 'light', on_change=toggle_theme).classes('hover-glow')
             #ui.label(f"USER SESSION: {current_state['user_session_id']}").classes('panel-item')
-            
+
+            # индикатор выполнения операций (справа от переключателя темы)
+            with ui.row().classes('items-center'):
+                execution_spinner = ui.spinner(size='lg').props('color=white')
+                execution_spinner.visible = False
+                execution_status = ui.label('').classes('text-sm')
+            # ссылки на индикатор кладём в current_state, чтобы их видели обработчики draw_* (тот же объект)
+            current_state["ui_spinner"] = execution_spinner
+            current_state["ui_status"] = execution_status
+
 
 
     interface_container = ui.card()
@@ -845,6 +854,12 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             codemirror_datavar.value = json.dumps(variables, ensure_ascii=False, indent=2, default=str)
 
         async def button_script_click():
+            spinner = current_state.get("ui_spinner")
+            status = current_state.get("ui_status")
+            if spinner is not None:
+                spinner.visible = True
+            if status is not None:
+                status.set_text("Выполняется…")
             try:
                 parsed_command = command_parser(codemirror_script.value, current_state)
 
@@ -890,6 +905,11 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 error_message = f"fail: {str(e)}"
                 logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
                 ui.notify(error_message, type="negative")
+            finally:
+                if spinner is not None:
+                    spinner.visible = False
+                if status is not None:
+                    status.set_text("")
 
         with interface_container:
             # весь блок harvester — в вертикально-прокручиваемом контейнере.
