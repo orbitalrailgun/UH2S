@@ -25,9 +25,6 @@ def commands_executor(commands:list,current_state:dict):
                 logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                 return False, error_message, currentFuncName(), {}
             command['parameters'] = variables2command_injection_result[3]
-        # прогресс (UI): команды-passthrough (не GET/NOTIFY) считаем выполненными сразу
-        if command.get("_status") == "pending" and command["command"] not in ("GET", "NOTIFY"):
-            command["_status"] = "done"
 
     # получаем данные по источнику данных и функции
     for command in commands:

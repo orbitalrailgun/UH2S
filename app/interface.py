@@ -931,14 +931,18 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 _render_steps()
                 steps_timer = ui.timer(0.25, _render_steps)
 
+                # пре-флайт (валидация) считается пройденным с началом выполнения;
+                # при провале до старта шагов вернём error ниже
+                validation_step["_status"] = "done"
+
                 commands_executor_result = await run.io_bound(commands_executor, parsed_command, current_state)
                 if not commands_executor_result[0]:
                     logger_log(syslog.LOG_ERR, get_log_message(commands_executor_result[1], currentFuncName(), current_state))
-                    # отличаем ошибку валидации (ни один GET/NOTIFY не стартовал) от ошибки на шаге
+                    # ни один GET/NOTIFY не стартовал -> это ошибка валидации/пре-флайта
                     started = any(c.get("_status") in ("running", "done", "error")
                                   for c in parsed_command if c["command"] in ("GET", "NOTIFY"))
-                    validation_step["_status"] = "done" if started else "error"
                     if not started:
+                        validation_step["_status"] = "error"
                         validation_step["_info"] = commands_executor_result[1]
                     card_results.clear()
                     with card_results:
@@ -946,8 +950,11 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     ui.notify(commands_executor_result[1], type="negative")
                     return
 
-                validation_step["_status"] = "done"
                 variables, result_map = commands_executor_result[3]
+                # выполнение успешно: passthrough-шаги (DEF/CALC/SAVE/PRINT/SHOW) -> done
+                for command in parsed_command:
+                    if command["command"] in ("DEF", "CALC", "SAVE", "PRINT", "SHOW") and command.get("_status") == "pending":
+                        command["_status"] = "done"
 
                 # последовательный вывод PRINT/SHOW в порядке их следования в скрипте
                 card_results.clear()
