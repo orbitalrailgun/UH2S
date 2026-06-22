@@ -873,21 +873,24 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 ui.notify(error_message, type="negative")
 
         with interface_container:
-            with ui.tabs().classes('w-full h-full') as tabs:
-                tab_script = ui.tab('Scripts')
-                tab_datavars = ui.tab('Data/Variables')
-            with ui.tab_panels(tabs, value=tab_script).classes('w-full h-full') as harvester_panels:
-                with ui.tab_panel(tab_script):
-                    codemirror_script = ui.codemirror().classes('w-full').style('max-height: 30vh')
-                    button_script = ui.button("Execute").on_click(button_script_click)
-                    # обычный div с overflow:auto жёстко ограничен шириной страницы и
-                    # скроллит по обеим осям (широкие MD-таблицы не вылезают за пределы)
-                    card_results = ui.element('div').classes('w-full').style(
-                        'max-height: 60vh; overflow: auto; padding: 8px; border: 1px solid var(--panel-bg)')
+            # весь блок harvester — в вертикально-прокручиваемом контейнере.
+            # Глобально у body задан overflow:hidden, поэтому скролл задаём здесь,
+            # ограничивая высоту вьюпортом (за вычетом шапки приложения).
+            with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
+                with ui.tabs().classes('w-full') as tabs:
+                    tab_script = ui.tab('Scripts')
+                    tab_datavars = ui.tab('Data/Variables')
+                with ui.tab_panels(tabs, value=tab_script).classes('w-full') as harvester_panels:
+                    with ui.tab_panel(tab_script):
+                        codemirror_script = ui.codemirror().classes('w-full').style('max-height: 30vh')
+                        button_script = ui.button("Execute").on_click(button_script_click)
+                        # вертикальный скролл — у внешнего контейнера; здесь только
+                        # горизонтальный для широких таблиц (чтобы не вылезали за страницу)
+                        card_results = ui.element('div').classes('w-full').style('overflow-x: auto; padding: 8px; border: 1px solid var(--panel-bg)')
 
-                with ui.tab_panel(tab_datavars):
-                    grid_datavars = ui.aggrid({})
-                    codemirror_datavar = ui.codemirror()
+                    with ui.tab_panel(tab_datavars):
+                        grid_datavars = ui.aggrid({}).classes('w-full').style('height: 60vh')
+                        codemirror_datavar = ui.codemirror().classes('w-full')
 
     except BaseException as e:
         error_message = f"fail: {str(e)}"
