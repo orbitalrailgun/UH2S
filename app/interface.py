@@ -139,6 +139,8 @@ STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌"
 def _step_label(command):
     """Человекочитаемая подпись шага для панели прогресса выполнения."""
     kind = command.get("command", "?")
+    if kind == "VALIDATE":
+        return "Валидация скрипта"
     if kind == "GET":
         prefix = "APPLY " if "apply" in command else ""
         return f"{prefix}GET {command.get('source', '?')}:{command.get('function', '?')} → {command.get('data_name', '?')}"
@@ -897,7 +899,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             spinner = current_state.get("ui_spinner")
             status = current_state.get("ui_status")
             steps_timer = None
-            current_state["ui_steps"] = []
+            # нулевой шаг — валидация скрипта (отражает ошибки, найденные до выполнения шагов)
+            validation_step = {"command": "VALIDATE", "_status": "running", "_info": ""}
+            current_state["ui_steps"] = [validation_step]
             _render_steps()
             if spinner is not None:
                 spinner.visible = True
@@ -909,6 +913,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 # вывод ошибок парсинга
                 parse_errors = [(i, c) for i, c in enumerate(parsed_command) if not c.get("parsed", True)]
                 if parse_errors:
+                    validation_step["_status"] = "error"
+                    validation_step["_info"] = "; ".join(
+                        f"#{i + 1} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for i, c in parse_errors)
                     card_results.clear()
                     with card_results:
                         ui.markdown("**Ошибки парсинга:**")
@@ -920,19 +927,26 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 for c in parsed_command:
                     c["_status"] = "pending"
                     c["_info"] = ""
-                current_state["ui_steps"] = parsed_command
+                current_state["ui_steps"] = [validation_step] + parsed_command
                 _render_steps()
                 steps_timer = ui.timer(0.25, _render_steps)
 
                 commands_executor_result = await run.io_bound(commands_executor, parsed_command, current_state)
                 if not commands_executor_result[0]:
                     logger_log(syslog.LOG_ERR, get_log_message(commands_executor_result[1], currentFuncName(), current_state))
+                    # отличаем ошибку валидации (ни один GET/NOTIFY не стартовал) от ошибки на шаге
+                    started = any(c.get("_status") in ("running", "done", "error")
+                                  for c in parsed_command if c["command"] in ("GET", "NOTIFY"))
+                    validation_step["_status"] = "done" if started else "error"
+                    if not started:
+                        validation_step["_info"] = commands_executor_result[1]
                     card_results.clear()
                     with card_results:
                         ui.markdown(f"**Ошибка выполнения:** {commands_executor_result[1]}")
                     ui.notify(commands_executor_result[1], type="negative")
                     return
 
+                validation_step["_status"] = "done"
                 variables, result_map = commands_executor_result[3]
 
                 # последовательный вывод PRINT/SHOW в порядке их следования в скрипте
@@ -978,10 +992,13 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     tab_datavars = ui.tab('Data/Variables')
                 with ui.tab_panels(tabs, value=tab_script).classes('w-full') as harvester_panels:
                     with ui.tab_panel(tab_script):
-                        codemirror_script = ui.codemirror().classes('w-full').style('max-height: 30vh')
+                        # сворачиваемый блок скрипта — освобождает место под результаты
+                        with ui.expansion('Скрипт', icon='code', value=True).classes('w-full'):
+                            codemirror_script = ui.codemirror().classes('w-full').style('max-height: 30vh')
                         button_script = ui.button("Execute").on_click(button_script_click)
-                        # панель прогресса шагов (вариант A): список команд со статусами
-                        steps_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
+                        # сворачиваемый блок прогресса шагов (вариант A): список команд со статусами
+                        with ui.expansion('Шаги выполнения', icon='list', value=True).classes('w-full'):
+                            steps_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
                         # вертикальный скролл — у внешнего контейнера; здесь только
                         # горизонтальный для широких таблиц (чтобы не вылезали за страницу)
                         card_results = ui.element('div').classes('w-full').style('overflow-x: auto; padding: 8px; border: 1px solid var(--panel-bg)')
