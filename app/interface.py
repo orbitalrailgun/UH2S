@@ -73,12 +73,17 @@ def records_to_aggrid_options(data, aggrid_theme="ag-theme-balham-dark", max_row
                              for c in columns})
         else:
             row_data.append({"value": _cell_to_str(row)})
-    column_defs = [{"headerName": str(c), "field": str(c), "filter": True, "sortable": True, "resizable": True}
-                   for c in columns] or [{"headerName": "value", "field": "value", "filter": True, "sortable": True}]
+    column_defs = [{"headerName": str(c), "field": str(c), "filter": True, "sortable": True,
+                    "resizable": True, "minWidth": 160, "tooltipField": str(c)}
+                   for c in columns] or [{"headerName": "value", "field": "value", "filter": True, "sortable": True, "minWidth": 160}]
     return {
         "columnDefs": column_defs,
         "rowData": row_data,
-        "defaultColDef": {"filter": True, "sortable": True, "resizable": True},
+        # minWidth не даёт колонкам схлопнуться -> при множестве полей включается горизонтальный скролл,
+        # заголовки и значения остаются читаемыми; тултипы показывают полное значение ячейки
+        "defaultColDef": {"filter": True, "sortable": True, "resizable": True, "minWidth": 160},
+        "suppressFieldDotNotation": True,
+        "enableBrowserTooltips": True,
         "pagination": True,
         "paginationPageSize": 20,
         "enableCellTextSelection": True,
