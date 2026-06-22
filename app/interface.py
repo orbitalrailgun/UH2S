@@ -92,7 +92,13 @@ def records_to_aggrid_options(data, aggrid_theme="ag-theme-balham-dark", max_row
 
 
 def render_plot_png_b64(data, params):
-    """Построить график matplotlib по данным и optional_params, вернуть base64 PNG."""
+    """Построить график matplotlib по данным и optional_params.
+
+    Возвращает dict {b64, css_w, css_h}: PNG рендерится с высоким dpi (резкость),
+    а css_w/css_h — «логический» размер для отображения (figsize в дюймах × 96px),
+    чтобы браузер изображение уменьшал, а не растягивал (чётко на retina/HiDPI).
+
+    optional_params: kind, x, y, title, figsize=[w_in,h_in], dpi (по умолчанию 150)."""
     import io
     import base64
     import matplotlib
@@ -100,8 +106,14 @@ def render_plot_png_b64(data, params):
     import matplotlib.pyplot as plt
     import pandas
 
-    dataframe = pandas.DataFrame(data)
     figsize = params.get("figsize", [10, 5])
+    try:
+        dpi = int(params.get("dpi", 150))
+    except (TypeError, ValueError):
+        dpi = 150
+    dpi = max(50, min(dpi, 400))
+
+    dataframe = pandas.DataFrame(data)
     fig, ax = plt.subplots(figsize=(figsize[0], figsize[1]))
     plot_kwargs = {"kind": params.get("kind", "line"), "ax": ax}
     if params.get("x") is not None:
@@ -116,9 +128,10 @@ def render_plot_png_b64(data, params):
     except Exception:
         pass
     buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", bbox_inches="tight")
+    fig.savefig(buffer, format="png", bbox_inches="tight", dpi=dpi)
     plt.close(fig)
-    return base64.b64encode(buffer.getvalue()).decode()
+    b64 = base64.b64encode(buffer.getvalue()).decode()
+    return {"b64": b64, "css_w": int(figsize[0] * 96), "css_h": int(figsize[1] * 96)}
 
 
 THEMES = {
@@ -805,8 +818,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         ui.markdown("*SHOW: optional_params не является валидным JSON*")
                         return
                 try:
-                    b64 = render_plot_png_b64(data, params)
-                    ui.image(f"data:image/png;base64,{b64}")
+                    plot = render_plot_png_b64(data, params)
+                    ui.image(f"data:image/png;base64,{plot['b64']}").style(
+                        f"width: {plot['css_w']}px; max-width: 100%; height: auto")
                 except BaseException as plot_error:
                     ui.markdown(f"*SHOW matplotlib error: {str(plot_error)}*")
             else:
