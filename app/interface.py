@@ -1013,10 +1013,10 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     tab_datavars = ui.tab('Data/Variables')
                 with ui.tab_panels(tabs, value=tab_script).classes('w-full') as harvester_panels:
                     with ui.tab_panel(tab_script):
-                        # сворачиваемый блок скрипта — освобождает место под результаты
+                        # сворачиваемый блок скрипта (вместе с кнопкой Execute) — освобождает место под результаты
                         with ui.expansion('Скрипт', icon='code', value=True).classes('w-full'):
                             codemirror_script = ui.codemirror().classes('w-full').style('max-height: 30vh')
-                        button_script = ui.button("Execute").on_click(button_script_click)
+                            button_script = ui.button("Execute").on_click(button_script_click)
                         # сворачиваемый блок прогресса шагов (вариант A): список команд со статусами
                         with ui.expansion('Шаги выполнения', icon='list', value=True).classes('w-full'):
                             steps_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
