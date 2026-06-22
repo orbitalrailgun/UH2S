@@ -39,7 +39,9 @@ def mod_iris_alert_history(node):
     new_node["modification_history"].append(target_node)
     return new_node
     
-def execute_function_iris_get_alerts(data_map, source, query, step, parameters, current_state):#, per_page, source_start_date, source_end_date, asset_name):
+def execute_function_iris_get_alerts(parameters, source_object, data_map, current_state):#, per_page, source_start_date, source_end_date, asset_name):
+    source = source_object
+    query = parameters
     import requests
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))

@@ -57,7 +57,10 @@ def grafana_exported_data_to_dataframe(grafana_data, current_state):
     logger_log(syslog.LOG_DEBUG, get_log_message(f"returned {len(output)} lines", currentFuncName(), current_state))       
     return output
 
-def execute_grafana_export_table_requests(data_map, source, query, step, parameters, current_state):
+def execute_grafana_export_table_requests(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
+    step = None  # step не передаётся новым движком
     import requests
     logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
     try:

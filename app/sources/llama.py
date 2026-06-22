@@ -2,7 +2,9 @@ import json
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
 
-def execute_llama_chat_query(data_map, source, query, step, parameters, current_state):
+def execute_llama_chat_query(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     """Функция-интеграция с llama для взаимодействия с локальной LLM в файле .gguf"""
     from llama_cpp import Llama
     import pandas

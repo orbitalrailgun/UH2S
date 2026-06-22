@@ -3,7 +3,9 @@ import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 # механизм разыменования dns-запросов
 
-def execute_dns_resolve(data_map, source, query, step, parameters, current_state):
+def execute_dns_resolve(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     import dns.resolver
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))

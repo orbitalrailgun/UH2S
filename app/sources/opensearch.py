@@ -4,7 +4,9 @@ import app.sources.additional.elastic2python as elastic2python
 
 
 # execution_function
-def execute_opensearch_query(data_map, source, query, step, parameters, current_state):
+def execute_opensearch_query(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     from opensearchpy import OpenSearch
     # создаём объект подключения к эластику
     try:
@@ -60,7 +62,9 @@ def execute_opensearch_query(data_map, source, query, step, parameters, current_
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
     
-def execute_opensearch_aggs(data_map, source, query, step, parameters, current_state):
+def execute_opensearch_aggs(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     from opensearchpy import OpenSearch
     # создаём объект подключения к эластику
     try:

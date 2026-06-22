@@ -44,8 +44,10 @@ def execute_elastic_query(parameters, source_object, data_map, current_state):
         return False, error_message, currentFuncName(), []
 
 
-def execute_elastic_aggs(data_map, source, query, step, parameters, current_state):
-    try:   
+def execute_elastic_aggs(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
+    try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
         data_taxi_aggs_requests_result = elastic2python.data_taxi_aggs_requests(
             query["url"], 
@@ -72,11 +74,13 @@ def execute_elastic_aggs(data_map, source, query, step, parameters, current_stat
         return False, error_message, currentFuncName(), []
     
 # функция построения цепочки иерархии для выбранного процесса pid
-def execute_function_linux_pid_hierarchy_elastic_requests(data_map, source, query, step, parameters, current_state):
-    try: 
+def execute_function_linux_pid_hierarchy_elastic_requests(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
+    try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
         current_data = []
-        
+
         # получаем данные по целевому pid
         try:
             data_taxi_requests_result = elastic2python.data_taxi_requests(
@@ -225,8 +229,10 @@ def execute_function_linux_pid_hierarchy_elastic_requests(data_map, source, quer
         return False, error_message, currentFuncName(), []
     
 # функция получения сиблингов для выбранного процесса pid
-def execute_function_linux_pid_siblings_elastic_requests(data_map, source, query, step, parameters, current_state):
-    try: 
+def execute_function_linux_pid_siblings_elastic_requests(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
+    try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
         current_data = []
         # получаем данные по целевому pid

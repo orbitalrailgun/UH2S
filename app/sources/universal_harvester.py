@@ -3,7 +3,10 @@ import json
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
 
-def execute_local_scenario(data_map, source, query, step, parameters, current_state):
+def execute_local_scenario(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
+    step = None  # step не передаётся новым движком
     from app.database.scenarios import db_get_scenario_by_name
     from app.engine.scenarios import run_scenario, waiting_for_scenario_execution, get_scenarios_data_from_storage
     # поскольку мы используем inmemory, то клиента к системе проверять не нужно

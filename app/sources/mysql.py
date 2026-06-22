@@ -1,7 +1,9 @@
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
 
-def execute_mysql(data_map, source, query, step, parameters, current_state):
+def execute_mysql(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     import mysql.connector
     import pandas
     logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))

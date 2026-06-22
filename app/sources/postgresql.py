@@ -1,7 +1,9 @@
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
-def execute_postgresql(data_map, source, query, step, parameters, current_state):
+def execute_postgresql(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     import psycopg2
     import pandas
     logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))

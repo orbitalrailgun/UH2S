@@ -72,8 +72,11 @@ def teleport_get_hosts(current_state):
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return []
 
-def execute_function_get_hosts_teleport(data_map, source, query, step, parameters, current_state):
-    try: 
+def execute_function_get_hosts_teleport(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
+    step = None  # step не передаётся новым движком
+    try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
 
         current_data = []

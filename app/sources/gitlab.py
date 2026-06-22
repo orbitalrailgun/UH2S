@@ -2,7 +2,9 @@ import datetime
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
-def execute_gitlab_namespace_owner_request(data_map, source, query, step, parameters, current_state):
+def execute_gitlab_namespace_owner_request(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     import requests
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
@@ -46,7 +48,9 @@ def execute_gitlab_namespace_owner_request(data_map, source, query, step, parame
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
 
-def execute_gitlab_search_request(data_map, source, query, step, parameters, current_state):
+def execute_gitlab_search_request(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     import requests
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))

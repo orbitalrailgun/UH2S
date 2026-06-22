@@ -44,7 +44,9 @@ def fields_list_to_youtrack_fields(fields: list, separator: str):
                 output = f"{output}{separator}{fields_dict_to_youtrack_fields(field, separator)}"
     return output
 
-def execute_youtrack_project_finder(data_map, source, query, step, parameters, current_state):
+def execute_youtrack_project_finder(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     import requests
     logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
     try:
@@ -135,7 +137,9 @@ def execute_youtrack_project_finder(data_map, source, query, step, parameters, c
         return False, error_message, currentFuncName(), []
     
 
-def execute_youtrack_all_project_issue_finder(data_map, source, query, step, parameters, current_state):
+def execute_youtrack_all_project_issue_finder(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     import requests
     logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
     try:
@@ -198,7 +202,9 @@ def execute_youtrack_all_project_issue_finder(data_map, source, query, step, par
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
 
-def execute_youtrack_all_articles_finder(data_map, source, query, step, parameters, current_state):
+def execute_youtrack_all_articles_finder(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     import requests
     logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
     try:

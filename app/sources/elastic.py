@@ -3,7 +3,9 @@ from app.logging import currentTimestamp, get_log_message, logger_log, currentFu
 import app.sources.additional.elastic2python as elastic2python
 
 # execution_function
-def execute_elasctic_query_via_client(data_map, source, query, step, parameters, current_state):
+def execute_elasctic_query_via_client(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     from elasticsearch import Elasticsearch
     # создаём объект подключения к эластику
     try:
@@ -69,7 +71,9 @@ def execute_elasctic_query_via_client(data_map, source, query, step, parameters,
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
     
-def execute_elasctic_aggs_via_client(data_map, source, query, step, parameters, current_state):
+def execute_elasctic_aggs_via_client(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     from elasticsearch import Elasticsearch
     # создаём объект подключения к эластику
     try:
@@ -132,7 +136,9 @@ def execute_elasctic_aggs_via_client(data_map, source, query, step, parameters, 
         return False, error_message, currentFuncName(), []
     
 # функция построения цепочки иерархии для выбранного процесса pid
-def execute_function_linux_pid_hierarchy_elastic(data_map, source, query, step, parameters, current_state):
+def execute_function_linux_pid_hierarchy_elastic(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
 #(source_list, step, current_step, current_input_params):
     from elasticsearch import Elasticsearch
     # создаём объект подключения к эластику
@@ -313,7 +319,9 @@ def execute_function_linux_pid_hierarchy_elastic(data_map, source, query, step, 
         return False, error_message, currentFuncName(), []
     
 # функция получения сиблингов для выбранного процесса pid
-def execute_function_linux_pid_siblings_elastic(data_map, source, query, step, parameters, current_state):
+def execute_function_linux_pid_siblings_elastic(parameters, source_object, data_map, current_state):
+    source = source_object
+    query = parameters
     from elasticsearch import Elasticsearch
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
