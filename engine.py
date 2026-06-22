@@ -25,7 +25,10 @@ def commands_executor(commands:list,current_state:dict):
                 logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                 return False, error_message, currentFuncName(), {}
             command['parameters'] = variables2command_injection_result[3]
-    
+        # прогресс (UI): команды-passthrough (не GET/NOTIFY) считаем выполненными сразу
+        if command.get("_status") == "pending" and command["command"] not in ("GET", "NOTIFY"):
+            command["_status"] = "done"
+
     # получаем данные по источнику данных и функции
     for command in commands:
         if command["command"] == "GET":
@@ -149,13 +152,20 @@ def commands_executor(commands:list,current_state:dict):
             current_data_map = {key: result_map[key][3] for key in executed_command["dependency"]}
             results = {}
             print(executed_command)
+            if executed_command.get("_status") == "pending":
+                executed_command["_status"] = "running"
             if "apply" in executed_command:
                 results[executed_command["data_name"]] = run_apply_command(executed_command, current_data_map, current_state)
             else:
                 results[executed_command["data_name"]] = run_command(executed_command, current_data_map, current_state)
-                
+
             for r in results.keys():
                 result_map[r] = results[r]
+            # прогресс (UI): статус шага по результату
+            if "_status" in executed_command:
+                step_result = results[executed_command["data_name"]]
+                executed_command["_status"] = "done" if step_result[0] else "error"
+                executed_command["_info"] = step_result[1]
 
 
     # тут есть данные
@@ -169,6 +179,8 @@ def commands_executor(commands:list,current_state:dict):
     # Уведомления делаются в последнюю очередь
     for command in commands:
         if command["command"] == "NOTIFY":
+            if command.get("_status") == "pending":
+                command["_status"] = "running"
             # {
             #     "command": "NOTIFY",
             #     "line": "mattermost(\"helloworld\")",
@@ -236,6 +248,8 @@ def commands_executor(commands:list,current_state:dict):
 
             # исполняем нотификацию
             notify_result = command["notifier_function"](command["notifier_object"]["json"], command["notifier_user_conf"], command["message"], current_state)
+            if "_status" in command:
+                command["_status"] = "done"
             
             
 

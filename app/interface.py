@@ -134,6 +134,27 @@ def render_plot_png_b64(data, params):
     return {"b64": b64, "css_w": int(figsize[0] * 96), "css_h": int(figsize[1] * 96)}
 
 
+STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌"}
+
+def _step_label(command):
+    """Человекочитаемая подпись шага для панели прогресса выполнения."""
+    kind = command.get("command", "?")
+    if kind == "GET":
+        prefix = "APPLY " if "apply" in command else ""
+        return f"{prefix}GET {command.get('source', '?')}:{command.get('function', '?')} → {command.get('data_name', '?')}"
+    if kind == "DEF":
+        return f"DEF {command.get('variable_name', '?')}"
+    if kind == "PRINT":
+        return f"PRINT {command.get('print_arg', '')}"
+    if kind == "SHOW":
+        return f"SHOW {command.get('show_table', '?')} ({command.get('show_type', '?')})"
+    if kind == "NOTIFY":
+        return f"NOTIFY {command.get('notifier', '?')}"
+    if kind == "CALC":
+        return f"CALC {command.get('result_name', '?')}"
+    return kind
+
+
 THEMES = {
     'dark': {
         'bg': '#1F2937',
@@ -854,9 +875,30 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             grid_datavars.update()
             codemirror_datavar.value = json.dumps(variables, ensure_ascii=False, indent=2, default=str)
 
+        def _render_steps():
+            steps = current_state.get("ui_steps") or []
+            steps_panel.clear()
+            if not steps:
+                return
+            with steps_panel:
+                for command in steps:
+                    state = command.get("_status", "pending")
+                    info = command.get("_info", "")
+                    suffix = f" — {info}" if (state in ("done", "error") and info) else ""
+                    with ui.row().classes('items-center gap-2 no-wrap'):
+                        if state == "running":
+                            ui.spinner(size='sm')
+                        else:
+                            ui.label(STEP_ICONS.get(state, "·"))
+                        ui.label(f"{_step_label(command)}{suffix}").classes('text-sm').style(
+                            "font-family: 'Orbitron', 'Roboto', sans-serif;")
+
         async def button_script_click():
             spinner = current_state.get("ui_spinner")
             status = current_state.get("ui_status")
+            steps_timer = None
+            current_state["ui_steps"] = []
+            _render_steps()
             if spinner is not None:
                 spinner.visible = True
             if status is not None:
@@ -873,6 +915,14 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         for i, c in parse_errors:
                             ui.markdown(f"- команда {i + 1} (`{c.get('command', '?')}`): {c.get('parsed_comment', '?')}")
                     return
+
+                # прогресс шагов: инициализация статусов + таймер живого опроса (поток пишет статусы)
+                for c in parsed_command:
+                    c["_status"] = "pending"
+                    c["_info"] = ""
+                current_state["ui_steps"] = parsed_command
+                _render_steps()
+                steps_timer = ui.timer(0.25, _render_steps)
 
                 commands_executor_result = await run.io_bound(commands_executor, parsed_command, current_state)
                 if not commands_executor_result[0]:
@@ -907,6 +957,12 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
                 ui.notify(error_message, type="negative")
             finally:
+                if steps_timer is not None:
+                    try:
+                        steps_timer.cancel()
+                    except Exception:
+                        steps_timer.active = False
+                _render_steps()
                 if spinner is not None:
                     spinner.visible = False
                 if status is not None:
@@ -924,6 +980,8 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     with ui.tab_panel(tab_script):
                         codemirror_script = ui.codemirror().classes('w-full').style('max-height: 30vh')
                         button_script = ui.button("Execute").on_click(button_script_click)
+                        # панель прогресса шагов (вариант A): список команд со статусами
+                        steps_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
                         # вертикальный скролл — у внешнего контейнера; здесь только
                         # горизонтальный для широких таблиц (чтобы не вылезали за страницу)
                         card_results = ui.element('div').classes('w-full').style('overflow-x: auto; padding: 8px; border: 1px solid var(--panel-bg)')
