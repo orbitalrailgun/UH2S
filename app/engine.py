@@ -987,19 +987,37 @@ def command_parser(text:str, current_state:dict):
                     command["parsed"] = False
                     command["parsed_comment"] = 'PRINT format: PRINT(name) | PRINT("text")'
             case "SAVE":
-                # SAVE(table_name, format) -> скачивание файла: xlsx | csv_in_zip | json_in_zip
-                match = re.search(r"^\((.*)\)$", command["line"].strip(), flags=re.DOTALL)
-                if match:
+                # SAVE(table | [t1,t2,...], format) [AS filename] -> скачивание файла
+                #   xlsx          -> один файл, лист на таблицу
+                #   csv_in_zip    -> zip с CSV-файлами по таблицам
+                #   json_in_zip   -> zip с JSON-файлами по таблицам
+                save_line = command["line"].strip()
+                command["save_filename"] = None
+                as_match = re.search(r'^(.*\))\s+(?:as|AS|As|aS)\s+(.+?)\s*$', save_line, flags=re.DOTALL)
+                if as_match:
+                    save_body = as_match.group(1).strip()
+                    command["save_filename"] = as_match.group(2).strip().strip('"\'')
+                else:
+                    save_body = save_line
+                match = re.search(r"^\((.*)\)$", save_body, flags=re.DOTALL)
+                if not match:
+                    command["parsed"] = False
+                    command["parsed_comment"] = "SAVE format: SAVE(table | [t1,t2,...], format) [AS filename]"
+                else:
                     save_args = [a.strip() for a in split_top_level(match.group(1), ',')]
                     if len(save_args) < 2 or save_args[0] == "":
                         command["parsed"] = False
-                        command["parsed_comment"] = "SAVE format: SAVE(table_name, format)"
+                        command["parsed_comment"] = "SAVE format: SAVE(table | [t1,t2,...], format) [AS filename]"
                     else:
-                        command["save_table"] = save_args[0]
+                        table_spec = save_args[0]
+                        if table_spec.startswith('[') and table_spec.endswith(']'):
+                            command["save_tables"] = [t.strip() for t in split_top_level(table_spec[1:-1], ',') if t.strip() != ""]
+                        else:
+                            command["save_tables"] = [table_spec]
                         command["save_format"] = save_args[1].strip('"\'')
-                else:
-                    command["parsed"] = False
-                    command["parsed_comment"] = "SAVE format: SAVE(table_name, format)"
+                        if not command["save_tables"]:
+                            command["parsed"] = False
+                            command["parsed_comment"] = "SAVE: empty table list"
             case "SHOW":
                 # SHOW(table_name, type, [optional_params])
                 #   type=table       -> интерактивная таблица (aggrid: фильтры/сортировки)

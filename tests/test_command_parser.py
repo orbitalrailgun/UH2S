@@ -232,8 +232,9 @@ class TestSave(unittest.TestCase):
         c = one("SAVE(alerts, xlsx)")
         self.assertEqual(c["command"], "SAVE")
         self.assertTrue(c["parsed"])
-        self.assertEqual(c["save_table"], "alerts")
+        self.assertEqual(c["save_tables"], ["alerts"])
         self.assertEqual(c["save_format"], "xlsx")
+        self.assertIsNone(c["save_filename"])
 
     def test_save_csv_in_zip(self):
         c = one("SAVE(by_sev, csv_in_zip)")
@@ -247,6 +248,29 @@ class TestSave(unittest.TestCase):
 
     def test_save_missing_format(self):
         c = one("SAVE(alerts)")
+        self.assertFalse(c["parsed"])
+
+    def test_save_group(self):
+        c = one("SAVE([alerts, by_sev, hosts], xlsx)")
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["save_tables"], ["alerts", "by_sev", "hosts"])
+        self.assertEqual(c["save_format"], "xlsx")
+
+    def test_save_with_as(self):
+        c = one("SAVE(alerts, xlsx) AS report")
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["save_tables"], ["alerts"])
+        self.assertEqual(c["save_filename"], "report")
+
+    def test_save_group_with_as(self):
+        c = one('SAVE([a, b], csv_in_zip) AS "my data"')
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["save_tables"], ["a", "b"])
+        self.assertEqual(c["save_format"], "csv_in_zip")
+        self.assertEqual(c["save_filename"], "my data")
+
+    def test_save_empty_list(self):
+        c = one("SAVE([], xlsx)")
         self.assertFalse(c["parsed"])
 
 

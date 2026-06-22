@@ -153,38 +153,79 @@ def _normalize_for_tabular(data):
     return rows
 
 
-def records_to_download(data, fmt, table_name):
-    """Подготовить (content_bytes, filename, media_type) для скачивания таблицы.
+def _safe_sheet_name(name, used):
+    """Имя листа Excel: <=31 симв., без \\ / ? * [ ] :, не пустое, уникальное (без учёта регистра)."""
+    import re
+    s = re.sub(r'[\\/?*\[\]:]', '_', str(name)).strip().strip("'")
+    if not s:
+        s = "sheet"
+    s = s[:31]
+    base = s
+    i = 1
+    while s.lower() in used:
+        suffix = f"_{i}"
+        s = base[:31 - len(suffix)] + suffix
+        i += 1
+    used.add(s.lower())
+    return s
 
-    Форматы: xlsx | csv_in_zip | json_in_zip."""
+
+def _unique_zip_name(stem, ext, used):
+    """Уникальное имя файла внутри zip."""
+    name = f"{stem}{ext}"
+    i = 1
+    while name.lower() in used:
+        name = f"{stem}_{i}{ext}"
+        i += 1
+    used.add(name.lower())
+    return name
+
+
+def records_to_download(tables_data, fmt, base_name):
+    """Подготовить (content_bytes, filename, media_type) для скачивания одной или нескольких таблиц.
+
+    tables_data — dict {table_name: list_of_dicts} (порядок сохраняется).
+    Форматы: xlsx (лист на таблицу) | csv_in_zip | json_in_zip (файл на таблицу в zip)."""
     import io
     fmt = (fmt or "").strip().strip('"\'').lower()
-    name = _safe_filename(table_name)
+    base = _safe_filename(base_name)
+    for ext in (".xlsx", ".csv.zip", ".json.zip", ".zip", ".csv", ".json"):
+        if base.lower().endswith(ext):
+            base = base[:-len(ext)]
+            break
+    base = base or "export"
 
     if fmt == "xlsx":
         import pandas
         buffer = io.BytesIO()
+        used = set()
         with pandas.ExcelWriter(buffer, engine="openpyxl") as writer:
-            pandas.DataFrame(_normalize_for_tabular(data)).to_excel(writer, index=False, sheet_name="data")
-        return (buffer.getvalue(), f"{name}.xlsx",
+            for table_name, data in tables_data.items():
+                sheet = _safe_sheet_name(table_name, used)
+                pandas.DataFrame(_normalize_for_tabular(data)).to_excel(writer, index=False, sheet_name=sheet)
+        return (buffer.getvalue(), f"{base}.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     if fmt == "csv_in_zip":
         import zipfile
         import pandas
-        csv_bytes = pandas.DataFrame(_normalize_for_tabular(data)).to_csv(index=False).encode("utf-8-sig")
         zip_buffer = io.BytesIO()
+        used = set()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(f"{name}.csv", csv_bytes)
-        return zip_buffer.getvalue(), f"{name}.csv.zip", "application/zip"
+            for table_name, data in tables_data.items():
+                fname = _unique_zip_name(_safe_filename(table_name), ".csv", used)
+                zf.writestr(fname, pandas.DataFrame(_normalize_for_tabular(data)).to_csv(index=False).encode("utf-8-sig"))
+        return zip_buffer.getvalue(), f"{base}.csv.zip", "application/zip"
 
     if fmt == "json_in_zip":
         import zipfile
-        json_bytes = json.dumps(data, ensure_ascii=False, indent=2, default=str).encode("utf-8")
         zip_buffer = io.BytesIO()
+        used = set()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(f"{name}.json", json_bytes)
-        return zip_buffer.getvalue(), f"{name}.json.zip", "application/zip"
+            for table_name, data in tables_data.items():
+                fname = _unique_zip_name(_safe_filename(table_name), ".json", used)
+                zf.writestr(fname, json.dumps(data, ensure_ascii=False, indent=2, default=str).encode("utf-8"))
+        return zip_buffer.getvalue(), f"{base}.json.zip", "application/zip"
 
     raise ValueError(f"unknown format '{fmt}' (xlsx | csv_in_zip | json_in_zip)")
 
@@ -206,7 +247,9 @@ def _step_label(command):
     if kind == "SHOW":
         return f"SHOW {command.get('show_table', '?')} ({command.get('show_type', '?')})"
     if kind == "SAVE":
-        return f"SAVE {command.get('save_table', '?')} ({command.get('save_format', '?')})"
+        tables = ", ".join(command.get("save_tables", []))
+        as_part = f" AS {command['save_filename']}" if command.get("save_filename") else ""
+        return f"SAVE [{tables}] ({command.get('save_format', '?')}){as_part}"
     if kind == "NOTIFY":
         return f"NOTIFY {command.get('notifier', '?')}"
     if kind == "CALC":
@@ -917,21 +960,33 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 ui.markdown(f"*SHOW: неизвестный тип «{show_type}» (table | matplotlib)*")
 
         def _render_save(command, variables, result_map):
-            table = (command.get("save_table") or "").strip()
+            tables = command.get("save_tables") or []
             fmt = (command.get("save_format") or "").strip().strip('"\'').lower()
+            save_filename = command.get("save_filename")
 
-            data = None
-            if table in result_map and result_map[table][0]:
-                data = result_map[table][3]
-            elif isinstance(variables.get(table), list):
-                data = variables[table]
+            # собираем данные по каждой таблице (с сохранением порядка)
+            tables_data = {}
+            missing = []
+            for table in tables:
+                if table in result_map and result_map[table][0]:
+                    tables_data[table] = result_map[table][3]
+                elif isinstance(variables.get(table), list):
+                    tables_data[table] = variables[table]
+                else:
+                    missing.append(table)
 
-            if data is None:
-                ui.markdown(f"*SAVE: нет табличных данных «{table}»*")
+            if missing:
+                ui.markdown(f"*SAVE: нет табличных данных: {', '.join(missing)}*")
+                return
+            if not tables_data:
+                ui.markdown("*SAVE: не указаны таблицы*")
                 return
 
+            # базовое имя файла: AS filename -> имя таблицы (если одна) -> 'export'
+            base_name = save_filename or (tables[0] if len(tables) == 1 else "export")
+
             try:
-                content, filename, media_type = records_to_download(data, fmt, table)
+                content, filename, media_type = records_to_download(tables_data, fmt, base_name)
             except BaseException as save_error:
                 ui.markdown(f"*SAVE error: {str(save_error)}*")
                 return
@@ -940,7 +995,8 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 ui.download(content, filename, media_type)
             except TypeError:
                 ui.download(content, filename)
-            ui.markdown(f"💾 Скачивание **{filename}** ({len(data)} строк)")
+            total = sum(len(d) for d in tables_data.values())
+            ui.markdown(f"💾 Скачивание **{filename}** ({len(tables_data)} табл., {total} строк)")
 
         def _update_datavars(variables, result_map):
             rows = []
