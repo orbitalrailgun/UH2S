@@ -880,7 +880,10 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 with ui.tab_panel(tab_script):
                     codemirror_script = ui.codemirror().classes('w-full').style('max-height: 30vh')
                     button_script = ui.button("Execute").on_click(button_script_click)
-                    card_results = ui.scroll_area().classes('w-full').style('height: 60vh; border: 1px solid var(--panel-bg)')
+                    # обычный div с overflow:auto жёстко ограничен шириной страницы и
+                    # скроллит по обеим осям (широкие MD-таблицы не вылезают за пределы)
+                    card_results = ui.element('div').classes('w-full').style(
+                        'max-height: 60vh; overflow: auto; padding: 8px; border: 1px solid var(--panel-bg)')
 
                 with ui.tab_panel(tab_datavars):
                     grid_datavars = ui.aggrid({})
