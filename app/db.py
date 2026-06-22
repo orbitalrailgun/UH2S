@@ -496,6 +496,7 @@ def update_secret_secret_comment(system, account, comment, secret, current_state
 def create_secret(system, account, comment, secret, current_state):
     try:
         #сначала шифруем секрет
+        logger_log(syslog.LOG_INFO, get_log_message(f"Create secret start: {system}:{account}", currentFuncName(), current_state))
         encrypt_result = encrypt(secret, current_state)
         if encrypt_result[0] == False:
             logger_log(syslog.LOG_ERR, get_log_message(encrypt_result[1], currentFuncName(), current_state))

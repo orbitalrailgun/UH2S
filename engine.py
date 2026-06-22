@@ -75,6 +75,7 @@ def commands_executor(commands:list,current_state:dict):
                     logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                     return False, error_message, currentFuncName(), commands
                 if type(command["function_parameters"][parameter]) != type(command["parameters"][parameter]):
+                    logger_log(syslog.LOG_INFO, get_log_message(f"parameter {command["function_parameters"][parameter]} type {type(command["function_parameters"][parameter])} check parameter {command["parameters"][parameter]} type {type(command["parameters"][parameter])}", currentFuncName(), current_state))
                     # дополнительная попытка переконвертации
                     get_variable_type_result = get_variable_type(command["parameters"][parameter], current_state)
                     if not get_variable_type_result:
@@ -82,7 +83,7 @@ def commands_executor(commands:list,current_state:dict):
                         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                         return False, error_message, currentFuncName(), commands
                     if type(command["function_parameters"][parameter]) != type(get_variable_type_result[3][1]):
-                        error_message = f"wrong parameter type for {parameter} (put {type(parameter)} need {type(command["parameters"][parameter])})"
+                        error_message = f"wrong parameter type for {parameter} (put {type(command["parameters"][parameter])} ({command["parameters"][parameter]}) need {type(command["function_parameters"][parameter])})"
                         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                         return False, error_message, currentFuncName(), commands
                     command["parameters"][parameter] = get_variable_type_result[3][1]

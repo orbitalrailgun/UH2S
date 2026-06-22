@@ -822,6 +822,38 @@ def get_variable_type(text:str, current_state:dict):
         
 
 
+def split_top_level(text, separator=','):
+    """Разбить text по separator только на верхнем уровне вложенности.
+    Разделители внутри (), [], {} и внутри строк '...'/"..." игнорируются,
+    что позволяет параметрам содержать запятые (списки/SQL) и символ '|' (напр. SQLite '||')."""
+    parts, buf = [], []
+    depth = 0
+    quote = None
+    prev = ''
+    for ch in text:
+        if quote:
+            buf.append(ch)
+            if ch == quote and prev != '\\':
+                quote = None
+        elif ch in ('"', "'"):
+            quote = ch
+            buf.append(ch)
+        elif ch in '([{':
+            depth += 1
+            buf.append(ch)
+        elif ch in ')]}':
+            depth = max(0, depth - 1)
+            buf.append(ch)
+        elif ch == separator and depth == 0:
+            parts.append(''.join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+        prev = ch
+    parts.append(''.join(buf))
+    return parts
+
+
 def command_parser(text:str, current_state:dict):
     """команда разбора текстовой команды на список выполняемых команд движка
     на вход поступает plain text скрипта, на выходе получаем list выполняемых
@@ -831,11 +863,12 @@ def command_parser(text:str, current_state:dict):
     GET 
     """
 
-    # 1. удаляем комментарии /* .* */
-    text = re.sub(r"/\*.*\*/", '', text)
+    # 1. удаляем комментарии /* .* */ (нежадно + многострочно, чтобы не вырезать код между комментариями)
+    text = re.sub(r"/\*.*?\*/", '', text, flags=re.DOTALL)
 
-    # 2. каждая новая команда должна начинаться с |
-    result = re.split(r'\|\s*', text, flags=re.DOTALL) 
+    # 2. каждая новая команда должна начинаться с | (split только на верхнем уровне:
+    #    '|' внутри строк/скобок, напр. SQLite '||', не считается разделителем команд)
+    result = split_top_level(text, '|')
 
     # 3. чистим лишние символы 
     lines = [x.strip("\n ") for x in result]
@@ -887,22 +920,15 @@ def command_parser(text:str, current_state:dict):
                         command["parsed"] = False
                         command["parsed_comment"] = f"incorrect unique for {i} command (apply)"
                     command["apply"]["unique"] = json.loads(command["apply"]["unique"])
-                    apply_columns = re.split(r',\s*', command["apply"]["raw_columns"])
+                    apply_columns = split_top_level(command["apply"]["raw_columns"], ',')
                     command["apply"]["columns"] = []
                     for apply_column in apply_columns:
-                        #  match = re.search(r"^(.+)\s+(as|AS|As|aS)\s+(\S+)\s*$", command["line"], flags=re.DOTALL)
-                        # if match:
-
-                        splitted = re.split(r'\s+as|AS|As|aS\s+', apply_column)
-                        if len(splitted) < 2:
+                        column_match = re.match(r'^(?P<col>.+?)\s+[Aa][Ss]\s+(?P<alias>\S+)\s*$', apply_column.strip())
+                        if not column_match:
                             command["parsed"] = False
                             command["parsed_comment"] = f"AS name not found for {i} command (apply)"
                             continue
-                        elif len(splitted) > 2:
-                            command["parsed"] = False
-                            command["parsed_comment"] = f"is there more 1 AS for {i} command? (apply)"
-                            continue
-                        command["apply"]["columns"].append({"column":splitted[0].strip(" "), "as":splitted[1].strip(" ")})
+                        command["apply"]["columns"].append({"column":column_match.group("col").strip(" "), "as":column_match.group("alias").strip(" ")})
                     command["line"] = re.sub(r"^APPLY:([^\()]+)\(([^\)]+)\):(\[[^\]]*\])\s+", "", command["line"], count=0, flags=re.DOTALL)
 
                 match = re.search(r"^(.+)\s+(as|AS|As|aS)\s+(\S+)\s*$", command["line"])
@@ -913,6 +939,7 @@ def command_parser(text:str, current_state:dict):
                 else:
                     command["parsed"] = False
                     command["parsed_comment"] = f"incorrect command format (source:func(parameters) as x)"
+                    continue
 
                 match = re.search(r"^([^:]+):([^\(]+)\((.*)\)$", command_body)
                 if match:
@@ -922,9 +949,10 @@ def command_parser(text:str, current_state:dict):
                 else:
                     command["parsed"] = False
                     command["parsed_comment"] = f"incorrect command format (source:func(parameters) as x)"
+                    continue
 
-                # разбираем параметры
-                parameters = re.split(r',\s*', command["raw_parameters"])
+                # разбираем параметры (split только на верхнем уровне -> значения могут содержать запятые)
+                parameters = split_top_level(command["raw_parameters"], ',')
                 command["parameters"] = {}
                 for parameter in parameters:
                     if parameter == "":
