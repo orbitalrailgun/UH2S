@@ -25,6 +25,9 @@ def commands_executor(commands:list,current_state:dict):
                 logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                 return False, error_message, currentFuncName(), {}
             command['parameters'] = variables2command_injection_result[3]
+        # прогресс (UI): DEF/CALC выполняются здесь же
+        if command.get("_status") == "pending" and command["command"] in ("DEF", "CALC"):
+            command["_status"] = "done"
 
     # получаем данные по источнику данных и функции
     for command in commands:
@@ -158,11 +161,16 @@ def commands_executor(commands:list,current_state:dict):
 
             for r in results.keys():
                 result_map[r] = results[r]
+            step_result = results[executed_command["data_name"]]
             # прогресс (UI): статус шага по результату
             if "_status" in executed_command:
-                step_result = results[executed_command["data_name"]]
                 executed_command["_status"] = "done" if step_result[0] else "error"
                 executed_command["_info"] = step_result[1]
+            # прерываем выполнение при ошибке шага: последующие шаги не должны запускаться
+            if not step_result[0]:
+                error_message = f"step '{executed_command.get('data_name', '?')}' failed: {step_result[1]}"
+                logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+                return False, error_message, currentFuncName(), commands
 
 
     # тут есть данные
