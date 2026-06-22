@@ -755,7 +755,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             arg = (command.get("print_arg") or "").strip()
             # литерал в кавычках -> текст-комментарий
             if len(arg) >= 2 and ((arg[0] == arg[-1] == '"') or (arg[0] == arg[-1] == "'")):
-                ui.markdown(arg[1:-1])
+                ui.markdown(arg[1:-1], extras=['tables', 'fenced-code-blocks'])
                 return
             # ссылка на таблицу данных (результат GET)?
             data = None
@@ -769,10 +769,10 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     ui.markdown(f"**{arg}** = `{json.dumps(value, ensure_ascii=False, default=str)}`")
                     return
             if data is not None:
-                ui.markdown(records_to_markdown(data))
+                ui.markdown(records_to_markdown(data), extras=['tables', 'fenced-code-blocks'])
                 return
             # иначе — просто текст
-            ui.markdown(arg)
+            ui.markdown(arg, extras=['tables', 'fenced-code-blocks'])
 
         def _render_show(command, variables, result_map):
             table = (command.get("show_table") or "").strip()
@@ -878,9 +878,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 tab_datavars = ui.tab('Data/Variables')
             with ui.tab_panels(tabs, value=tab_script).classes('w-full h-full') as harvester_panels:
                 with ui.tab_panel(tab_script):
-                    codemirror_script = ui.codemirror()
+                    codemirror_script = ui.codemirror().classes('w-full').style('max-height: 30vh')
                     button_script = ui.button("Execute").on_click(button_script_click)
-                    card_results = ui.card()
+                    card_results = ui.scroll_area().classes('w-full').style('height: 60vh; border: 1px solid var(--panel-bg)')
 
                 with ui.tab_panel(tab_datavars):
                     grid_datavars = ui.aggrid({})
