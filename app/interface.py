@@ -134,7 +134,7 @@ def render_plot_png_b64(data, params):
     return {"b64": b64, "css_w": int(figsize[0] * 96), "css_h": int(figsize[1] * 96)}
 
 
-STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌"}
+STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌", "rejected": "⛔"}
 
 def _step_label(command):
     """Человекочитаемая подпись шага для панели прогресса выполнения."""
@@ -944,6 +944,10 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     if not started:
                         validation_step["_status"] = "error"
                         validation_step["_info"] = commands_executor_result[1]
+                    # все ещё не выполненные шаги отклонены: после ошибки они не запустятся
+                    for command in parsed_command:
+                        if command.get("_status") == "pending":
+                            command["_status"] = "rejected"
                     card_results.clear()
                     with card_results:
                         ui.markdown(f"**Ошибка выполнения:** {commands_executor_result[1]}")
@@ -976,6 +980,16 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             except BaseException as e:
                 error_message = f"fail: {str(e)}"
                 logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+                if validation_step["_status"] == "running":
+                    validation_step["_status"] = "error"
+                    validation_step["_info"] = error_message
+                # оставшиеся шаги отклонены
+                try:
+                    for command in parsed_command:
+                        if command.get("_status") == "pending":
+                            command["_status"] = "rejected"
+                except NameError:
+                    pass
                 ui.notify(error_message, type="negative")
             finally:
                 if steps_timer is not None:
