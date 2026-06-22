@@ -1,10 +1,9 @@
 import datetime
-import pandas
-import requests
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
 def execute_gitlab_namespace_owner_request(data_map, source, query, step, parameters, current_state):
+    import requests
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
 
@@ -48,6 +47,7 @@ def execute_gitlab_namespace_owner_request(data_map, source, query, step, parame
         return False, error_message, currentFuncName(), []
 
 def execute_gitlab_search_request(data_map, source, query, step, parameters, current_state):
+    import requests
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
 

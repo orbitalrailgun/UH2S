@@ -1,5 +1,3 @@
-import pandas
-import numpy
 import copy
 import json
 import syslog
@@ -13,6 +11,8 @@ def rename(col):
     return col
 
 def get_aggr_node(df, list_aggregate_fields, agg_params):
+    import pandas
+    import numpy
     # нам нужно найти самое максимальное сочетание данных по агрегируемым полям
     # для этого мы делаем агрегацию с помощью пандаса, так быстрее по производительности, но расточительнее по памяти
     # плюс это добавит простоты к коду
@@ -66,6 +66,7 @@ def get_aggr_node(df, list_aggregate_fields, agg_params):
     return df_output#, df_filtred_new
 
 def execute_pandas_aggregation(parameters, source_object, data_map, current_state):
+    import pandas
     try:
         query = parameters
         #################################################
@@ -118,6 +119,7 @@ def execute_pandas_aggregation(parameters, source_object, data_map, current_stat
         return False, error_message, currentFuncName(), []
 
 def execute_pandas_aggregation_with_time_grouper(parameters, source_object, data_map, current_state):
+    import pandas
     try:
         query = parameters
         #################################################
@@ -184,6 +186,7 @@ def execute_pandas_aggregation_with_time_grouper(parameters, source_object, data
         return False, error_message, currentFuncName(), []
     
 def execute_pandas_dynamic_aggregation(parameters, source_object, data_map, current_state):
+    import pandas
 
     #################################################
     # формируем блок необходимых переменных
@@ -273,6 +276,7 @@ def execute_pandas_dynamic_aggregation(parameters, source_object, data_map, curr
         return False, error_message, currentFuncName(), []
     
 def execute_pandas_shift(parameters, source_object, data_map, current_state):
+    import pandas
     try:
         query = parameters
         #################################################
@@ -331,6 +335,7 @@ def execute_pandas_shift(parameters, source_object, data_map, current_state):
         return False, error_message, currentFuncName(), []
 
 def execute_pandas_union(parameters, source_object, data_map, current_state):
+    import pandas
     try:
         query = parameters
         #################################################

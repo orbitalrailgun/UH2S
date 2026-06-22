@@ -1,10 +1,10 @@
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
-from cryptography.fernet import Fernet
 from typing import Tuple, List, Dict, Optional
 
 def encrypt(text_data, current_state: Dict):
     try:
+        from cryptography.fernet import Fernet
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
         cryptography = Fernet(str.encode(current_state["master_key"]))
         crypted = cryptography.encrypt(str.encode(text_data))
@@ -18,6 +18,7 @@ def encrypt(text_data, current_state: Dict):
 
 def decrypt(text_crypted, current_state: Dict):
     try:
+        from cryptography.fernet import Fernet
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
         cryptography = Fernet(str.encode(current_state["master_key"]))
         decrypted = cryptography.decrypt(str.encode(text_crypted)).decode("utf-8")

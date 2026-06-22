@@ -1,9 +1,9 @@
-import psycopg2
-import pandas
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
 def execute_postgresql(data_map, source, query, step, parameters, current_state):
+    import psycopg2
+    import pandas
     logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
     try:
         if source["auth_type"] == "login/pass":

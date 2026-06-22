@@ -1,5 +1,3 @@
-import requests
-import pandas
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 import app.sources.additional.elastic2python as elastic2python

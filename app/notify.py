@@ -1,4 +1,3 @@
-import requests
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.db import get_secret
@@ -6,6 +5,7 @@ from app.db import get_secret
 
 
 def send_mattermost_notify(mattermost_host, api_key, target_username, message_text, current_state):
+    import requests
     try:
         ###############################################################
         # Сначала надо получить собственный user id бота в mattermost
@@ -107,6 +107,7 @@ def notify_mattermost_proc(notifier_object, notifier_user_conf, message, current
             return
         
 def send_telegram_notify(bot_token, chat_id, message_text, current_state):
+    import requests
     try:
         # блок для получения chat_id
         # блок для получения для внесения нового chat_id можно воспользоваться данной функцией

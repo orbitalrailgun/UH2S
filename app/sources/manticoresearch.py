@@ -1,10 +1,10 @@
-import requests
 import json
-import pandas
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
 
 def execute_manticoresearch_sql(data_map, source, query, step, parameters, current_state):
+    import requests
+    import pandas
     logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
     try:
         response = requests.post(

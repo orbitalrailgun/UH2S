@@ -1,10 +1,11 @@
-from llama_cpp import Llama
-import pandas, json
+import json
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
 
 def execute_llama_chat_query(data_map, source, query, step, parameters, current_state):
     """Функция-интеграция с llama для взаимодействия с локальной LLM в файле .gguf"""
+    from llama_cpp import Llama
+    import pandas
 
     ##############################################
     # Подготовка prompt, отсюда будет понятна необходимая область видимости

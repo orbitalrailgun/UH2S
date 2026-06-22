@@ -1,6 +1,5 @@
 import re
 import json
-import pandas
 import multiprocessing
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName

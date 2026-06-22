@@ -1,0 +1,53 @@
+# UH2S — зависимости.
+#
+# С версии «ленивых импортов» сторонние пакеты загружаются только в момент,
+# когда соответствующая функция реально вызывается. Поэтому для ТЕСТОВОГО ЗАПУСКА
+# (логин + навигация по UI) достаточно установить только блок «ЯДРО».
+# Пакеты коннекторов ставьте по мере того, как реально будете обращаться к источникам.
+#
+# Рекомендуется Python 3.12 (под 3.14 часть пакетов может не иметь готовых wheel
+# и потребует сборки: psycopg2-binary, pymssql, llama-cpp-python).
+#
+# Минимальный тестовый запуск:
+#   python -m venv .venv && source .venv/bin/activate
+#   pip install --upgrade pip
+#   pip install nicegui cryptography bcrypt
+#   python front.py
+# Полная установка:
+#   pip install -r requirements.txt
+
+# ============================================================
+# ЯДРО — нужно всегда, чтобы приложение стартовало
+# ============================================================
+nicegui                    # web/UI (тянет fastapi, starlette, uvicorn)
+cryptography               # расшифровка db_conf/storage key при старте (app/crptgrphy.py)
+bcrypt                     # проверка пароля при логине (app/login.py)
+
+# ============================================================
+# ОПЦИОНАЛЬНО (включается по конфигурации)
+# ============================================================
+python-keycloak            # только если используется вход через Keycloak (SSO)
+
+# ============================================================
+# КОННЕКТОРЫ — ставьте только те, что реально используете в скриптах.
+# Импортируются лениво; без них приложение стартует, но соответствующий
+# GET-источник вернёт ошибку «ModuleNotFoundError» при вызове.
+# ============================================================
+pandas                     # pandas_im (агрегации) + дедуп в APPLY (app/engine.py)
+numpy                      # app/sources/pandas.py (dynamic_aggr)
+requests                   # gitlab, youtrack, iris, manticoresearch, ollama, netbox, notify (mattermost/telegram)
+pytz                       # sqlite3_im, duckdb_im (преобразования времени)
+duckdb                     # duckdb_im (in-memory SQL поверх собранных данных)
+psycopg2-binary            # backend БД PostgreSQL (app/db.py) и источник postgresql
+pymssql                    # источник mssql
+mysql-connector-python     # источник mysql
+elasticsearch              # источник elastic (через клиент)
+opensearch-py              # источник opensearch
+dnspython                  # источник dns
+python-netbox              # источник netbox (модуль `netbox`, класс NetBox)
+pexpect                    # источник teleport
+pyotp                      # источник teleport (TOTP)
+
+# --- Тяжёлый локальный LLM-инференс (нужен только для источника `llama`) ---
+# Требует C/C++ тулчейн для сборки. Ставьте только если используете локальную модель.
+llama-cpp-python

@@ -1,6 +1,5 @@
 import datetime
 import json
-import requests
 from zoneinfo import ZoneInfo
 #import httpx
 
@@ -59,6 +58,7 @@ def grafana_exported_data_to_dataframe(grafana_data, current_state):
     return output
 
 def execute_grafana_export_table_requests(data_map, source, query, step, parameters, current_state):
+    import requests
     logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
     try:
         # проверяем, можно ли взять данные из локального кеша

@@ -1,5 +1,3 @@
-from opensearchpy import OpenSearch
-import pandas
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 import app.sources.additional.elastic2python as elastic2python
@@ -7,6 +5,7 @@ import app.sources.additional.elastic2python as elastic2python
 
 # execution_function
 def execute_opensearch_query(data_map, source, query, step, parameters, current_state):
+    from opensearchpy import OpenSearch
     # создаём объект подключения к эластику
     try:
         if source["auth_type"] == "http_auth":
@@ -62,6 +61,7 @@ def execute_opensearch_query(data_map, source, query, step, parameters, current_
         return False, error_message, currentFuncName(), []
     
 def execute_opensearch_aggs(data_map, source, query, step, parameters, current_state):
+    from opensearchpy import OpenSearch
     # создаём объект подключения к эластику
     try:
         if source["auth_type"] == "http_auth":

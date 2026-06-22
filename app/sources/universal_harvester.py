@@ -1,6 +1,3 @@
-import duckdb
-
-import pandas
 import syslog
 import json
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName

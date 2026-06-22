@@ -1,6 +1,5 @@
 import re
 import json
-import pandas
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
 from app.validation import json_validate
@@ -1071,6 +1070,7 @@ def run_command(command, data_map, current_state):
     return True, str(len(result[3])), currentFuncName(), result[3]
 
 def run_apply_command(command, data_map, current_state):
+    import pandas
     applyed_data = data_map[command['apply']['data']]
     if len(applyed_data) == 0:
         return True, "empty applyed data", currentFuncName(), []

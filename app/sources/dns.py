@@ -1,11 +1,10 @@
-import pandas
 import json
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 # механизм разыменования dns-запросов
-import dns.resolver
 
 def execute_dns_resolve(data_map, source, query, step, parameters, current_state):
+    import dns.resolver
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
         dns_domain_name = parameters["domain_name"]

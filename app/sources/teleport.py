@@ -1,10 +1,7 @@
 # teleport
 import subprocess
-import pyotp
-import pexpect
 
 import datetime
-import pandas
 import json
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
@@ -12,6 +9,8 @@ from app.logging import currentTimestamp, get_log_message, logger_log, currentFu
 # функции интеграции с телепортом
 # реализовано только подключение с использованием OTP
 def teleport_auth(teleport_host, SECRET_TELEPORT, ACCOUNT_TELEPORT, SECRET_TOTP, current_state):
+    import pyotp
+    import pexpect
     logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
     subprocess.run(
         f"tsh logout --proxy={teleport_host} --user={ACCOUNT_TELEPORT}".split()
@@ -60,6 +59,7 @@ def teleport_auth(teleport_host, SECRET_TELEPORT, ACCOUNT_TELEPORT, SECRET_TOTP,
     return 1
 
 def teleport_get_hosts(current_state):
+    import pandas
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
         result = subprocess.run(['/usr/local/bin/tsh', 'ls', '--format=json'], stdout=subprocess.PIPE).stdout.decode('utf-8')

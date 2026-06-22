@@ -1,10 +1,11 @@
-import requests
-import pandas, json
+import json
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
 def execute_ollama_chat_query(data_map, source, query, step, parameters, current_state):
     """Функция-интеграция с api ollama для взаимодействия с LLM в рамках сценария"""
+    import requests
+    import pandas
 
     ##############################################
     # Подготовка prompt, отсюда будет понятна необходимая область видимости

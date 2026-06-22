@@ -1,11 +1,7 @@
-import duckdb
 import math
 import re
 import ipaddress
 import datetime
-import duckdb.typing
-import pytz
-import pandas
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
@@ -65,8 +61,12 @@ def datetime_to_timestamp(timestamp_string, format):
         return -1
     
 def execute_duckdb(parameters, source_object, data_map, current_state):
+    import duckdb
+    import duckdb.typing
+    import pytz
+    import pandas
     # поскольку мы используем inmemory, то клиента к системе проверять не нужно
-    try: 
+    try:
         query = parameters
         # представление данных в duckdb (view или table)
         data_representation_type = query["type"]

@@ -1,9 +1,9 @@
-import mysql.connector
-import pandas
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
 
 def execute_mysql(data_map, source, query, step, parameters, current_state):
+    import mysql.connector
+    import pandas
     logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
     try:
         if source["auth_type"] == "login/pass":

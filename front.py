@@ -20,11 +20,7 @@ from app.crptgrphy import decrypt
 
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 import syslog
-import pwinput
 
-#from fastapi_keycloak import FastAPIKeycloak, OIDCUser
-from keycloak.keycloak_openid import KeycloakOpenID
-#from keycloak import KeycloakOpenID
 from app.db import get_secret
 
 def main():
@@ -179,6 +175,7 @@ def main():
     # Создание объекта интеграции с keycloak
     ########################################
     try:
+        from keycloak.keycloak_openid import KeycloakOpenID
         db_get_key_result = get_secret(KEYCLOAK_DB_KEY.split(":")[0],KEYCLOAK_DB_KEY.split(":")[1], current_state)
         if db_get_key_result[0] == True:
             keycloak_flag = True

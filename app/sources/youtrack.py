@@ -1,6 +1,4 @@
 import datetime
-import pandas
-import requests
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
@@ -47,6 +45,7 @@ def fields_list_to_youtrack_fields(fields: list, separator: str):
     return output
 
 def execute_youtrack_project_finder(data_map, source, query, step, parameters, current_state):
+    import requests
     logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
     try:
         url = source["url"]
@@ -137,6 +136,7 @@ def execute_youtrack_project_finder(data_map, source, query, step, parameters, c
     
 
 def execute_youtrack_all_project_issue_finder(data_map, source, query, step, parameters, current_state):
+    import requests
     logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
     try:
         url = source["url"]
@@ -199,6 +199,7 @@ def execute_youtrack_all_project_issue_finder(data_map, source, query, step, par
         return False, error_message, currentFuncName(), []
 
 def execute_youtrack_all_articles_finder(data_map, source, query, step, parameters, current_state):
+    import requests
     logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
     try:
         url = source["url"]

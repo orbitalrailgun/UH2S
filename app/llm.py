@@ -1,5 +1,3 @@
-import requests
-
 def simple_chat(message, history, llm_object, current_state):
     """
     Этап 1

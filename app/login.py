@@ -1,5 +1,4 @@
 import uuid
-import bcrypt
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.db import get_user_by_username
@@ -38,6 +37,8 @@ def try_login(input_login, input_pass, current_state):  # local function to avoi
             error_message = f"disabled account {input_login} login attempt"
             logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
             return False, error_message, currentFuncName, None
+
+        import bcrypt
 
         if isinstance(current_user["pass"], str):
              current_user["pass"] = current_user["pass"].encode('utf-8')

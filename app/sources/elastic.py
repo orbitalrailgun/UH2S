@@ -1,11 +1,10 @@
-from elasticsearch import Elasticsearch
-import pandas
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 import app.sources.additional.elastic2python as elastic2python
 
 # execution_function
 def execute_elasctic_query_via_client(data_map, source, query, step, parameters, current_state):
+    from elasticsearch import Elasticsearch
     # создаём объект подключения к эластику
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
@@ -71,6 +70,7 @@ def execute_elasctic_query_via_client(data_map, source, query, step, parameters,
         return False, error_message, currentFuncName(), []
     
 def execute_elasctic_aggs_via_client(data_map, source, query, step, parameters, current_state):
+    from elasticsearch import Elasticsearch
     # создаём объект подключения к эластику
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
@@ -134,6 +134,7 @@ def execute_elasctic_aggs_via_client(data_map, source, query, step, parameters, 
 # функция построения цепочки иерархии для выбранного процесса pid
 def execute_function_linux_pid_hierarchy_elastic(data_map, source, query, step, parameters, current_state):
 #(source_list, step, current_step, current_input_params):
+    from elasticsearch import Elasticsearch
     # создаём объект подключения к эластику
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
@@ -313,6 +314,7 @@ def execute_function_linux_pid_hierarchy_elastic(data_map, source, query, step, 
     
 # функция получения сиблингов для выбранного процесса pid
 def execute_function_linux_pid_siblings_elastic(data_map, source, query, step, parameters, current_state):
+    from elasticsearch import Elasticsearch
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
         if source["auth_type"] == "api_key":

@@ -3,8 +3,6 @@ import math
 import re
 import ipaddress
 import datetime
-import pytz
-import pandas
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
@@ -64,6 +62,8 @@ def datetime_to_timestamp(timestamp_string, format):
         return -1
     
 def execute_sqlite3(parameters, source_object, data_map, current_state):
+    import pytz
+    import pandas
     # поскольку мы используем inmemory, то клиента к системе проверять не нужно
     try:
         query = parameters

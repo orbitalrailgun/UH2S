@@ -1,6 +1,5 @@
 import syslog
 import sqlite3
-import psycopg2
 import base64
 import json
 from app.logging import get_log_message, logger_log, currentFuncName, currentTimestamp
@@ -94,6 +93,7 @@ def create_db_connection(current_state: dict):
                 error_message = f"password not in db_conf.postgresql"
                 logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
                 return False, error_message, currentFuncName(), None
+            import psycopg2
             connection = psycopg2.connect(
                 host = db_conf["postgresql"]["host"], 
                 port = db_conf["postgresql"]["port"],

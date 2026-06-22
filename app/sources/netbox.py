@@ -1,14 +1,12 @@
 import json
 import ipaddress
-import pandas
-import requests
 #from netbox import Netbox
-from netbox import NetBox
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.sources.additional.flatten import flatten_data
 
 def execute_netbox_search_cidr_by_ipaddress(parameters, source_object, data_map, current_state):
+    import requests
     try:
         query = parameters
         source = source_object
@@ -51,6 +49,7 @@ def execute_netbox_search_cidr_by_ipaddress(parameters, source_object, data_map,
         return False, error_message, currentFuncName(), []
 
 def netbox_finder(target, url, token_netbox, fast_mode):
+    import requests
     netbox = {'target': target}
     potential_contacts = set()
     try:
