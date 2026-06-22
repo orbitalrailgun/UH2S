@@ -19,6 +19,7 @@ from app.sources.pandas import execute_pandas_dynamic_aggregation, execute_panda
 from app.sources.youtrack import execute_youtrack_project_finder, execute_youtrack_all_project_issue_finder, execute_youtrack_all_articles_finder
 from app.sources.gitlab import execute_gitlab_namespace_owner_request, execute_gitlab_search_request
 from app.sources.iris import execute_function_iris_get_alerts
+from app.sources.thehive import execute_thehive_get_alerts
 #from app.sources.teleport import execute_function_get_hosts_teleport
 from app.sources.dns import execute_dns_resolve
 from app.sources.mysql import execute_mysql
@@ -455,10 +456,38 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "timeout": 60,
             #"key":{"system":"foo", "account":"bar"},
             "max_threads":10
-        }, 
+        },
         "unrequired":{}
     },
-    "teleport":{       
+    "irp_thehive":{
+        "functions":{
+            "get_alerts":{
+                "required":{
+                    "filter":{},      # операция фильтра TheHive (dict). {} -> без фильтра
+                    "limit":1000      # максимум алертов на страницу (page from=0..to=limit)
+                },
+                "unrequired":{
+                    "sort":{"_fields":[{"_createdAt":"desc"}]},
+                    "extra_data":[],
+                    "flatten":False
+                },
+                "functions":{
+                    "query": execute_thehive_get_alerts,
+                    #"converter": lambda: None
+                }
+            }
+        },
+        "required":{
+            "url":"https://thehive.example.ru",
+            "timeout": 60,
+            #"key":{"system":"foo", "account":"bar"},
+            "max_threads":10
+        },
+        "unrequired":{
+            "verify":False
+        }
+    },
+    "teleport":{
         # "functions":{
         #     "get_hosts":{
         #         "required":{
