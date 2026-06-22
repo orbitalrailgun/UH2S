@@ -987,7 +987,19 @@ def command_parser(text:str, current_state:dict):
                     command["parsed"] = False
                     command["parsed_comment"] = 'PRINT format: PRINT(name) | PRINT("text")'
             case "SAVE":
-                print("Internal Server Error")
+                # SAVE(table_name, format) -> скачивание файла: xlsx | csv_in_zip | json_in_zip
+                match = re.search(r"^\((.*)\)$", command["line"].strip(), flags=re.DOTALL)
+                if match:
+                    save_args = [a.strip() for a in split_top_level(match.group(1), ',')]
+                    if len(save_args) < 2 or save_args[0] == "":
+                        command["parsed"] = False
+                        command["parsed_comment"] = "SAVE format: SAVE(table_name, format)"
+                    else:
+                        command["save_table"] = save_args[0]
+                        command["save_format"] = save_args[1].strip('"\'')
+                else:
+                    command["parsed"] = False
+                    command["parsed_comment"] = "SAVE format: SAVE(table_name, format)"
             case "SHOW":
                 # SHOW(table_name, type, [optional_params])
                 #   type=table       -> интерактивная таблица (aggrid: фильтры/сортировки)

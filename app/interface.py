@@ -134,6 +134,61 @@ def render_plot_png_b64(data, params):
     return {"b64": b64, "css_w": int(figsize[0] * 96), "css_h": int(figsize[1] * 96)}
 
 
+def _safe_filename(name):
+    """Безопасное имя файла из имени таблицы (без путей и спецсимволов)."""
+    import re
+    cleaned = re.sub(r'[^0-9A-Za-zА-Яа-яЁё._-]+', '_', str(name)).strip('_')
+    return cleaned or "data"
+
+
+def _normalize_for_tabular(data):
+    """Для xlsx/csv: вложенные dict/list сериализуем в JSON-строку, скаляры — как есть."""
+    rows = []
+    for row in data:
+        if isinstance(row, dict):
+            rows.append({k: (json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v)
+                         for k, v in row.items()})
+        else:
+            rows.append({"value": row})
+    return rows
+
+
+def records_to_download(data, fmt, table_name):
+    """Подготовить (content_bytes, filename, media_type) для скачивания таблицы.
+
+    Форматы: xlsx | csv_in_zip | json_in_zip."""
+    import io
+    fmt = (fmt or "").strip().strip('"\'').lower()
+    name = _safe_filename(table_name)
+
+    if fmt == "xlsx":
+        import pandas
+        buffer = io.BytesIO()
+        with pandas.ExcelWriter(buffer, engine="openpyxl") as writer:
+            pandas.DataFrame(_normalize_for_tabular(data)).to_excel(writer, index=False, sheet_name="data")
+        return (buffer.getvalue(), f"{name}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    if fmt == "csv_in_zip":
+        import zipfile
+        import pandas
+        csv_bytes = pandas.DataFrame(_normalize_for_tabular(data)).to_csv(index=False).encode("utf-8-sig")
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"{name}.csv", csv_bytes)
+        return zip_buffer.getvalue(), f"{name}.csv.zip", "application/zip"
+
+    if fmt == "json_in_zip":
+        import zipfile
+        json_bytes = json.dumps(data, ensure_ascii=False, indent=2, default=str).encode("utf-8")
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"{name}.json", json_bytes)
+        return zip_buffer.getvalue(), f"{name}.json.zip", "application/zip"
+
+    raise ValueError(f"unknown format '{fmt}' (xlsx | csv_in_zip | json_in_zip)")
+
+
 STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌", "rejected": "⛔"}
 
 def _step_label(command):
@@ -150,6 +205,8 @@ def _step_label(command):
         return f"PRINT {command.get('print_arg', '')}"
     if kind == "SHOW":
         return f"SHOW {command.get('show_table', '?')} ({command.get('show_type', '?')})"
+    if kind == "SAVE":
+        return f"SAVE {command.get('save_table', '?')} ({command.get('save_format', '?')})"
     if kind == "NOTIFY":
         return f"NOTIFY {command.get('notifier', '?')}"
     if kind == "CALC":
@@ -859,6 +916,32 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             else:
                 ui.markdown(f"*SHOW: неизвестный тип «{show_type}» (table | matplotlib)*")
 
+        def _render_save(command, variables, result_map):
+            table = (command.get("save_table") or "").strip()
+            fmt = (command.get("save_format") or "").strip().strip('"\'').lower()
+
+            data = None
+            if table in result_map and result_map[table][0]:
+                data = result_map[table][3]
+            elif isinstance(variables.get(table), list):
+                data = variables[table]
+
+            if data is None:
+                ui.markdown(f"*SAVE: нет табличных данных «{table}»*")
+                return
+
+            try:
+                content, filename, media_type = records_to_download(data, fmt, table)
+            except BaseException as save_error:
+                ui.markdown(f"*SAVE error: {str(save_error)}*")
+                return
+
+            try:
+                ui.download(content, filename, media_type)
+            except TypeError:
+                ui.download(content, filename)
+            ui.markdown(f"💾 Скачивание **{filename}** ({len(data)} строк)")
+
         def _update_datavars(variables, result_map):
             rows = []
             for name, res in result_map.items():
@@ -970,6 +1053,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                             rendered += 1
                         elif command["command"] == "SHOW":
                             _render_show(command, variables, result_map)
+                            rendered += 1
+                        elif command["command"] == "SAVE":
+                            _render_save(command, variables, result_map)
                             rendered += 1
                     if rendered == 0:
                         ui.markdown("_Выполнено. В скрипте нет команд PRINT/SHOW для вывода._")

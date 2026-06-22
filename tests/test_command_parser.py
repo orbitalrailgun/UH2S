@@ -227,6 +227,29 @@ class TestShow(unittest.TestCase):
         self.assertFalse(c["parsed"])
 
 
+class TestSave(unittest.TestCase):
+    def test_save_xlsx(self):
+        c = one("SAVE(alerts, xlsx)")
+        self.assertEqual(c["command"], "SAVE")
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["save_table"], "alerts")
+        self.assertEqual(c["save_format"], "xlsx")
+
+    def test_save_csv_in_zip(self):
+        c = one("SAVE(by_sev, csv_in_zip)")
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["save_format"], "csv_in_zip")
+
+    def test_save_quoted_format(self):
+        c = one('SAVE(alerts, "json_in_zip")')
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["save_format"], "json_in_zip")
+
+    def test_save_missing_format(self):
+        c = one("SAVE(alerts)")
+        self.assertFalse(c["parsed"])
+
+
 class TestSequentialOutput(unittest.TestCase):
     def test_get_then_print_then_show(self):
         script = (
