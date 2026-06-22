@@ -187,6 +187,59 @@ class TestComments(unittest.TestCase):
         self.assertEqual(c["variable_value"], 5)
 
 
+class TestPrint(unittest.TestCase):
+    def test_print_text(self):
+        c = one('PRINT("Отчёт по алертам")')
+        self.assertEqual(c["command"], "PRINT")
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["print_arg"], '"Отчёт по алертам"')
+
+    def test_print_variable(self):
+        c = one("PRINT(alerts)")
+        self.assertEqual(c["command"], "PRINT")
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["print_arg"], "alerts")
+
+    def test_print_lowercase_keyword(self):
+        c = one("print(x)")
+        self.assertEqual(c["command"], "PRINT")
+        self.assertTrue(c["parsed"])
+
+
+class TestShow(unittest.TestCase):
+    def test_show_table(self):
+        c = one("SHOW(alerts, table)")
+        self.assertEqual(c["command"], "SHOW")
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["show_table"], "alerts")
+        self.assertEqual(c["show_type"], "table")
+        self.assertEqual(c["show_params"], "")
+
+    def test_show_matplotlib_with_params(self):
+        c = one('SHOW(alerts, matplotlib, {"kind": "bar", "x": "severity", "y": "count"})')
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["show_table"], "alerts")
+        self.assertEqual(c["show_type"], "matplotlib")
+        self.assertEqual(c["show_params"], '{"kind": "bar", "x": "severity", "y": "count"}')
+
+    def test_show_missing_type(self):
+        c = one("SHOW(alerts)")
+        self.assertFalse(c["parsed"])
+
+
+class TestSequentialOutput(unittest.TestCase):
+    def test_get_then_print_then_show(self):
+        script = (
+            'GET sqlite3:query(queries=["SELECT a, b FROM t"]) AS report\n'
+            '| PRINT("Результат:")\n'
+            '| PRINT(report)\n'
+            '| SHOW(report, table)'
+        )
+        cmds = parse(script)
+        self.assertEqual([c["command"] for c in cmds], ["GET", "PRINT", "PRINT", "SHOW"])
+        self.assertTrue(all(c["parsed"] for c in cmds))
+
+
 @unittest.skipIf(split_top_level is None, "split_top_level ещё не внедрён (Fix #1)")
 class TestSplitTopLevel(unittest.TestCase):
     def test_plain(self):

@@ -21,6 +21,101 @@ async def sleep():
 # это же значение служит сигналом "секрет не менять" при сохранении.
 SECRET_MASK = "***"
 
+
+# ───────────────────────── Вывод результатов Harvester (PRINT/SHOW) ─────────────────────────
+
+def _cell_to_str(value):
+    """Привести значение ячейки к строке, безопасной для markdown-таблицы."""
+    if value is None:
+        text = ""
+    elif isinstance(value, (dict, list)):
+        text = json.dumps(value, ensure_ascii=False)
+    else:
+        text = str(value)
+    return text.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
+
+
+def records_to_markdown(data, max_rows=200):
+    """list[dict] -> markdown-таблица (или маркированный список для скаляров)."""
+    if not isinstance(data, list) or len(data) == 0:
+        return "_(пусто)_"
+    columns, seen = [], set()
+    for row in data[:max_rows]:
+        if isinstance(row, dict):
+            for key in row.keys():
+                if key not in seen:
+                    seen.add(key)
+                    columns.append(key)
+    note = "" if len(data) <= max_rows else f"\n\n_… показано {max_rows} из {len(data)} строк_"
+    if not columns:
+        body = "\n".join("- " + _cell_to_str(row) for row in data[:max_rows])
+        return body + note
+    header = "| " + " | ".join(str(c) for c in columns) + " |"
+    separator = "| " + " | ".join("---" for _ in columns) + " |"
+    rows = ["| " + " | ".join(_cell_to_str(row.get(c, "") if isinstance(row, dict) else row) for c in columns) + " |"
+            for row in data[:max_rows]]
+    return "\n".join([header, separator] + rows) + note
+
+
+def records_to_aggrid_options(data, aggrid_theme="ag-theme-balham-dark", max_rows=5000):
+    """list[dict] -> options для ui.aggrid с фильтрами и сортировкой по каждой колонке."""
+    columns, seen = [], set()
+    for row in data[:max_rows]:
+        if isinstance(row, dict):
+            for key in row.keys():
+                if key not in seen:
+                    seen.add(key)
+                    columns.append(key)
+    row_data = []
+    for row in data[:max_rows]:
+        if isinstance(row, dict):
+            row_data.append({c: (_cell_to_str(row.get(c)) if isinstance(row.get(c), (dict, list)) else row.get(c, ""))
+                             for c in columns})
+        else:
+            row_data.append({"value": _cell_to_str(row)})
+    column_defs = [{"headerName": str(c), "field": str(c), "filter": True, "sortable": True, "resizable": True}
+                   for c in columns] or [{"headerName": "value", "field": "value", "filter": True, "sortable": True}]
+    return {
+        "columnDefs": column_defs,
+        "rowData": row_data,
+        "defaultColDef": {"filter": True, "sortable": True, "resizable": True},
+        "pagination": True,
+        "paginationPageSize": 20,
+        "enableCellTextSelection": True,
+        "domLayout": "normal",
+    }
+
+
+def render_plot_png_b64(data, params):
+    """Построить график matplotlib по данным и optional_params, вернуть base64 PNG."""
+    import io
+    import base64
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import pandas
+
+    dataframe = pandas.DataFrame(data)
+    figsize = params.get("figsize", [10, 5])
+    fig, ax = plt.subplots(figsize=(figsize[0], figsize[1]))
+    plot_kwargs = {"kind": params.get("kind", "line"), "ax": ax}
+    if params.get("x") is not None:
+        plot_kwargs["x"] = params["x"]
+    if params.get("y") is not None:
+        plot_kwargs["y"] = params["y"]
+    dataframe.plot(**plot_kwargs)
+    if params.get("title"):
+        ax.set_title(params["title"])
+    try:
+        fig.autofmt_xdate()
+    except Exception:
+        pass
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", bbox_inches="tight")
+    plt.close(fig)
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
 THEMES = {
     'dark': {
         'bg': '#1F2937',
@@ -656,28 +751,121 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
         #         ui.label('You do not have object_admin role')
         #         return False, f"There is not object_admin role for username {current_user}", currentFuncName(), None
         
+        def _render_print(command, variables, result_map):
+            arg = (command.get("print_arg") or "").strip()
+            # литерал в кавычках -> текст-комментарий
+            if len(arg) >= 2 and ((arg[0] == arg[-1] == '"') or (arg[0] == arg[-1] == "'")):
+                ui.markdown(arg[1:-1])
+                return
+            # ссылка на таблицу данных (результат GET)?
+            data = None
+            if arg in result_map and result_map[arg][0]:
+                data = result_map[arg][3]
+            elif arg in variables:
+                value = variables[arg]
+                if isinstance(value, list) and (len(value) == 0 or isinstance(value[0], dict)):
+                    data = value
+                else:
+                    ui.markdown(f"**{arg}** = `{json.dumps(value, ensure_ascii=False, default=str)}`")
+                    return
+            if data is not None:
+                ui.markdown(records_to_markdown(data))
+                return
+            # иначе — просто текст
+            ui.markdown(arg)
+
+        def _render_show(command, variables, result_map):
+            table = (command.get("show_table") or "").strip()
+            show_type = (command.get("show_type") or "table").strip().strip('"\'').lower()
+            params_raw = (command.get("show_params") or "").strip()
+
+            data = None
+            if table in result_map and result_map[table][0]:
+                data = result_map[table][3]
+            elif isinstance(variables.get(table), list):
+                data = variables[table]
+
+            if not data:
+                ui.markdown(f"*SHOW: нет табличных данных «{table}»*")
+                return
+
+            if show_type == "table":
+                ui.aggrid(records_to_aggrid_options(data, current_state.get("aggrid_theme", "ag-theme-balham-dark"))).classes('w-full h-[60vh]')
+            elif show_type in ("matplotlib", "plot"):
+                params = {}
+                if params_raw:
+                    if json_validate(params_raw):
+                        params = json.loads(params_raw)
+                    else:
+                        ui.markdown("*SHOW: optional_params не является валидным JSON*")
+                        return
+                try:
+                    b64 = render_plot_png_b64(data, params)
+                    ui.image(f"data:image/png;base64,{b64}")
+                except BaseException as plot_error:
+                    ui.markdown(f"*SHOW matplotlib error: {str(plot_error)}*")
+            else:
+                ui.markdown(f"*SHOW: неизвестный тип «{show_type}» (table | matplotlib)*")
+
+        def _update_datavars(variables, result_map):
+            rows = []
+            for name, res in result_map.items():
+                count = len(res[3]) if (res[0] and isinstance(res[3], list)) else 0
+                rows.append({"name": name, "kind": "data", "rows": count})
+            for name, value in variables.items():
+                rows.append({"name": name, "kind": "variable",
+                             "rows": (len(value) if isinstance(value, (list, dict)) else 1)})
+            grid_datavars.options['columnDefs'] = [
+                {"headerName": "Name", "field": "name", "filter": True, "sortable": True},
+                {"headerName": "Kind", "field": "kind", "filter": True, "sortable": True},
+                {"headerName": "Rows", "field": "rows", "filter": True, "sortable": True},
+            ]
+            grid_datavars.options['rowData'] = rows
+            grid_datavars.options['domLayout'] = "normal"
+            grid_datavars.update()
+            codemirror_datavar.value = json.dumps(variables, ensure_ascii=False, indent=2, default=str)
+
         async def button_script_click():
             try:
                 parsed_command = command_parser(codemirror_script.value, current_state)
 
-                # вывод ошибок парсинга 
+                # вывод ошибок парсинга
+                parse_errors = [(i, c) for i, c in enumerate(parsed_command) if not c.get("parsed", True)]
+                if parse_errors:
+                    card_results.clear()
+                    with card_results:
+                        ui.markdown("**Ошибки парсинга:**")
+                        for i, c in parse_errors:
+                            ui.markdown(f"- команда {i + 1} (`{c.get('command', '?')}`): {c.get('parsed_comment', '?')}")
+                    return
 
-
-                #commands_executor_result = await run.cpu_bound(commands_executor, parsed_command, current_state)
                 commands_executor_result = await run.io_bound(commands_executor, parsed_command, current_state)
-                #commands_executor_result = commands_executor(command_parser(codemirror_script.value, current_state), current_state)
                 if not commands_executor_result[0]:
                     logger_log(syslog.LOG_ERR, get_log_message(commands_executor_result[1], currentFuncName(), current_state))
+                    card_results.clear()
+                    with card_results:
+                        ui.markdown(f"**Ошибка выполнения:** {commands_executor_result[1]}")
                     ui.notify(commands_executor_result[1], type="negative")
                     return
-                
-                # выделить show/print
 
-                # отобразить show/print
+                variables, result_map = commands_executor_result[3]
 
-                # обновить текущие данные и переменные
+                # последовательный вывод PRINT/SHOW в порядке их следования в скрипте
+                card_results.clear()
+                with card_results:
+                    rendered = 0
+                    for command in parsed_command:
+                        if command["command"] == "PRINT":
+                            _render_print(command, variables, result_map)
+                            rendered += 1
+                        elif command["command"] == "SHOW":
+                            _render_show(command, variables, result_map)
+                            rendered += 1
+                    if rendered == 0:
+                        ui.markdown("_Выполнено. В скрипте нет команд PRINT/SHOW для вывода._")
 
-                ui.notify(commands_executor_result[3], type="positive")
+                _update_datavars(variables, result_map)
+                ui.notify("Done", type="positive")
 
             except BaseException as e:
                 error_message = f"fail: {str(e)}"

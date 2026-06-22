@@ -876,9 +876,10 @@ def command_parser(text:str, current_state:dict):
     # 4. выделяем команды
     commands = []
     for line in lines:
-        match = re.search(r"^(\S+)\s+(.*)$", line, flags=re.DOTALL)
+        # ключевое слово — первое слово; допускаем форму WORD(...) без пробела (PRINT/SHOW)
+        match = re.search(r"^([A-Za-z_]+)\s*(.*)$", line, flags=re.DOTALL)
         if match:
-            commands.append({"command":match.group(1), "line":match.group(2)})
+            commands.append({"command":match.group(1).upper(), "line":match.group(2)})
 
     # 5. обработка логики каждой команды
     for i, command in enumerate(commands):
@@ -976,15 +977,34 @@ def command_parser(text:str, current_state:dict):
                     command["parsed"] = False
                     command["parsed_comment"] = "not recognized"
 
+            case "PRINT":
+                # PRINT(variable_or_table) -> вывод значения/таблицы в markdown
+                # PRINT("любой текст")     -> вывод текста-комментария
+                match = re.search(r"^\((.*)\)$", command["line"].strip(), flags=re.DOTALL)
+                if match:
+                    command["print_arg"] = match.group(1).strip()
+                else:
+                    command["parsed"] = False
+                    command["parsed_comment"] = 'PRINT format: PRINT(name) | PRINT("text")'
             case "SAVE":
                 print("Internal Server Error")
             case "SHOW":
-                # SHOW VARIABLES
-                # SHOW VAR {var_name}
-                # SHOW DATALIST
-                # SHOW TABLE {data_name}
-                # SHOW PLOT {data_name} x {x_column} y {y_column}
-                print("Internal Server Error")
+                # SHOW(table_name, type, [optional_params])
+                #   type=table       -> интерактивная таблица (aggrid: фильтры/сортировки)
+                #   type=matplotlib  -> график по optional_params (JSON)
+                match = re.search(r"^\((.*)\)$", command["line"].strip(), flags=re.DOTALL)
+                if match:
+                    show_args = [a.strip() for a in split_top_level(match.group(1), ',')]
+                    if len(show_args) < 2 or show_args[0] == "":
+                        command["parsed"] = False
+                        command["parsed_comment"] = "SHOW format: SHOW(table_name, type, [params])"
+                    else:
+                        command["show_table"] = show_args[0]
+                        command["show_type"] = show_args[1].strip('"\'')
+                        command["show_params"] = show_args[2] if len(show_args) >= 3 else ""
+                else:
+                    command["parsed"] = False
+                    command["parsed_comment"] = "SHOW format: SHOW(table_name, type, [params])"
             case "NOTIFY":
                 # NOTIFY notify_object_name("notify_text https://harvester.ru/%(_execution_id_)s")
                 match = re.search(r'^\s*(\S+)\("(.*)"\)$', command["line"])
