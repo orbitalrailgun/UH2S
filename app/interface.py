@@ -17,6 +17,10 @@ async def sleep():
     """Небольшая защита от перебора паролей, вносим искусственную задержку"""
     await asyncio.sleep(1)
 
+# Маска секрета в таблице/форме: реальное значение в UI не показывается;
+# это же значение служит сигналом "секрет не менять" при сохранении.
+SECRET_MASK = "***"
+
 THEMES = {
     'dark': {
         'bg': '#1F2937',
@@ -800,7 +804,7 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 {#["name", "roles", "version", "timestamp", "type", "owner"]
                     "system": object["system"],
                     "account": object["account"],
-                    "secret": "***",
+                    "secret": SECRET_MASK,
                     "comment": object["comment"]
                 } for object in actual_secrets
             ]
@@ -840,120 +844,111 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
             secrets_panels.set_value('Edit/create')
 
         async def save_button_of_secret_editor():
-            # получаем текущие значения до изменения
-            selected_row = (await grid_secrets_list.get_selected_row()) or {}
-            if not selected_row:
+            # работаем по значениям полей формы (а не по выбранной строке таблицы),
+            # чтобы работали и создание нового секрета, и редактирование существующего
+            system  = input_edit_secret_system.value
+            account = input_edit_secret_account.value
+            secret  = input_edit_secret_secret.value
+            comment = input_edit_secret_comment.value
+
+            # валидация полей
+            if not validate_itemname(system, current_state)[0]:
+                ui.notify("System is not valid", type="negative")
                 return
-            
-            # проверяем, что system соответствует правилу валидации
-            if not validate_itemname(input_edit_secret_system.value, current_state):
-                ui.notify(f"System is not valid: {validate_itemname(input_edit_secret_system.value, current_state)[1]}", type="negative")
+            if not validate_itemname(account, current_state)[0]:
+                ui.notify("Account is not valid", type="negative")
                 return
-            # проверяем, что account соответствует правилу валидации
-            if not validate_itemname(input_edit_secret_account.value, current_state):
-                ui.notify(f"Account is not valid: {validate_itemname(input_edit_secret_account.value, current_state)[1]}", type="negative")
+            if not validate_comment(comment, current_state)[0]:
+                ui.notify("Comment is not valid", type="negative")
                 return
-            # проверяем, что сomment соответствует правилу валидации
-            if not validate_comment(input_edit_secret_comment.value, current_state):
-                ui.notify(f"Comment is not valid: {validate_comment(input_edit_secret_comment.value, current_state)[1]}", type="negative")
-                return
-            
-            # полное совпадение, изменений нет
-            if  selected_row["system"]  == input_edit_secret_system.value  and \
-                selected_row["account"] == input_edit_secret_account.value and \
-                selected_row["secret"]  == input_edit_secret_secret.value  and \
-                selected_row["comment"] == input_edit_secret_comment.value:
-                ui.notify("There are not changes", type="negative")
-                return
-            
-            # получить из БД список секретов
+
+            # получаем актуальный список секретов (пустая таблица -> пустой список, это не ошибка)
             db_get_secrets_list_result = db_get_secrets_list(current_state)
-            if not db_get_secrets_list_result[0]:
+            if db_get_secrets_list_result[0]:
+                actual_secrets = db_get_secrets_list_result[3]
+            elif db_get_secrets_list_result[1] == "db table is empty?":
+                actual_secrets = []
+            else:
                 logger_log(syslog.LOG_ERR, get_log_message(db_get_secrets_list_result[1], currentFuncName(), current_state))
                 ui.notify(db_get_secrets_list_result[1], type="negative")
                 return
-            
-            actual_secrets = db_get_secrets_list_result[3]
 
-            # Имеется ли в БД то, что мы хотим сохранить?
+            # ищем существующий секрет по паре system:account
+            existing = None
+            for s in actual_secrets:
+                if s["system"] == system and s["account"] == account:
+                    existing = s
+                    break
 
-            for secret in actual_secrets:
-                if  secret["system"]  == input_edit_secret_system.value and \
-                    secret["account"] == input_edit_secret_account.value:
-                    # найден секрет для редактировния
-                    if selected_row["secret"]  == input_edit_secret_secret.value:
-                        # секрет апдейтить не надо, только комментарий
-                        update_secret_comment_result = update_secret_comment(input_edit_secret_system.value, input_edit_secret_account.value, input_edit_secret_comment.value, current_state)
-                        if not update_secret_comment_result[0]:
-                            ui.notify(update_secret_comment_result[1], type="negative")
-                            return
-                        ui.notify(f"Comment updated for {input_edit_secret_system.value}:{input_edit_secret_account.value}", type="positive")
-                    else:
-                        # апдейтим секрет и комментарий
-                        update_secret_secret_comment_result = update_secret_secret_comment(input_edit_secret_system.value, input_edit_secret_account.value, input_edit_secret_comment.value, input_edit_secret_secret.value, current_state)
-                        if not update_secret_secret_comment_result[0]:
-                            ui.notify(update_secret_secret_comment_result[1], type="negative")
-                            return
-                        ui.notify(f"Comment and secret updated for {input_edit_secret_system.value}:{input_edit_secret_account.value}", type="positive")
-                    
-                    # обновляем таблицу и возвращаем интерфейс на неё
-                    update_grid_secrets_list(grid_secrets_list, current_state)
-                    secrets_panels.set_value('Secrets')
+            if existing is not None:
+                # обновление существующего секрета
+                if secret == SECRET_MASK:
+                    # значение секрета не меняем -- обновляем только комментарий
+                    result = update_secret_comment(system, account, comment, current_state)
+                    success_message = f"Comment updated for {system}:{account}"
+                else:
+                    result = update_secret_secret_comment(system, account, comment, secret, current_state)
+                    success_message = f"Secret and comment updated for {system}:{account}"
+            else:
+                # создание нового секрета
+                if secret == "" or secret == SECRET_MASK:
+                    ui.notify("Empty secret", type="negative")
                     return
-            
-            # создаём новый секрет по 4 полям
-            create_secret_result = create_secret(input_edit_secret_system.value, input_edit_secret_account.value, input_edit_secret_comment.value, input_edit_secret_secret.value, current_state)
-            if not create_secret_result[0]:
-                ui.notify(create_secret_result[1], type="negative")
-                return
-            ui.notify(f"Secret {input_edit_secret_system.value}:{input_edit_secret_account.value} saved", type="positive")
+                result = create_secret(system, account, comment, secret, current_state)
+                success_message = f"Secret {system}:{account} created"
 
-            # обновляем таблицу и возвращаем интерфейс на неё
+            if not result[0]:
+                ui.notify(result[1], type="negative")
+                return
+
+            ui.notify(success_message, type="positive")
             update_grid_secrets_list(grid_secrets_list, current_state)
             secrets_panels.set_value('Secrets')
 
+        # кнопка "New" -- очистить форму для создания нового секрета
+        def new_button_of_secret_editor():
+            input_edit_secret_system.value  = ""
+            input_edit_secret_account.value = ""
+            input_edit_secret_secret.value  = ""
+            input_edit_secret_comment.value = ""
+
         # кнопка удаления секрета
         async def delete_button_of_secret_editor():
-            # получаем текущие значения до изменения
-            selected_row = (await grid_secrets_list.get_selected_row()) or {}
-            if not selected_row:
+            system  = input_edit_secret_system.value
+            account = input_edit_secret_account.value
+
+            # валидация полей
+            if not validate_itemname(system, current_state)[0]:
+                ui.notify("System is not valid", type="negative")
                 return
-            
-            # проверяем, что system соответствует правилу валидации
-            if not validate_itemname(input_edit_secret_system.value, current_state):
-                ui.notify(f"System is not valid: {validate_itemname(input_edit_secret_system.value, current_state)[1]}", type="negative")
+            if not validate_itemname(account, current_state)[0]:
+                ui.notify("Account is not valid", type="negative")
                 return
-            # проверяем, что account соответствует правилу валидации
-            if not validate_itemname(input_edit_secret_account.value, current_state):
-                ui.notify(f"Account is not valid: {validate_itemname(input_edit_secret_account.value, current_state)[1]}", type="negative")
-                return
-            
-            # получить из БД список секретов
+
+            # получаем актуальный список секретов
             db_get_secrets_list_result = db_get_secrets_list(current_state)
-            if not db_get_secrets_list_result[0]:
+            if db_get_secrets_list_result[0]:
+                actual_secrets = db_get_secrets_list_result[3]
+            elif db_get_secrets_list_result[1] == "db table is empty?":
+                actual_secrets = []
+            else:
                 logger_log(syslog.LOG_ERR, get_log_message(db_get_secrets_list_result[1], currentFuncName(), current_state))
                 ui.notify(db_get_secrets_list_result[1], type="negative")
                 return
-            
-            actual_secrets = db_get_secrets_list_result[3]
 
-            # Имеется ли в БД то, что мы хотим удалить?
+            exists = any(s["system"] == system and s["account"] == account for s in actual_secrets)
+            if not exists:
+                ui.notify(f"Secret {system}:{account} not found", type="negative")
+                return
 
-            for secret in actual_secrets:
-                if  secret["system"]  == input_edit_secret_system.value and \
-                    secret["account"] == input_edit_secret_account.value:
-                    # найден секрет для удаления
-                    delete_secret_result = delete_secret(input_edit_secret_system.value, input_edit_secret_account.value, input_edit_secret_comment.value, current_state)
-                    if not delete_secret_result[0]:
-                        ui.notify(delete_secret_result[1], type="negative")
-                        return
-                    ui.notify(f"Secret {input_edit_secret_system.value}:{input_edit_secret_account.value} deleted", type="positive")
+            delete_secret_result = delete_secret(system, account, current_state)
+            if not delete_secret_result[0]:
+                ui.notify(delete_secret_result[1], type="negative")
+                return
 
-                    # обновляем таблицу и возвращаем интерфейс на неё
-                    update_grid_secrets_list(grid_secrets_list, current_state)
-                    secrets_panels.set_value('Secrets')
-
-            ui.notify(f"Secret {input_edit_secret_system.value}:{input_edit_secret_account.value} not found", type="negative")
+            ui.notify(f"Secret {system}:{account} deleted", type="positive")
+            update_grid_secrets_list(grid_secrets_list, current_state)
+            secrets_panels.set_value('Secrets')
 
         # скелет интерфейса
         with interface_container:
@@ -971,6 +966,7 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     input_edit_secret_secret  = ui.input(label='Secret', password=True)
                     input_edit_secret_comment = ui.input(label='Comment')
                     with ui.row():
+                        button_secret_new    = ui.button("New").on_click(new_button_of_secret_editor)
                         button_secret_save   = ui.button("Save").on_click(save_button_of_secret_editor)
                         button_secret_delete = ui.button("Delete").on_click(delete_button_of_secret_editor)
 

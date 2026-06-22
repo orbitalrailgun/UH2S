@@ -24,7 +24,7 @@ import syslog
 from app.db import get_secret
 
 def main():
-    APP_NAME = "Neon Genesis Universal Harvester"
+    APP_NAME = "Universal Harvester 2 Scripted"
     APP_VERSION = "0.1.0"
 
     DUMMY_SESSION_ID = "00000000-0000-0000-0000-000000000000"

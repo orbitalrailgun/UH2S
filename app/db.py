@@ -536,7 +536,7 @@ def delete_secret(system, account, current_state):
 
         connection = create_db_connection_result[3]
 
-        query = f"""DELETE FROM secrets WHERE secret = '{system}' and account = '{account}';"""
+        query = f"""DELETE FROM secrets WHERE system = '{system}' and account = '{account}';"""
         cursor = connection.cursor()
         cursor.execute(query)
         cursor.close()
