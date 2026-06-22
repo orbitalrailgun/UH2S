@@ -448,7 +448,8 @@ def main_page(keycloak_openid, current_state):
             with ui.row().classes('items-center'):
                 execution_spinner = ui.spinner(size='lg').props('color=white')
                 execution_spinner.visible = False
-                execution_status = ui.label('').classes('text-sm')
+                execution_status = ui.label('').classes('text-sm').style(
+                    "font-family: 'Orbitron', 'Roboto', sans-serif; letter-spacing: 1px;")
             # ссылки на индикатор кладём в current_state, чтобы их видели обработчики draw_* (тот же объект)
             current_state["ui_spinner"] = execution_spinner
             current_state["ui_status"] = execution_status
