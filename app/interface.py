@@ -903,11 +903,12 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
         #         return False, f"There is not object_admin role for username {current_user}", currentFuncName(), None
         
         def _render_print(command, variables, result_map):
+            # PRINT всегда что-то рендерит (текст/таблица/значение) -> успех
             arg = (command.get("print_arg") or "").strip()
             # литерал в кавычках -> текст-комментарий
             if len(arg) >= 2 and ((arg[0] == arg[-1] == '"') or (arg[0] == arg[-1] == "'")):
                 ui.markdown(arg[1:-1], extras=['tables', 'fenced-code-blocks'])
-                return
+                return True
             # ссылка на таблицу данных (результат GET)?
             data = None
             if arg in result_map and result_map[arg][0]:
@@ -918,12 +919,13 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     data = value
                 else:
                     ui.markdown(f"**{arg}** = `{json.dumps(value, ensure_ascii=False, default=str)}`")
-                    return
+                    return True
             if data is not None:
                 ui.markdown(records_to_markdown(data), extras=['tables', 'fenced-code-blocks'])
-                return
+                return True
             # иначе — просто текст
             ui.markdown(arg, extras=['tables', 'fenced-code-blocks'])
+            return True
 
         def _render_show(command, variables, result_map):
             table = (command.get("show_table") or "").strip()
@@ -937,27 +939,36 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 data = variables[table]
 
             if not data:
-                ui.markdown(f"*SHOW: нет табличных данных «{table}»*")
-                return
+                reason = f"нет табличных данных «{table}»"
+                command["_info"] = reason
+                ui.markdown(f"*SHOW: {reason}*")
+                return False
 
             if show_type == "table":
                 ui.aggrid(records_to_aggrid_options(data, current_state.get("aggrid_theme", "ag-theme-balham-dark"))).classes('w-full h-[60vh]')
+                return True
             elif show_type in ("matplotlib", "plot"):
                 params = {}
                 if params_raw:
                     if json_validate(params_raw):
                         params = json.loads(params_raw)
                     else:
-                        ui.markdown("*SHOW: optional_params не является валидным JSON*")
-                        return
+                        command["_info"] = "optional_params не является валидным JSON"
+                        ui.markdown(f"*SHOW: {command['_info']}*")
+                        return False
                 try:
                     plot = render_plot_png_b64(data, params)
                     ui.image(f"data:image/png;base64,{plot['b64']}").style(
                         f"width: {plot['css_w']}px; max-width: 100%; height: auto")
+                    return True
                 except BaseException as plot_error:
-                    ui.markdown(f"*SHOW matplotlib error: {str(plot_error)}*")
+                    command["_info"] = f"matplotlib error: {str(plot_error)}"
+                    ui.markdown(f"*SHOW {command['_info']}*")
+                    return False
             else:
-                ui.markdown(f"*SHOW: неизвестный тип «{show_type}» (table | matplotlib)*")
+                command["_info"] = f"неизвестный тип «{show_type}» (table | matplotlib)"
+                ui.markdown(f"*SHOW: {command['_info']}*")
+                return False
 
         def _render_save(command, variables, result_map):
             tables = command.get("save_tables") or []
@@ -976,11 +987,13 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     missing.append(table)
 
             if missing:
-                ui.markdown(f"*SAVE: нет табличных данных: {', '.join(missing)}*")
-                return
+                command["_info"] = f"нет табличных данных: {', '.join(missing)}"
+                ui.markdown(f"*SAVE: {command['_info']}*")
+                return False
             if not tables_data:
-                ui.markdown("*SAVE: не указаны таблицы*")
-                return
+                command["_info"] = "не указаны таблицы"
+                ui.markdown(f"*SAVE: {command['_info']}*")
+                return False
 
             # базовое имя файла: AS filename -> имя таблицы (если одна) -> 'export'
             base_name = save_filename or (tables[0] if len(tables) == 1 else "export")
@@ -988,8 +1001,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             try:
                 content, filename, media_type = records_to_download(tables_data, fmt, base_name)
             except BaseException as save_error:
-                ui.markdown(f"*SAVE error: {str(save_error)}*")
-                return
+                command["_info"] = str(save_error)
+                ui.markdown(f"*SAVE error: {command['_info']}*")
+                return False
 
             try:
                 ui.download(content, filename, media_type)
@@ -997,6 +1011,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 ui.download(content, filename)
             total = sum(len(d) for d in tables_data.values())
             ui.markdown(f"💾 Скачивание **{filename}** ({len(tables_data)} табл., {total} строк)")
+            return True
 
         def _update_datavars(variables, result_map):
             rows = []
@@ -1094,10 +1109,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     return
 
                 variables, result_map = commands_executor_result[3]
-                # выполнение успешно: passthrough-шаги (DEF/CALC/SAVE/PRINT/SHOW) -> done
-                for command in parsed_command:
-                    if command["command"] in ("DEF", "CALC", "SAVE", "PRINT", "SHOW") and command.get("_status") == "pending":
-                        command["_status"] = "done"
+                # DEF/CALC помечены движком; PRINT/SHOW/SAVE статус получают по результату рендера ниже
 
                 # последовательный вывод PRINT/SHOW в порядке их следования в скрипте
                 card_results.clear()
@@ -1105,14 +1117,15 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     rendered = 0
                     for command in parsed_command:
                         if command["command"] == "PRINT":
-                            _render_print(command, variables, result_map)
-                            rendered += 1
+                            ok = _render_print(command, variables, result_map)
                         elif command["command"] == "SHOW":
-                            _render_show(command, variables, result_map)
-                            rendered += 1
+                            ok = _render_show(command, variables, result_map)
                         elif command["command"] == "SAVE":
-                            _render_save(command, variables, result_map)
-                            rendered += 1
+                            ok = _render_save(command, variables, result_map)
+                        else:
+                            continue
+                        command["_status"] = "done" if ok else "error"
+                        rendered += 1
                     if rendered == 0:
                         ui.markdown("_Выполнено. В скрипте нет команд PRINT/SHOW для вывода._")
 
