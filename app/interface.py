@@ -554,18 +554,21 @@ def main_page(keycloak_openid, current_state):
     with ui.header(elevated=True) as top_panel:
         with ui.row().classes('items-center'):
             menu_items = [
-                ("Settings", "Настройки", 'pets' , None),#lambda: draw_users(interface_container, current_state)),
-                ("Secrets", "Хранилище секретов", 'key', lambda: draw_secrets(interface_container, current_state)),
-                ("Objects", "Сохранённые объекты", 'source', lambda: draw_objects(interface_container, current_state)),
-                ("AI", "LLM чат получения и обработки данных", 'psychology', lambda: draw_ai(interface_container, current_state)),
-                ("Harvester", "Исполнение скриптов", 'rocket_launch', lambda: draw_harvester(interface_container, current_state)),
-                ("Logout", "Выход", 'logout', logout)
+                ("Settings", "Настройки", 'pets', "Settings"),
+                ("Secrets", "Хранилище секретов", 'key', "Secrets"),
+                ("Objects", "Сохранённые объекты", 'source', "Objects"),
+                ("AI", "LLM чат получения и обработки данных", 'psychology', "AI"),
+                ("Harvester", "Исполнение скриптов", 'rocket_launch', "Harvester"),
+                ("History", "История запусков", 'history', "History"),
+                ("Logout", "Выход", 'logout', "__logout__"),
             ]
-            for item, tooltip, icon, function in menu_items:
+            for item, tooltip, icon, target in menu_items:
                 menu_item = ui.button(item, icon=icon).tooltip(tooltip)
-                menu_item.on('click', function)
+                if target == "__logout__":
+                    menu_item.on('click', logout)
+                else:
+                    menu_item.on('click', lambda t=target: show_panel(t))
             ui.switch('Light Theme', value=theme == 'light', on_change=toggle_theme).classes('hover-glow')
-            #ui.label(f"USER SESSION: {current_state['user_session_id']}").classes('panel-item')
 
             # индикатор выполнения операций (справа от переключателя темы)
             with ui.row().classes('items-center'):
@@ -577,11 +580,30 @@ def main_page(keycloak_openid, current_state):
             current_state["ui_spinner"] = execution_spinner
             current_state["ui_status"] = execution_status
 
+    # persistent-вкладки: каждая панель строится ОДИН раз; переключение НЕ очищает интерфейс
+    panel_settings = ui.card().classes('w-full h-full')
+    panel_secrets = ui.card().classes('w-full h-full')
+    panel_objects = ui.card().classes('w-full h-full')
+    panel_ai = ui.card().classes('w-full h-full')
+    panel_harvester = ui.card().classes('w-full h-full')
+    panel_history = ui.card().classes('w-full h-full')
+    panels = {
+        "Settings": panel_settings, "Secrets": panel_secrets, "Objects": panel_objects,
+        "AI": panel_ai, "Harvester": panel_harvester, "History": panel_history,
+    }
 
+    def show_panel(name):
+        for panel_name, panel in panels.items():
+            panel.set_visibility(panel_name == name)
 
-    interface_container = ui.card()
-    with interface_container.classes('w-full h-full'):
-        pass
+    with panel_settings:
+        ui.label("Settings — не реализовано")
+    draw_secrets(panel_secrets, current_state)
+    draw_objects(panel_objects, current_state)
+    draw_ai(panel_ai, current_state)
+    draw_harvester(panel_harvester, current_state)
+    draw_history(panel_history, current_state)
+    show_panel("Harvester")
 
 def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
     try:
@@ -1187,6 +1209,20 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
         logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
         return False, error_message, currentFuncName(), None
     
+def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
+    """История запусков. Этап 1 — заглушка; наполнение в этапе 2 (таблица executions)."""
+    try:
+        logger_log(syslog.LOG_INFO, get_log_message("Starting", currentFuncName(), current_state))
+        interface_container.clear()
+        with interface_container:
+            ui.label("История запусков — будет реализована на этапе 2 (таблица executions).")
+        return True, "OK", currentFuncName(), None
+    except BaseException as e:
+        error_message = f"fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), None
+
+
 def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
     try:
         logger_log(syslog.LOG_INFO, get_log_message("Starting", currentFuncName(), current_state))
