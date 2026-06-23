@@ -84,12 +84,13 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                 def_names = set(c["variable_name"] for c in sub_commands if c["command"] == "DEF" and "variable_name" in c)
                 param_names = set(command["parameters"].keys())
 
-                # параметр без соответствующего DEF -> error
+                # параметр без соответствующего DEF -> error (с подсказкой допустимых параметров)
                 extra_params = param_names - def_names
                 if extra_params:
+                    available = ", ".join(sorted(def_names)) if def_names else "(в скрипте нет DEF)"
                     command["_status"] = "error"
-                    command["_info"] = f"параметры без DEF в скрипте: {", ".join(sorted(extra_params))}"
-                    error_message = f"script {script_object["name"]}: unknown parameters (no matching DEF): {", ".join(sorted(extra_params))}"
+                    command["_info"] = f"параметры без DEF: {", ".join(sorted(extra_params))}. Доступные параметры (DEF): {available}"
+                    error_message = f"script {script_object["name"]}: unknown parameters {", ".join(sorted(extra_params))}; available params (DEF): {available}"
                     logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                     return False, error_message, currentFuncName(), commands
 
