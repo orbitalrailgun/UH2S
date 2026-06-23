@@ -1,7 +1,7 @@
 from app.login import try_login
 from app.validation import check_current_user_status
 from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id
-from app.llm import llm_health_check
+from app.llm import llm_health_check, llm_context_window
 import syslog
 import asyncio
 import json
@@ -1379,7 +1379,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
             llm_status_label.set_text("🔄 проверка готовности…")
             ok, message = await run.io_bound(llm_health_check, llm_json, current_state)
             current_state["ui_selected_llm"] = {"name": name, "json": llm_json, "ready": ok}
-            llm_status_label.set_text(("✅ " if ok else "❌ ") + message)
+            llm_status_label.set_text(("✅ " if ok else "❌ ") + message + f" · контекст: {llm_context_window(llm_json)} ток.")
 
         with interface_container:
             with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):

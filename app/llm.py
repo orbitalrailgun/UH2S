@@ -7,6 +7,7 @@ from app.db import get_secret
 #   "type": "ollama" | "openai",          # провайдер: Ollama API или OpenAI-совместимый
 #   "url": "...",                          # см. ниже про точность url
 #   "model": "llama3.2",                   # имя модели
+#   "context_window": 8192,                # размер контекстного окна (токенов) — для бюджета промпта агента
 #   "request_timeout": 60,                 # таймаут запроса, сек
 #   "verify": true,                        # проверять TLS
 #   "key": {"system": "...", "account": "..."}  # опц.: секрет -> Bearer (нужен для openai)
@@ -17,6 +18,39 @@ from app.db import get_secret
 #             (функции обращаются к {url}/api/tags, {url}/api/chat)
 #   openai -> URL ДОЛЖЕН включать /v1, напр. "https://foundation-models.api.cloud.ru/v1"
 #             (функции обращаются к {url}/models, {url}/chat/completions — без добавления /v1)
+
+
+DEFAULT_CONTEXT_WINDOW = 8192
+
+
+def llm_context_window(llm_json):
+    """Размер контекстного окна (токены) из объекта llm; дефолт при отсутствии/ошибке."""
+    try:
+        context_window = int(llm_json.get("context_window", DEFAULT_CONTEXT_WINDOW))
+        return context_window if context_window > 0 else DEFAULT_CONTEXT_WINDOW
+    except (TypeError, ValueError):
+        return DEFAULT_CONTEXT_WINDOW
+
+
+def llm_estimate_tokens(text):
+    """Грубая (консервативная) оценка числа токенов: ~3 символа/токен.
+
+    Без внешнего токенайзера; для кириллицы токенов обычно больше, поэтому оценка
+    намеренно завышена — безопаснее для бюджетирования (не превысить контекст)."""
+    if not text:
+        return 0
+    return max(1, len(str(text)) // 3)
+
+
+def llm_truncate_to_tokens(text, max_tokens):
+    """Грубое усечение текста под бюджет токенов (по символам, ~3 симв/токен)."""
+    if max_tokens is None or max_tokens <= 0:
+        return ""
+    text = str(text)
+    max_chars = max_tokens * 3
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "…[truncated]"
 
 
 def _llm_resolve_key(llm_json, current_state):

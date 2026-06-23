@@ -510,6 +510,22 @@ class TestJiraUnfold(unittest.TestCase):
         self.assertNotIn("customfield_10010", flat)
 
 
+class TestLlmContext(unittest.TestCase):
+    def test_context_window(self):
+        from app.llm import llm_context_window
+        self.assertEqual(llm_context_window({"context_window": 16384}), 16384)
+        self.assertEqual(llm_context_window({}), 8192)            # дефолт
+        self.assertEqual(llm_context_window({"context_window": "x"}), 8192)
+        self.assertEqual(llm_context_window({"context_window": 0}), 8192)
+
+    def test_estimate_and_truncate(self):
+        from app.llm import llm_estimate_tokens, llm_truncate_to_tokens
+        self.assertEqual(llm_estimate_tokens("a" * 300), 100)     # ~3 симв/токен
+        self.assertEqual(llm_estimate_tokens(""), 0)
+        self.assertTrue(llm_truncate_to_tokens("x" * 100, 10).endswith("…[truncated]"))
+        self.assertEqual(llm_truncate_to_tokens("short", 1000), "short")
+
+
 class TestSequentialOutput(unittest.TestCase):
     def test_get_then_print_then_show(self):
         script = (
