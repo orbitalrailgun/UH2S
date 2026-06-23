@@ -482,6 +482,14 @@ class TestJiraUnfold(unittest.TestCase):
         self.assertEqual(flat["labels_0"], "db")                # список -> индексы
         self.assertNotIn("fields", flat)
 
+    def test_unfold_collapses_comments(self):
+        from app.sources.jira_sm import _unfold_issue
+        issue = {"key": "SD-1", "fields": {"summary": "x",
+                 "comment": {"total": 3, "comments": [{"body": "a"}, {"body": "b"}, {"body": "c"}]}}}
+        flat = _unfold_issue(issue)
+        self.assertEqual(flat["comment_count"], 3)              # не разворачиваем в столбцы
+        self.assertNotIn("comment_comments_0_body", flat)
+
 
 class TestSequentialOutput(unittest.TestCase):
     def test_get_then_print_then_show(self):

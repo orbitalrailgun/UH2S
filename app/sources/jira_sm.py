@@ -33,12 +33,20 @@ def _jira_headers(source):
 
 def _unfold_issue(issue):
     """Развернуть заявку Jira в плоский dict: поднять вложенный 'fields' на верхний уровень
-    и уплощить вложенные объекты/списки (status -> status_name, assignee -> assignee_displayName и т.п.)."""
+    и уплощить вложенные объекты/списки (status -> status_name, assignee -> assignee_displayName и т.п.).
+
+    Поле 'comment' (коллекция комментариев) не разворачивается в столбцы, а сводится к
+    comment_count (сами комментарии доступны через функцию get_issue_comments)."""
     if not isinstance(issue, dict):
         return issue
     merged = {k: v for k, v in issue.items() if k != "fields"}
     fields = issue.get("fields")
     if isinstance(fields, dict):
+        fields = dict(fields)
+        comment = fields.get("comment")
+        if isinstance(comment, dict) and "comments" in comment:
+            fields["comment_count"] = comment.get("total", len(comment.get("comments") or []))
+            del fields["comment"]
         merged.update(fields)
     return flatten_data(merged)
 
@@ -193,6 +201,63 @@ def execute_jira_get_issue_changelog(parameters, source_object, data_map, curren
 
     except Exception as e:
         error_message = f"jira get_issue_changelog fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), []
+
+
+def execute_jira_get_issue_comments(parameters, source_object, data_map, current_state):
+    """Комментарии заявки в виде таблицы (GET /rest/api/2/issue/{id}/comment, с пагинацией).
+
+    Параметры: issue_id -- id или ключ; limit -- максимум комментариев; raw -- (опц.) без раскрытия.
+    Возврат: list of dict — по строке на комментарий (id, author_*, body, created, updated, ... + issue_id)."""
+    import requests
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
+        query = parameters
+        source = source_object
+
+        issue_id = query["issue_id"]
+        try:
+            limit = int(query["limit"]) if query.get("limit") else 100
+        except (TypeError, ValueError):
+            limit = 100
+        raw_flag = _as_bool(query.get("raw", False))
+
+        verify = source["verify"] if "verify" in source else True
+        timeout = source["timeout"] if "timeout" in source else 60
+        url = source["url"].rstrip("/")
+        headers = _jira_headers(source)
+
+        data = []
+        start_at = 0
+        page_size = min(limit, 100)
+        while len(data) < limit:
+            request_params = {"startAt": start_at, "maxResults": page_size}
+            response = requests.get(f"{url}/rest/api/2/issue/{issue_id}/comment", headers=headers, params=request_params, verify=verify, timeout=timeout)
+            if response.status_code != 200:
+                return False, f"jira get_issue_comments http {response.status_code} ({response.text[:512]})", currentFuncName(), []
+            payload = response.json()
+            comments = payload.get("comments", [])
+            if not comments:
+                break
+            for comment in comments:
+                if raw_flag:
+                    data.append(comment)
+                else:
+                    row = flatten_data(comment)
+                    row["issue_id"] = issue_id
+                    data.append(row)
+                if len(data) >= limit:
+                    break
+            start_at += len(comments)
+            if start_at >= payload.get("total", 0):
+                break
+
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(data)} comments", currentFuncName(), current_state))
+        return True, str(len(data)), currentFuncName(), data
+
+    except Exception as e:
+        error_message = f"jira get_issue_comments fail: {str(e)}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
 
