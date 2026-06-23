@@ -461,6 +461,28 @@ class TestApplyScriptExec(unittest.TestCase):
         ])
 
 
+class TestJiraUnfold(unittest.TestCase):
+    def test_unfold_issue(self):
+        from app.sources.jira_sm import _unfold_issue
+        issue = {
+            "id": "10001", "key": "SD-123",
+            "fields": {
+                "summary": "Disk full",
+                "status": {"name": "Open", "id": "1"},
+                "assignee": {"displayName": "Ivan"},
+                "labels": ["db", "prod"],
+            },
+        }
+        flat = _unfold_issue(issue)
+        self.assertEqual(flat["id"], "10001")
+        self.assertEqual(flat["key"], "SD-123")
+        self.assertEqual(flat["summary"], "Disk full")          # fields поднят наверх
+        self.assertEqual(flat["status_name"], "Open")           # вложенный объект уплощён
+        self.assertEqual(flat["assignee_displayName"], "Ivan")
+        self.assertEqual(flat["labels_0"], "db")                # список -> индексы
+        self.assertNotIn("fields", flat)
+
+
 class TestSequentialOutput(unittest.TestCase):
     def test_get_then_print_then_show(self):
         script = (

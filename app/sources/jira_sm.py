@@ -31,6 +31,18 @@ def _jira_headers(source):
     return headers
 
 
+def _unfold_issue(issue):
+    """Развернуть заявку Jira в плоский dict: поднять вложенный 'fields' на верхний уровень
+    и уплощить вложенные объекты/списки (status -> status_name, assignee -> assignee_displayName и т.п.)."""
+    if not isinstance(issue, dict):
+        return issue
+    merged = {k: v for k, v in issue.items() if k != "fields"}
+    fields = issue.get("fields")
+    if isinstance(fields, dict):
+        merged.update(fields)
+    return flatten_data(merged)
+
+
 def execute_jira_search_issues(parameters, source_object, data_map, current_state):
     """Поиск заявок (issues) JSM по JQL (Jira REST API v2, POST /rest/api/2/search).
 
@@ -50,7 +62,7 @@ def execute_jira_search_issues(parameters, source_object, data_map, current_stat
             limit = 50
         fields = query.get("fields") if isinstance(query.get("fields"), list) and query.get("fields") else None
         expand = query.get("expand") or ""
-        flatten_flag = _as_bool(query.get("flatten", False))
+        raw_flag = _as_bool(query.get("raw", False))   # raw=true -> исходный JSON без раскрытия
 
         verify = source["verify"] if "verify" in source else True
         timeout = source["timeout"] if "timeout" in source else 60
@@ -74,7 +86,7 @@ def execute_jira_search_issues(parameters, source_object, data_map, current_stat
             if not issues:
                 break
             for issue in issues:
-                data.append(flatten_data(issue) if flatten_flag else issue)
+                data.append(issue if raw_flag else _unfold_issue(issue))
                 if len(data) >= limit:
                     break
             start_at += len(issues)
@@ -103,7 +115,7 @@ def execute_jira_get_issue(parameters, source_object, data_map, current_state):
 
         issue_id = query["issue_id"]
         expand = query.get("expand") or ""
-        flatten_flag = _as_bool(query.get("flatten", False))
+        raw_flag = _as_bool(query.get("raw", False))
 
         verify = source["verify"] if "verify" in source else True
         timeout = source["timeout"] if "timeout" in source else 60
@@ -119,12 +131,68 @@ def execute_jira_get_issue(parameters, source_object, data_map, current_state):
             return False, f"jira get_issue http {response.status_code} ({response.text[:512]})", currentFuncName(), []
 
         issue = response.json()
-        record = flatten_data(issue) if flatten_flag else issue
+        record = issue if raw_flag else _unfold_issue(issue)
         logger_log(syslog.LOG_DEBUG, get_log_message("done", currentFuncName(), current_state))
         return True, "OK", currentFuncName(), [record]
 
     except Exception as e:
         error_message = f"jira get_issue fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), []
+
+
+def execute_jira_get_issue_changelog(parameters, source_object, data_map, current_state):
+    """История изменений заявки (expand=changelog), развёрнутая в плоские строки.
+
+    Параметры: issue_id -- id или ключ; raw -- (опц.) вернуть исходные histories без раскрытия.
+    Возврат: list of dict — по строке на каждый item изменения (с метаданными history и заявки):
+      issue_id, issue_key, id (history), author_*, created, field, fieldtype, from, fromString, to, toString."""
+    import requests
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
+        query = parameters
+        source = source_object
+
+        issue_id = query["issue_id"]
+        raw_flag = _as_bool(query.get("raw", False))
+
+        verify = source["verify"] if "verify" in source else True
+        timeout = source["timeout"] if "timeout" in source else 60
+        url = source["url"].rstrip("/")
+        headers = _jira_headers(source)
+
+        response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params={"expand": "changelog"}, verify=verify, timeout=timeout)
+        if response.status_code != 200:
+            return False, f"jira get_issue_changelog http {response.status_code} ({response.text[:512]})", currentFuncName(), []
+
+        issue = response.json()
+        issue_key = issue.get("key")
+        histories = (issue.get("changelog") or {}).get("histories", []) or []
+
+        if raw_flag:
+            return True, str(len(histories)), currentFuncName(), histories
+
+        rows = []
+        for history in histories:
+            base = {k: v for k, v in history.items() if k != "items"}   # id, author, created
+            items = history.get("items") or []
+            if not items:
+                row = flatten_data(base)
+                row["issue_id"] = issue_id
+                row["issue_key"] = issue_key
+                rows.append(row)
+                continue
+            for item in items:
+                row = flatten_data({**base, **(item if isinstance(item, dict) else {"item": item})})
+                row["issue_id"] = issue_id
+                row["issue_key"] = issue_key
+                rows.append(row)
+
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(rows)} changelog rows", currentFuncName(), current_state))
+        return True, str(len(rows)), currentFuncName(), rows
+
+    except Exception as e:
+        error_message = f"jira get_issue_changelog fail: {str(e)}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
 
