@@ -1,7 +1,7 @@
 from app.login import try_login
 from app.validation import check_current_user_status
 from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id
-from app.llm import llm_health_check, llm_context_window
+from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat
 import syslog
 import asyncio
 import json
@@ -1391,14 +1391,80 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                 llm_status_label = ui.label("LLM не выбрана").classes('text-sm').style(
                     "font-family: 'Orbitron', 'Roboto', sans-serif;")
 
-                # окно чата (этап 4)
+                # окно чата с агентом
                 ui.separator()
-                ai_chat_panel = ui.element('div').classes('w-full').style('overflow-y: auto; padding: 4px 8px')
-                with ai_chat_panel:
-                    ui.markdown("_Чат с агентом — этап 4. Сейчас доступен выбор LLM и проверка готовности._")
+                conversation = []  # список реплик {role, content} текущей сессии (panel persistent)
+
+                def render_chat():
+                    chat_display.clear()
+                    with chat_display:
+                        if not conversation:
+                            ui.markdown("_Диалог пуст. Напишите запрос — например: «нужно получить алерты из thehive и обогатить данными из netbox»._")
+                        for message in conversation:
+                            who = "🧑 **Вы:**" if message["role"] == "user" else "🤖 **Агент:**"
+                            ui.markdown(f"{who}\n\n{message['content']}", extras=['tables', 'fenced-code-blocks'])
+
+                def accessible_objects_lines():
+                    get_all_actual_objects_result = get_all_actual_objects(current_state)
+                    objects = get_all_actual_objects_result[3] if get_all_actual_objects_result[0] else []
+                    roles = current_state.get("roles", [])
+                    lines = []
+                    for o in objects:
+                        object_roles = o.get("roles", []) or []
+                        if "fullmaster" in roles or any(r in object_roles for r in roles):
+                            lines.append(f"- {o['name']} ({o.get('type', '?')})")
+                    return lines
+
+                def recent_history_lines(limit=5):
+                    get_executions_result = get_executions(current_state.get("username", "unknown"), current_state, limit=limit)
+                    executions = get_executions_result[3] if get_executions_result[0] else []
+                    lines = []
+                    for e in executions[:limit]:
+                        status_text = "ok" if e["status"] == 1 else "fail"
+                        preview = " ".join((e.get("script") or "").split())[:120]
+                        lines.append(f"- [{status_text}] {preview}")
+                    return lines
+
+                async def send_message():
+                    selected = current_state.get("ui_selected_llm")
+                    if not selected or not selected.get("json"):
+                        ui.notify("Сначала выберите LLM и проверьте готовность", type="negative")
+                        return
+                    user_text = (ai_chat_input.value or "").strip()
+                    if not user_text:
+                        return
+                    conversation.append({"role": "user", "content": user_text})
+                    ai_chat_input.value = ""
+                    render_chat()
+
+                    spinner = current_state.get("ui_spinner")
+                    status = current_state.get("ui_status")
+                    if spinner is not None:
+                        spinner.visible = True
+                    if status is not None:
+                        status.set_text("AI думает…")
+                    try:
+                        system_prompt = build_agent_system_prompt(accessible_objects_lines(), recent_history_lines())
+                        messages = llm_build_messages(system_prompt, conversation, llm_context_window(selected["json"]))
+                        ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
+                        conversation.append({"role": "assistant", "content": reply if ok else f"⚠️ Ошибка LLM: {reply}"})
+                        render_chat()
+                    except BaseException as e:
+                        conversation.append({"role": "assistant", "content": f"⚠️ Ошибка: {str(e)}"})
+                        render_chat()
+                    finally:
+                        if spinner is not None:
+                            spinner.visible = False
+                        if status is not None:
+                            status.set_text("")
+
+                chat_display = ui.element('div').classes('w-full').style('flex: 1 1 auto; min-height: 30vh; overflow-y: auto; padding: 4px 8px; border: 1px solid var(--panel-bg)')
                 with ui.row().classes('w-full items-center'):
                     ai_chat_input = ui.input("Сообщение агенту").classes('grow')
-                    ui.button("Send", icon='send')  # подключим на этапе 4
+                    ai_chat_input.on('keydown.enter', lambda: send_message())
+                    ui.button("Send", icon='send').on_click(send_message)
+                    ui.button("Clear", icon='delete').on_click(lambda: (conversation.clear(), render_chat()))
+                render_chat()
 
     except BaseException as e:
         error_message = f"fail: {str(e)}"

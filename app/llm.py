@@ -53,6 +53,96 @@ def llm_truncate_to_tokens(text, max_tokens):
     return text[:max_chars] + "…[truncated]"
 
 
+# Краткая справка по DSL для системного промпта агента (компактно, чтобы влезать в контекст).
+PROJECT_DOC = """\
+Команды разделяются '|'. Комментарии /* ... */. Результат шага именуется через AS.
+- DEF <значение> AS <имя> — переменная (int/float/"строка"/true/false/[список]/{словарь}).
+- CALC(X, Y, operation[, optional]) AS Z — PLUS/MINUS/MULT/DEV/POW; TRIM/CONCAT/SPLIT/RE_SEARCH/RE_SUBSTRING; DATETIME_FORMAT/UNIXTIME_TO_DATETIME/DATETIME_TO_UNIXTIME.
+- GET <source>:<func>(параметры) AS data — вызов источника (коннектора).
+- GET script:<имя>(параметры) AS data — вызов сохранённого скрипта; параметры перекрывают его DEF.
+- GET APPLY:<data>(col AS x):[unique] <source:func | script:name>(... %(x)s ...) AS d — построчный fan-out.
+- PRINT(имя | "текст") — markdown-вывод. SHOW(table, table|matplotlib[, {params}]) — таблица/график.
+- SAVE(table | [t1,t2], xlsx|csv_in_zip|json_in_zip) [AS file] — скачивание.
+- NOTIFY notifier("текст") — уведомление.
+Подстановка переменных в параметры: %(имя)X, где X = s/i/f/b/l/d/x. Значения с запятыми задавать через DEF + %(v)d.
+In-memory SQL поверх собранных данных: sqlite3_im:query(queries=[...]), duckdb_im:query(type="table", queries=[...]).
+"""
+
+
+def build_agent_system_prompt(objects_lines, history_lines):
+    """Системный промпт агента: роль + краткая документация DSL + доступные объекты + история."""
+    parts = [
+        "Ты — ассистент Universal Harvester. Помогаешь пользователю писать и отлаживать "
+        "DSL-скрипты и объекты, объясняешь возможности. Отвечай на русском, кратко и по делу. "
+        "Скрипты оформляй в блоках кода.",
+        "# Язык скриптов (DSL)\n" + PROJECT_DOC,
+    ]
+    if objects_lines:
+        parts.append("# Доступные объекты (имя и тип)\n" + "\n".join(objects_lines))
+    if history_lines:
+        parts.append("# Недавние запуски пользователя\n" + "\n".join(history_lines))
+    return "\n\n".join(parts)
+
+
+def llm_build_messages(system_prompt, conversation, context_window):
+    """Собрать messages под бюджет контекста: system (усечён) + свежие реплики, сколько влезает."""
+    reserve_for_answer = max(512, context_window // 4)
+    budget = max(1024, context_window - reserve_for_answer)
+    system_prompt = llm_truncate_to_tokens(system_prompt, max(256, budget // 2))
+
+    used = llm_estimate_tokens(system_prompt)
+    kept = []
+    for message in reversed(conversation):
+        message_tokens = llm_estimate_tokens(message.get("content", ""))
+        if used + message_tokens > budget:
+            break
+        kept.append(message)
+        used += message_tokens
+    return [{"role": "system", "content": system_prompt}] + list(reversed(kept))
+
+
+def llm_chat(llm_json, messages, current_state):
+    """Отправить чат-запрос к LLM. Возврат (ok: bool, content_or_error: str).
+
+    ollama -> POST {url}/api/chat (options.num_ctx = context_window);
+    openai -> POST {url}/chat/completions (url уже включает /v1)."""
+    import requests
+    try:
+        provider = (llm_json.get("type") or "ollama").strip().lower()
+        url = (llm_json.get("url") or "").rstrip("/")
+        model = llm_json.get("model", "")
+        timeout = llm_json.get("request_timeout", 120)
+        verify = llm_json.get("verify", True)
+        headers = _llm_headers(llm_json, current_state)
+
+        if not url:
+            return False, "в объекте llm не задан url"
+
+        if provider == "ollama":
+            body = {"model": model, "messages": messages, "stream": False,
+                    "options": {"num_ctx": llm_context_window(llm_json)}}
+            response = requests.post(f"{url}/api/chat", json=body, headers=headers, verify=verify, timeout=timeout)
+            if response.status_code not in (200, 201):
+                return False, f"ollama chat http {response.status_code}: {response.text[:300]}"
+            return True, response.json().get("message", {}).get("content", "")
+
+        if provider in ("openai", "openai_compatible"):
+            body = {"model": model, "messages": messages, "stream": False}
+            response = requests.post(f"{url}/chat/completions", json=body, headers=headers, verify=verify, timeout=timeout)
+            if response.status_code not in (200, 201):
+                return False, f"openai chat http {response.status_code}: {response.text[:300]}"
+            choices = response.json().get("choices", [])
+            content = choices[0].get("message", {}).get("content", "") if choices else ""
+            return True, content
+
+        return False, f"неизвестный тип llm '{provider}' (ollama | openai)"
+
+    except Exception as e:
+        error_message = f"llm chat fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message
+
+
 def _llm_resolve_key(llm_json, current_state):
     """Достать токен из секрета по llm_json['key'] = {system, account}; иначе пустая строка."""
     key = llm_json.get("key")

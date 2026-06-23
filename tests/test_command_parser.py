@@ -525,6 +525,18 @@ class TestLlmContext(unittest.TestCase):
         self.assertTrue(llm_truncate_to_tokens("x" * 100, 10).endswith("…[truncated]"))
         self.assertEqual(llm_truncate_to_tokens("short", 1000), "short")
 
+    def test_build_messages_budget(self):
+        from app.llm import llm_build_messages
+        conversation = [
+            {"role": "user", "content": "a" * 6000},      # ~2000 токенов — должно отброситься
+            {"role": "assistant", "content": "b" * 60},
+            {"role": "user", "content": "c" * 60},
+        ]
+        messages = llm_build_messages("SYS", conversation, 2048)
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(messages[-1]["content"], "c" * 60)        # свежее сохранено
+        self.assertFalse(any(m["content"] == "a" * 6000 for m in messages))  # старое огромное отброшено
+
 
 class TestSequentialOutput(unittest.TestCase):
     def test_get_then_print_then_show(self):
