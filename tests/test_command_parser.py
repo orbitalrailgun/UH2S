@@ -353,6 +353,27 @@ class TestSave(unittest.TestCase):
         self.assertFalse(c["parsed"])
 
 
+class TestScriptCallParse(unittest.TestCase):
+    def test_script_call(self):
+        c = one('GET script:my_report(target="1.2.3.4", limit=1000) AS result')
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["source"], "script")        # зарезервированное слово
+        self.assertEqual(c["function"], "my_report")    # имя SCRIPT-объекта
+        self.assertEqual(c["data_name"], "result")
+        self.assertEqual(c["parameters"], {"target": '"1.2.3.4"', "limit": "1000"})
+
+
+class TestInjectedVariables(unittest.TestCase):
+    def test_injected_overrides_def(self):
+        from engine import commands_executor
+        cmds = command_parser("DEF 1 AS x | CALC(x, 2, PLUS) AS y", CS)
+        result = commands_executor(cmds, {**CS, "roles": [], "processes": 1}, {"x": 10})
+        self.assertTrue(result[0])
+        variables = result[3][0]
+        self.assertEqual(variables["x"], 10)   # переданный параметр перекрывает DEF 1
+        self.assertEqual(variables["y"], 12)   # CALC(x=10, 2, PLUS)
+
+
 class TestSequentialOutput(unittest.TestCase):
     def test_get_then_print_then_show(self):
         script = (

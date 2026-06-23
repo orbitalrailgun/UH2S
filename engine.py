@@ -8,12 +8,15 @@ from app.engine import command_parser, process_injections, get_source_function, 
 from app.db import get_actual_object_by_name, get_secret, get_source_threads_pool, get_user_by_username
 
 
-def commands_executor(commands:list,current_state:dict):
+def commands_executor(commands:list,current_state:dict,injected_variables:dict=None):
     # сначала последовательно считаем все def и calc
-    variables = {}
+    # injected_variables — параметры, переданные при вызове скрипта; перекрывают его DEF
+    injected_variables = injected_variables or {}
+    variables = dict(injected_variables)
     for command in commands:
         if command["command"] == "DEF":
-            variables[command['variable_name']] = command['variable_value']
+            if command['variable_name'] not in injected_variables:
+                variables[command['variable_name']] = command['variable_value']
         if command["command"] == "CALC":
             calc_result = execute_calc(command, variables, current_state)
             if not calc_result[0]:
@@ -38,6 +41,35 @@ def commands_executor(commands:list,current_state:dict):
     # получаем данные по источнику данных и функции
     for command in commands:
         if command["command"] == "GET":
+            # вызов сохранённого скрипта: GET script:<script_name>(params) AS result
+            # 'script' — зарезервированное ключевое слово в позиции source; имя объекта в позиции function
+            if command["source"] == "script":
+                get_script_object_result = get_actual_object_by_name(command["function"], "('script')", current_state)
+                if not get_script_object_result[0]:
+                    error_message = f"get script object {command["function"]} error: {get_script_object_result[1]}"
+                    logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+                    return False, error_message, currentFuncName(), commands
+
+                script_object = get_script_object_result[3]
+
+                # проверка ролей на объекте-скрипте
+                allow = False
+                for role in current_state["roles"]:
+                    if role == "fullmaster" or role in script_object["roles"]:
+                        allow = True
+                        break
+                if not allow:
+                    error_message = f"script object {script_object["name"]} is not allow for user {current_state["username"]}"
+                    logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+                    return False, error_message, currentFuncName(), commands
+
+                command["is_script"] = True
+                command["source_type"] = "script"     # чтобы get_command_dependency не падал
+                command["function_parameters"] = {}    # у скрипта нет схемы required-параметров
+                command["script_object"] = script_object
+                command["source_object"] = script_object
+                continue
+
             #получаем исполняемый объект по имени, тут исполняемым обектом может быть source или script
             get_actual_object_by_name_result = get_actual_object_by_name(command["source"], "('source', 'script')", current_state)
             if not get_actual_object_by_name_result[0]:
@@ -160,7 +192,9 @@ def commands_executor(commands:list,current_state:dict):
             print(executed_command)
             if executed_command.get("_status") == "pending":
                 executed_command["_status"] = "running"
-            if "apply" in executed_command:
+            if executed_command.get("is_script"):
+                results[executed_command["data_name"]] = run_script_command(executed_command, current_data_map, current_state)
+            elif "apply" in executed_command:
                 results[executed_command["data_name"]] = run_apply_command(executed_command, current_data_map, current_state)
             else:
                 results[executed_command["data_name"]] = run_command(executed_command, current_data_map, current_state)
@@ -271,3 +305,77 @@ def commands_executor(commands:list,current_state:dict):
 
     # SHOW/PRINT не трогаем, это делает интерфейс
     return True, "Done", currentFuncName(), (variables, result_map)
+
+
+MAX_SCRIPT_DEPTH = 10
+
+def run_script_command(command, data_map, current_state):
+    """Выполнить вложенный сохранённый скрипт: GET script:<name>(params) AS result.
+
+    Объект скрипта: {"script": "<тело DSL>", "return": "<имя данных или переменной>"}.
+    Параметры вызова типизируются и инъектируются в под-скрипт (перекрывают его DEF),
+    под-скрипт исполняется рекурсивно тем же движком, наружу возвращается значение по 'return'."""
+    try:
+        script_object = command["script_object"]
+        script_json = script_object["json"]
+        script_name = script_object["name"]
+
+        if "script" not in script_json:
+            error_message = f"script object '{script_name}' has no 'script' body"
+            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), {}
+        return_name = script_json.get("return")
+        if not return_name:
+            error_message = f"script object '{script_name}' has no 'return' name"
+            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), {}
+
+        # типизация переданных параметров -> переменные под-скрипта
+        injected_variables = {}
+        for key, value in command["parameters"].items():
+            if isinstance(value, str):
+                get_variable_type_result = get_variable_type(value, current_state)
+                injected_variables[key] = get_variable_type_result[3][1] if get_variable_type_result[0] else value
+            else:
+                injected_variables[key] = value
+
+        # защита от рекурсии/циклов
+        script_stack = current_state.get("_script_stack", [])
+        if script_name in script_stack:
+            error_message = f"script recursion cycle: {' -> '.join(script_stack + [script_name])}"
+            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), {}
+        if len(script_stack) >= MAX_SCRIPT_DEPTH:
+            error_message = f"script recursion too deep (>{MAX_SCRIPT_DEPTH})"
+            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), {}
+        sub_state = dict(current_state)
+        sub_state["_script_stack"] = script_stack + [script_name]
+
+        # парсинг и рекурсивное исполнение под-скрипта
+        sub_commands = command_parser(script_json["script"], sub_state)
+        sub_result = commands_executor(sub_commands, sub_state, injected_variables)
+        if not sub_result[0]:
+            error_message = f"script '{script_name}' error: {sub_result[1]}"
+            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), {}
+
+        sub_variables, sub_result_map = sub_result[3]
+
+        # возврат по json['return']: таблица (данные) или переменная
+        if return_name in sub_result_map and sub_result_map[return_name][0]:
+            data = sub_result_map[return_name][3]
+        elif return_name in sub_variables:
+            data = sub_variables[return_name]
+        else:
+            error_message = f"script '{script_name}' return '{return_name}' not found in its data/variables"
+            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), {}
+
+        info = str(len(data)) if isinstance(data, list) else "1"
+        return True, info, currentFuncName(), data
+
+    except BaseException as e:
+        error_message = f"run_script_command fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), {}
