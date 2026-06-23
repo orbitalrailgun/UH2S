@@ -5,6 +5,7 @@ import syslog
 import asyncio
 import json
 import uuid
+import time
 from nicegui import ui, app, Client, run
 from app.logging import get_log_message, logger_log, currentFuncName
 from typing import Dict, Any, Tuple
@@ -1081,6 +1082,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                             "font-family: 'Orbitron', 'Roboto', sans-serif;")
 
         async def button_script_click():
+            execution_start = time.monotonic()
             spinner = current_state.get("ui_spinner")
             status = current_state.get("ui_status")
             steps_timer = None
@@ -1197,7 +1199,8 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     } for step_command in (current_state.get("ui_steps") or [])]
                     execution_success = 1 if all(s["status"] not in ("error", "rejected") for s in history_steps) else 0
                     create_execution(str(uuid.uuid4()), current_state.get("username", "unknown"), execution_success,
-                                     {"script": codemirror_script.value, "steps": history_steps}, current_state)
+                                     {"script": codemirror_script.value, "steps": history_steps,
+                                      "duration_seconds": round(time.monotonic() - execution_start, 3)}, current_state)
                     history_refresh = current_state.get("ui_history_refresh")
                     if history_refresh is not None:
                         history_refresh()
@@ -1240,27 +1243,47 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
         logger_log(syslog.LOG_INFO, get_log_message("Starting", currentFuncName(), current_state))
         interface_container.clear()
         current_user = current_state.get("username", "unknown")
+        is_fullmaster = "fullmaster" in current_state.get("roles", [])
+        history_cache = {"executions": []}   # кэш загруженных записей (для поиска без обращений в БД)
 
-        def update_history_grid():
-            get_executions_result = get_executions(current_user, current_state)
-            executions = get_executions_result[3] if get_executions_result[0] else []
-            grid_data = [{
-                "id": e["id"],
-                "timestamp": e["timestamp"],
-                "status": "✅ ok" if e["status"] == 1 else "❌ fail",
-            } for e in executions]
+        def apply_history_filter():
+            search_text = (search_history_input.value or "").strip().lower()
+            grid_data = []
+            for e in history_cache["executions"]:
+                script = e.get("script") or ""
+                if search_text and search_text not in script.lower():
+                    continue
+                preview = " ".join(script.split())[:140]
+                grid_data.append({
+                    "timestamp": e["timestamp"],
+                    "owner": e["owner"],
+                    "status": "✅ ok" if e["status"] == 1 else "❌ fail",
+                    "duration": f'{e["duration"]:.3f}' if isinstance(e.get("duration"), (int, float)) else "",
+                    "script": preview,
+                    "id": e["id"],
+                })
             grid_history.options['columnDefs'] = [
-                {"headerName": "Timestamp", "field": "timestamp", "filter": True, "sortable": True, "minWidth": 220},
-                {"headerName": "Status", "field": "status", "filter": True, "sortable": True, "minWidth": 100},
-                {"headerName": "ID", "field": "id", "filter": True, "sortable": True, "minWidth": 300},
+                {"headerName": "Timestamp", "field": "timestamp", "filter": True, "sortable": True, "minWidth": 210},
+                {"headerName": "User", "field": "owner", "filter": True, "sortable": True, "minWidth": 120},
+                {"headerName": "Status", "field": "status", "filter": True, "sortable": True, "minWidth": 90},
+                {"headerName": "Duration, s", "field": "duration", "filter": True, "sortable": True, "minWidth": 110},
+                {"headerName": "Script", "field": "script", "filter": True, "sortable": True, "minWidth": 320, "tooltipField": "script"},
+                {"headerName": "ID", "field": "id", "filter": True, "sortable": True, "minWidth": 280},
             ]
             grid_history.options['rowData'] = grid_data
             grid_history.options['rowSelection'] = "single"
             grid_history.options['pagination'] = True
             grid_history.options['paginationPageSize'] = 20
             grid_history.options['enableCellTextSelection'] = True
+            grid_history.options['enableBrowserTooltips'] = True
             grid_history.options['domLayout'] = "normal"
             grid_history.update()
+
+        def update_history_grid():
+            owner = None if is_fullmaster else current_user
+            get_executions_result = get_executions(owner, current_state)
+            history_cache["executions"] = get_executions_result[3] if get_executions_result[0] else []
+            apply_history_filter()
 
         async def grid_history_click():
             selected_row = (await grid_history.get_selected_row()) or {}
@@ -1275,7 +1298,10 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
             codemirror_history.value = execution_json.get("script", "")
             steps_history_panel.clear()
             with steps_history_panel:
-                ui.markdown(f"**Статус:** {'✅ ok' if execution['status'] == 1 else '❌ fail'} · {execution['timestamp']}")
+                duration = execution_json.get("duration_seconds")
+                duration_text = f" · {duration:.3f} c" if isinstance(duration, (int, float)) else ""
+                ui.markdown(f"**Статус:** {'✅ ok' if execution['status'] == 1 else '❌ fail'} · "
+                            f"{execution.get('owner', '?')} · {execution['timestamp']}{duration_text}")
                 for step in execution_json.get("steps", []):
                     icon = STEP_ICONS.get(step.get("status", "pending"), "·")
                     info = step.get("info", "")
@@ -1285,9 +1311,11 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
         with interface_container:
             with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
-                with ui.row().classes('items-center'):
+                with ui.row().classes('items-center w-full'):
                     ui.label("История запусков").classes('text-lg')
                     ui.button("Refresh", icon='refresh').on_click(lambda: update_history_grid())
+                    search_history_input = ui.input("Поиск по тексту скрипта").classes('grow').on('keydown.enter', lambda: apply_history_filter())
+                    ui.button(icon='search').on_click(lambda: apply_history_filter())
                 grid_history = ui.aggrid({}).classes('w-full').style('height: 35vh')
                 grid_history.on("selectionChanged", grid_history_click)
                 ui.label("Скрипт")

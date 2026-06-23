@@ -702,7 +702,8 @@ def create_execution(execution_id, owner, status, json_object, current_state):
 
 
 def get_executions(owner, current_state, limit=500):
-    """Список запусков владельца (новые сверху). json не парсится (только метаданные)."""
+    """Список запусков (новые сверху). owner=None -> все владельцы (для fullmaster).
+    Возвращает id, owner, timestamp, status, duration, script (из json — для отображения и поиска)."""
     try:
         create_db_connection_result = create_db_connection(current_state)
         if create_db_connection_result[0] == False:
@@ -710,15 +711,32 @@ def get_executions(owner, current_state, limit=500):
         connection = create_db_connection_result[3]
         placeholder = create_db_connection_result[1]
 
-        query = f"SELECT id, owner, timestamp, status FROM executions WHERE owner LIKE {placeholder} ORDER BY timestamp DESC LIMIT {int(limit)};"
         cursor = connection.cursor()
-        cursor.execute(query, (owner,))
+        if owner is None:
+            query = f"SELECT id, owner, timestamp, status, json FROM executions ORDER BY timestamp DESC LIMIT {int(limit)};"
+            cursor.execute(query)
+        else:
+            query = f"SELECT id, owner, timestamp, status, json FROM executions WHERE owner LIKE {placeholder} ORDER BY timestamp DESC LIMIT {int(limit)};"
+            cursor.execute(query, (owner,))
         result = cursor.fetchall()
         cursor.close()
         connection.close()
 
-        columns = ["id", "owner", "timestamp", "status"]
-        executions = [dict(zip(columns, line)) for line in result] if result else []
+        executions = []
+        for line in (result or []):
+            record = dict(zip(["id", "owner", "timestamp", "status", "json"], line))
+            try:
+                parsed = json.loads(record["json"]) if record["json"] else {}
+            except BaseException:
+                parsed = {}
+            executions.append({
+                "id": record["id"],
+                "owner": record["owner"],
+                "timestamp": record["timestamp"],
+                "status": record["status"],
+                "duration": parsed.get("duration_seconds"),
+                "script": parsed.get("script", ""),
+            })
         return True, "Ok", currentFuncName(), executions
 
     except BaseException as e:
