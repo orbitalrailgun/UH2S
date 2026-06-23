@@ -20,7 +20,7 @@ from app.sources.youtrack import execute_youtrack_project_finder, execute_youtra
 from app.sources.gitlab import execute_gitlab_namespace_owner_request, execute_gitlab_search_request
 from app.sources.iris import execute_function_iris_get_alerts
 from app.sources.thehive import execute_thehive_get_alerts
-from app.sources.jira_sm import execute_jira_search_issues, execute_jira_get_issue, execute_jira_get_issue_changelog, execute_jira_get_issue_comments, execute_jira_search_cmdb
+from app.sources.jira_sm import execute_jira_search_issues, execute_jira_get_issue, execute_jira_get_issue_changelog, execute_jira_get_issue_comments, execute_jira_get_issue_worklogs, execute_jira_get_issue_attachments, execute_jira_get_issue_issuelinks, execute_jira_search_cmdb
 #from app.sources.teleport import execute_function_get_hosts_teleport
 from app.sources.dns import execute_dns_resolve
 from app.sources.mysql import execute_mysql
@@ -517,6 +517,43 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                 },
                 "functions":{
                     "query": execute_jira_get_issue_comments,
+                    #"converter": lambda: None
+                }
+            },
+            "get_issue_worklogs":{
+                "required":{
+                    "issue_id":"SD-123"
+                },
+                "unrequired":{
+                    "limit":100,
+                    "raw":False
+                },
+                "functions":{
+                    "query": execute_jira_get_issue_worklogs,
+                    #"converter": lambda: None
+                }
+            },
+            "get_issue_attachments":{
+                "required":{
+                    "issue_id":"SD-123"
+                },
+                "unrequired":{
+                    "raw":False
+                },
+                "functions":{
+                    "query": execute_jira_get_issue_attachments,
+                    #"converter": lambda: None
+                }
+            },
+            "get_issue_issuelinks":{
+                "required":{
+                    "issue_id":"SD-123"
+                },
+                "unrequired":{
+                    "raw":False
+                },
+                "functions":{
+                    "query": execute_jira_get_issue_issuelinks,
                     #"converter": lambda: None
                 }
             },

@@ -43,10 +43,18 @@ def _unfold_issue(issue):
     fields = issue.get("fields")
     if isinstance(fields, dict):
         fields = dict(fields)
-        comment = fields.get("comment")
-        if isinstance(comment, dict) and "comments" in comment:
-            fields["comment_count"] = comment.get("total", len(comment.get("comments") or []))
-            del fields["comment"]
+        # коллекции-словари ({inner_key: [...], total}) -> *_count (детали — в отдельных функциях)
+        for field_name, inner_key in (("comment", "comments"), ("worklog", "worklogs")):
+            value = fields.get(field_name)
+            if isinstance(value, dict) and inner_key in value:
+                fields[f"{field_name}_count"] = value.get("total", len(value.get(inner_key) or []))
+                del fields[field_name]
+        # коллекции-списки -> *_count
+        for field_name in ("attachment", "issuelinks"):
+            value = fields.get(field_name)
+            if isinstance(value, list):
+                fields[f"{field_name}_count"] = len(value)
+                del fields[field_name]
         merged.update(fields)
     return flatten_data(merged)
 
@@ -258,6 +266,136 @@ def execute_jira_get_issue_comments(parameters, source_object, data_map, current
 
     except Exception as e:
         error_message = f"jira get_issue_comments fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), []
+
+
+def execute_jira_get_issue_worklogs(parameters, source_object, data_map, current_state):
+    """Журналы работ (worklog) заявки таблицей (GET /rest/api/2/issue/{id}/worklog, с пагинацией).
+
+    Параметры: issue_id; limit -- максимум записей; raw -- (опц.) без раскрытия.
+    Возврат: list of dict (id, author_*, comment, started, timeSpent, timeSpentSeconds, ... + issue_id)."""
+    import requests
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
+        query = parameters
+        source = source_object
+
+        issue_id = query["issue_id"]
+        try:
+            limit = int(query["limit"]) if query.get("limit") else 100
+        except (TypeError, ValueError):
+            limit = 100
+        raw_flag = _as_bool(query.get("raw", False))
+
+        verify = source["verify"] if "verify" in source else True
+        timeout = source["timeout"] if "timeout" in source else 60
+        url = source["url"].rstrip("/")
+        headers = _jira_headers(source)
+
+        data = []
+        start_at = 0
+        page_size = min(limit, 100)
+        while len(data) < limit:
+            request_params = {"startAt": start_at, "maxResults": page_size}
+            response = requests.get(f"{url}/rest/api/2/issue/{issue_id}/worklog", headers=headers, params=request_params, verify=verify, timeout=timeout)
+            if response.status_code != 200:
+                return False, f"jira get_issue_worklogs http {response.status_code} ({response.text[:512]})", currentFuncName(), []
+            payload = response.json()
+            worklogs = payload.get("worklogs", [])
+            if not worklogs:
+                break
+            for worklog in worklogs:
+                if raw_flag:
+                    data.append(worklog)
+                else:
+                    row = flatten_data(worklog)
+                    row["issue_id"] = issue_id
+                    data.append(row)
+                if len(data) >= limit:
+                    break
+            start_at += len(worklogs)
+            if start_at >= payload.get("total", 0):
+                break
+
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(data)} worklogs", currentFuncName(), current_state))
+        return True, str(len(data)), currentFuncName(), data
+
+    except Exception as e:
+        error_message = f"jira get_issue_worklogs fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), []
+
+
+def _fetch_issue_field_list(parameters, source_object, current_state, field_name):
+    """Получить заявку с одним полем-списком (attachment/issuelinks) и вернуть (ok, info, rows).
+    Каждый элемент раскрывается в плоский dict + issue_id (raw=true -> исходные объекты)."""
+    import requests
+    query = parameters
+    source = source_object
+
+    issue_id = query["issue_id"]
+    raw_flag = _as_bool(query.get("raw", False))
+    verify = source["verify"] if "verify" in source else True
+    timeout = source["timeout"] if "timeout" in source else 60
+    url = source["url"].rstrip("/")
+    headers = _jira_headers(source)
+
+    response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params={"fields": field_name}, verify=verify, timeout=timeout)
+    if response.status_code != 200:
+        return False, f"http {response.status_code} ({response.text[:512]})", []
+
+    items = (response.json().get("fields") or {}).get(field_name)
+    if not isinstance(items, list):
+        items = []
+
+    rows = []
+    for item in items:
+        if raw_flag:
+            rows.append(item)
+        else:
+            row = flatten_data(item) if isinstance(item, dict) else {"value": item}
+            if isinstance(row, dict):
+                row["issue_id"] = issue_id
+            rows.append(row)
+    return True, str(len(rows)), rows
+
+
+def execute_jira_get_issue_attachments(parameters, source_object, data_map, current_state):
+    """Вложения заявки таблицей (поле fields.attachment). Тело файла не извлекается —
+    возвращаются метаданные и ссылка на скачивание (поле content).
+
+    Параметры: issue_id; raw -- (опц.). Возврат: list of dict (filename, size, mimeType, content (URL),
+    author_*, created, ... + issue_id)."""
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
+        ok, info, rows = _fetch_issue_field_list(parameters, source_object, current_state, "attachment")
+        if not ok:
+            logger_log(syslog.LOG_ERR, get_log_message(f"jira get_issue_attachments {info}", currentFuncName(), current_state))
+            return False, f"jira get_issue_attachments {info}", currentFuncName(), []
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {info} attachments", currentFuncName(), current_state))
+        return True, info, currentFuncName(), rows
+    except Exception as e:
+        error_message = f"jira get_issue_attachments fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), []
+
+
+def execute_jira_get_issue_issuelinks(parameters, source_object, data_map, current_state):
+    """Связи заявки таблицей (поле fields.issuelinks).
+
+    Параметры: issue_id; raw -- (опц.). Возврат: list of dict (type_name, type_inward/outward,
+    inwardIssue_key, outwardIssue_key, *_fields_summary, *_fields_status_name, ... + issue_id)."""
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
+        ok, info, rows = _fetch_issue_field_list(parameters, source_object, current_state, "issuelinks")
+        if not ok:
+            logger_log(syslog.LOG_ERR, get_log_message(f"jira get_issue_issuelinks {info}", currentFuncName(), current_state))
+            return False, f"jira get_issue_issuelinks {info}", currentFuncName(), []
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {info} issuelinks", currentFuncName(), current_state))
+        return True, info, currentFuncName(), rows
+    except Exception as e:
+        error_message = f"jira get_issue_issuelinks fail: {str(e)}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
 

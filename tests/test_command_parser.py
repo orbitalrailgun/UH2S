@@ -482,13 +482,20 @@ class TestJiraUnfold(unittest.TestCase):
         self.assertEqual(flat["labels_0"], "db")                # список -> индексы
         self.assertNotIn("fields", flat)
 
-    def test_unfold_collapses_comments(self):
+    def test_unfold_collapses_collections(self):
         from app.sources.jira_sm import _unfold_issue
         issue = {"key": "SD-1", "fields": {"summary": "x",
-                 "comment": {"total": 3, "comments": [{"body": "a"}, {"body": "b"}, {"body": "c"}]}}}
+                 "comment": {"total": 3, "comments": [{"body": "a"}, {"body": "b"}, {"body": "c"}]},
+                 "worklog": {"total": 2, "worklogs": [{"id": "1"}, {"id": "2"}]},
+                 "attachment": [{"filename": "a.txt"}, {"filename": "b.txt"}],
+                 "issuelinks": [{"id": "1"}]}}
         flat = _unfold_issue(issue)
-        self.assertEqual(flat["comment_count"], 3)              # не разворачиваем в столбцы
-        self.assertNotIn("comment_comments_0_body", flat)
+        self.assertEqual(flat["comment_count"], 3)
+        self.assertEqual(flat["worklog_count"], 2)
+        self.assertEqual(flat["attachment_count"], 2)
+        self.assertEqual(flat["issuelinks_count"], 1)
+        for noisy in ("comment_comments_0_body", "attachment_0_filename", "issuelinks_0_id", "worklog_worklogs_0_id"):
+            self.assertNotIn(noisy, flat)
 
 
 class TestSequentialOutput(unittest.TestCase):
