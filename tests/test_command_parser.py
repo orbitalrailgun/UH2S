@@ -374,6 +374,68 @@ class TestInjectedVariables(unittest.TestCase):
         self.assertEqual(variables["y"], 12)   # CALC(x=10, 2, PLUS)
 
 
+class TestApplyExec(unittest.TestCase):
+    """Исполнение APPLY (построчный fan-out) на фейковом источнике, без БД."""
+
+    def _apply_command(self, columns, parameters, unique, function_object):
+        return {
+            "command": "GET",
+            "apply": {"data": "src", "columns": columns, "unique": unique},
+            "parameters": parameters,
+            "function_object": function_object,
+            "source_object": {"json": {}},
+            "data_name": "out",
+        }
+
+    def test_fanout_and_dedup(self):
+        from app.engine import run_apply_command
+        fake = lambda params, sj, dm, cs: (True, "1", "fake", [{"resolved": params["target"]}])
+        cmd = self._apply_command([{"column": "ip", "as": "x"}], {"target": "%(x)s"}, ["resolved"], fake)
+        data_map = {"src": [{"ip": "1.1.1.1"}, {"ip": "2.2.2.2"}, {"ip": "1.1.1.1"}]}
+        res = run_apply_command(cmd, data_map, CS)
+        self.assertTrue(res[0])
+        self.assertEqual(res[3], [
+            {"resolved": "1.1.1.1", "applied_x": "1.1.1.1"},
+            {"resolved": "2.2.2.2", "applied_x": "2.2.2.2"},
+        ])
+
+    def test_multi_column(self):
+        from app.engine import run_apply_command
+        fake = lambda params, sj, dm, cs: (True, "1", "fake", [{"r": params["q"]}])
+        cmd = self._apply_command(
+            [{"column": "ip", "as": "x"}, {"column": "name", "as": "y"}],
+            {"q": "%(x)s-%(y)s"}, [], fake)
+        data_map = {"src": [{"ip": "1", "name": "a"}, {"ip": "2", "name": "b"}]}
+        res = run_apply_command(cmd, data_map, CS)
+        self.assertTrue(res[0])
+        self.assertEqual(res[3], [
+            {"r": "1-a", "applied_x": "1", "applied_y": "a"},
+            {"r": "2-b", "applied_x": "2", "applied_y": "b"},
+        ])
+
+    def test_empty_data(self):
+        from app.engine import run_apply_command
+        fake = lambda params, sj, dm, cs: (True, "1", "fake", [{"r": 1}])
+        cmd = self._apply_command([{"column": "ip", "as": "x"}], {"q": "%(x)s"}, [], fake)
+        res = run_apply_command(cmd, {"src": []}, CS)
+        self.assertTrue(res[0])
+        self.assertEqual(res[3], [])
+
+    def test_missing_column(self):
+        from app.engine import run_apply_command
+        fake = lambda params, sj, dm, cs: (True, "1", "fake", [{"r": 1}])
+        cmd = self._apply_command([{"column": "absent", "as": "x"}], {"q": "%(x)s"}, [], fake)
+        res = run_apply_command(cmd, {"src": [{"ip": "1"}]}, CS)
+        self.assertFalse(res[0])
+
+    def test_source_error_aborts(self):
+        from app.engine import run_apply_command
+        fake = lambda params, sj, dm, cs: (False, "boom", "fake", [])
+        cmd = self._apply_command([{"column": "ip", "as": "x"}], {"q": "%(x)s"}, [], fake)
+        res = run_apply_command(cmd, {"src": [{"ip": "1"}]}, CS)
+        self.assertFalse(res[0])
+
+
 class TestSequentialOutput(unittest.TestCase):
     def test_get_then_print_then_show(self):
         script = (
