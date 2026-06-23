@@ -31,19 +31,27 @@ def _jira_headers(source):
     return headers
 
 
-def _unfold_issue(issue):
+def _expand_with_names(expand):
+    """Добавить 'names' к expand (карта id->имя поля для раскрытия customfield_*)."""
+    parts = [p.strip() for p in (expand or "").split(",") if p.strip()]
+    if "names" not in parts:
+        parts.append("names")
+    return ",".join(parts)
+
+
+def _unfold_issue(issue, names=None):
     """Развернуть заявку Jira в плоский dict: поднять вложенный 'fields' на верхний уровень
     и уплощить вложенные объекты/списки (status -> status_name, assignee -> assignee_displayName и т.п.).
 
-    Поле 'comment' (коллекция комментариев) не разворачивается в столбцы, а сводится к
-    comment_count (сами комментарии доступны через функцию get_issue_comments)."""
+    Коллекции (comment/worklog/attachment/issuelinks) сводятся к *_count (детали — отдельными функциями).
+    Если задан names (из expand=names), поля customfield_* переименовываются в человекочитаемые имена."""
     if not isinstance(issue, dict):
         return issue
-    merged = {k: v for k, v in issue.items() if k != "fields"}
+    merged = {k: v for k, v in issue.items() if k not in ("fields", "names")}
     fields = issue.get("fields")
     if isinstance(fields, dict):
         fields = dict(fields)
-        # коллекции-словари ({inner_key: [...], total}) -> *_count (детали — в отдельных функциях)
+        # коллекции-словари ({inner_key: [...], total}) -> *_count
         for field_name, inner_key in (("comment", "comments"), ("worklog", "worklogs")):
             value = fields.get(field_name)
             if isinstance(value, dict) and inner_key in value:
@@ -55,6 +63,17 @@ def _unfold_issue(issue):
             if isinstance(value, list):
                 fields[f"{field_name}_count"] = len(value)
                 del fields[field_name]
+        # человекочитаемые имена для customfield_* (по карте names из expand=names)
+        if names:
+            renamed = {}
+            for key, value in fields.items():
+                target = key
+                if key.startswith("customfield_") and names.get(key):
+                    target = names[key]
+                    if target in renamed or target in merged:
+                        target = f"{target} [{key}]"   # снятие коллизии имён
+                renamed[target] = value
+            fields = renamed
         merged.update(fields)
     return flatten_data(merged)
 
@@ -85,6 +104,9 @@ def execute_jira_search_issues(parameters, source_object, data_map, current_stat
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
 
+        # для раскрытия customfield_* запрашиваем карту имён (expand=names), кроме raw-режима
+        request_expand = expand if raw_flag else _expand_with_names(expand)
+
         data = []
         start_at = 0
         page_size = min(limit, 100)
@@ -92,8 +114,8 @@ def execute_jira_search_issues(parameters, source_object, data_map, current_stat
             body = {"jql": jql, "startAt": start_at, "maxResults": page_size}
             if fields:
                 body["fields"] = fields
-            if expand:
-                body["expand"] = expand
+            if request_expand:
+                body["expand"] = request_expand
             response = requests.post(f"{url}/rest/api/2/search", headers=headers, json=body, verify=verify, timeout=timeout)
             if response.status_code != 200:
                 return False, f"jira search_issues http {response.status_code} ({response.text[:512]})", currentFuncName(), []
@@ -101,8 +123,9 @@ def execute_jira_search_issues(parameters, source_object, data_map, current_stat
             issues = payload.get("issues", [])
             if not issues:
                 break
+            names = payload.get("names") if not raw_flag else None
             for issue in issues:
-                data.append(issue if raw_flag else _unfold_issue(issue))
+                data.append(issue if raw_flag else _unfold_issue(issue, names))
                 if len(data) >= limit:
                     break
             start_at += len(issues)
@@ -138,16 +161,18 @@ def execute_jira_get_issue(parameters, source_object, data_map, current_state):
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
 
+        # для раскрытия customfield_* запрашиваем карту имён (expand=names), кроме raw-режима
+        request_expand = expand if raw_flag else _expand_with_names(expand)
         request_params = {}
-        if expand:
-            request_params["expand"] = expand
+        if request_expand:
+            request_params["expand"] = request_expand
 
         response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params=request_params, verify=verify, timeout=timeout)
         if response.status_code != 200:
             return False, f"jira get_issue http {response.status_code} ({response.text[:512]})", currentFuncName(), []
 
         issue = response.json()
-        record = issue if raw_flag else _unfold_issue(issue)
+        record = issue if raw_flag else _unfold_issue(issue, issue.get("names"))
         logger_log(syslog.LOG_DEBUG, get_log_message("done", currentFuncName(), current_state))
         return True, "OK", currentFuncName(), [record]
 

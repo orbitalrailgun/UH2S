@@ -497,6 +497,18 @@ class TestJiraUnfold(unittest.TestCase):
         for noisy in ("comment_comments_0_body", "attachment_0_filename", "issuelinks_0_id", "worklog_worklogs_0_id"):
             self.assertNotIn(noisy, flat)
 
+    def test_unfold_resolves_customfield_names(self):
+        from app.sources.jira_sm import _unfold_issue
+        names = {"customfield_10010": "Sprint", "customfield_10020": "Severity"}
+        issue = {"key": "SD-1", "names": names, "fields": {
+            "summary": "x", "customfield_10010": "Sprint 42",
+            "customfield_10020": {"value": "High"}, "customfield_99999": "z"}}
+        flat = _unfold_issue(issue, names)
+        self.assertEqual(flat["Sprint"], "Sprint 42")          # customfield -> человекочитаемое имя
+        self.assertEqual(flat["Severity_value"], "High")       # объектное значение -> имя + значение
+        self.assertEqual(flat["customfield_99999"], "z")       # без маппинга — как есть
+        self.assertNotIn("customfield_10010", flat)
+
 
 class TestSequentialOutput(unittest.TestCase):
     def test_get_then_print_then_show(self):
