@@ -596,6 +596,10 @@ def main_page(keycloak_openid, current_state):
         for panel_name, panel in panels.items():
             panel.set_visibility(panel_name == name)
 
+    # скрываем все панели до наполнения, чтобы они не мелькали при первичной отрисовке
+    for panel in panels.values():
+        panel.set_visibility(False)
+
     with panel_settings:
         ui.label("Settings — не реализовано")
     draw_secrets(panel_secrets, current_state)
@@ -850,7 +854,7 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     update_grid_objects_list(grid_objects_list, current_state)
             
         with interface_container:
-            with ui.tabs().classes('w-full h-full') as tabs:
+            with ui.tabs().classes('w-full') as tabs:
                 tab_objects_list = ui.tab('Objects list')
                 tab_one_object = ui.tab('Object info')
                 tab_object_editor = ui.tab('Object editor')
@@ -1252,7 +1256,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
         
         # скелет интерфейса
         with interface_container:
-            with ui.tabs().classes('w-full h-full') as tabs:
+            with ui.tabs().classes('w-full') as tabs:
                 tab_chat = ui.tab('Chat')
                 #tab_history = ui.tab('History')
                 tab_knowledgebase = ui.tab('Knowledge base')
@@ -1472,7 +1476,7 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
         # скелет интерфейса
         with interface_container:
-            with ui.tabs().classes('w-full h-full') as tabs:
+            with ui.tabs().classes('w-full') as tabs:
                 tab_secrets = ui.tab('Secrets')
                 tab_edit_secrets = ui.tab('Edit/create')
             with ui.tab_panels(tabs, value=tab_secrets).classes('w-full h-full') as secrets_panels:
