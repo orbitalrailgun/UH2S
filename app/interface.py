@@ -1249,6 +1249,7 @@ def run_agent_script(script_text, current_state):
     """Выполнить сгенерированный агентом скрипт и вернуть компактную сводку результата (для LLM).
     Запуск идёт от имени текущего пользователя (по его ролям); пишется в историю с пометкой agent."""
     try:
+        agent_run_start = time.monotonic()
         parsed = command_parser(script_text, current_state)
         parse_errors = [c for c in parsed if not c.get("parsed", True)]
         if parse_errors:
@@ -1265,13 +1266,14 @@ def run_agent_script(script_text, current_state):
             + (f" — {c.get('_info')}" if c.get("_info") else "")
             for c in parsed)
 
-        # запись в историю как агентский запуск
+        # запись в историю как агентский запуск (с длительностью)
         try:
             history_steps = [{"command": c.get("command"), "label": _step_label(c),
                               "status": c.get("_status", "pending"), "info": c.get("_info", "")} for c in parsed]
             create_execution(str(uuid.uuid4()), current_state.get("username", "unknown"),
                              1 if result[0] else 0,
-                             {"script": script_text, "steps": history_steps, "agent": True}, current_state)
+                             {"script": script_text, "steps": history_steps, "agent": True,
+                              "duration_seconds": round(time.monotonic() - agent_run_start, 3)}, current_state)
             history_refresh = current_state.get("ui_history_refresh")
             if history_refresh is not None:
                 history_refresh()
@@ -1318,6 +1320,7 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 grid_data.append({
                     "timestamp": e["timestamp"],
                     "owner": e["owner"],
+                    "source": "🤖 agent" if e.get("agent") else "ручной",
                     "status": "✅ ok" if e["status"] == 1 else "❌ fail",
                     "duration": f'{e["duration"]:.3f}' if isinstance(e.get("duration"), (int, float)) else "",
                     "script": preview,
@@ -1326,6 +1329,7 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
             grid_history.options['columnDefs'] = [
                 {"headerName": "Timestamp", "field": "timestamp", "filter": True, "sortable": True, "minWidth": 210},
                 {"headerName": "User", "field": "owner", "filter": True, "sortable": True, "minWidth": 120},
+                {"headerName": "Source", "field": "source", "filter": True, "sortable": True, "minWidth": 100},
                 {"headerName": "Status", "field": "status", "filter": True, "sortable": True, "minWidth": 90},
                 {"headerName": "Duration, s", "field": "duration", "filter": True, "sortable": True, "minWidth": 110},
                 {"headerName": "Script", "field": "script", "filter": True, "sortable": True, "minWidth": 320, "tooltipField": "script"},
@@ -1511,7 +1515,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                         status.set_text("AI думает…")
                     try:
                         context_window = llm_context_window(selected["json"])
-                        max_iterations = 5   # лимит цикла «ответ -> запуск -> ответ»
+                        max_iterations = 8   # лимит цикла «ответ -> запуск -> ответ»
                         for iteration in range(max_iterations):
                             system_prompt = build_agent_system_prompt(accessible_objects_lines(), recent_history_lines(), describe_sources_catalog())
                             messages = llm_build_messages(system_prompt, conversation, context_window)
@@ -1536,7 +1540,14 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             if status is not None:
                                 status.set_text("AI думает…")
                         else:
-                            conversation.append({"role": "assistant", "content": "_(достигнут лимит итераций выполнения)_"})
+                            # лимит автозапусков исчерпан — просим финальный вариант без выполнения
+                            conversation.append({"role": "user", "content":
+                                "Достигнут лимит автозапусков. Приведи лучший финальный вариант скрипта в блоке "
+                                "```harvester и краткий итог (что получилось, что осталось проверить вручную). Не используй ```run."})
+                            system_prompt = build_agent_system_prompt(accessible_objects_lines(), recent_history_lines(), describe_sources_catalog())
+                            messages = llm_build_messages(system_prompt, conversation, context_window)
+                            ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
+                            conversation.append({"role": "assistant", "content": reply if ok else f"⚠️ Ошибка LLM: {reply}"})
                             render_chat()
                     except BaseException as e:
                         conversation.append({"role": "assistant", "content": f"⚠️ Ошибка: {str(e)}"})

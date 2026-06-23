@@ -736,6 +736,7 @@ def get_executions(owner, current_state, limit=500):
                 "status": record["status"],
                 "duration": parsed.get("duration_seconds"),
                 "script": parsed.get("script", ""),
+                "agent": bool(parsed.get("agent", False)),
             })
         return True, "Ok", currentFuncName(), executions
 
