@@ -1256,6 +1256,11 @@ def run_agent_script(script_text, current_state):
             return "ОШИБКА ПАРСИНГА: " + "; ".join(
                 f"{c.get('command', '?')}: {c.get('parsed_comment', '?')}" for c in parse_errors)
 
+        # на этапе подготовки агент НЕ выполняет SHOW/SAVE — это вывод для человека;
+        # все данные агенту возвращаются ниже (переменные + таблицы как list of dict)
+        skipped_human_output = sorted({c.get("command") for c in parsed if c.get("command") in ("SHOW", "SAVE")})
+        parsed = [c for c in parsed if c.get("command") not in ("SHOW", "SAVE")]
+
         for c in parsed:
             c["_status"] = "pending"
             c["_info"] = ""
@@ -1288,13 +1293,14 @@ def run_agent_script(script_text, current_state):
         for name, res in result_map.items():
             if res[0] and isinstance(res[3], list):
                 rows = res[3]
-                cols = list(rows[0].keys())[:30] if rows and isinstance(rows[0], dict) else []
-                sample = json.dumps(rows[0], ensure_ascii=False, default=str)[:400] if rows else ""
-                data_lines.append(f"  - {name}: {len(rows)} строк; колонки: {cols}; пример: {sample}")
+                columns = list(rows[0].keys())[:40] if rows and isinstance(rows[0], dict) else []
+                sample = json.dumps(rows[:5], ensure_ascii=False, default=str)
+                data_lines.append(f"  - {name}: {len(rows)} строк; колонки: {columns}\n    первые строки (list of dict): {sample}")
         data_text = "\n".join(data_lines) if data_lines else "  (нет табличных данных)"
-        var_text = ", ".join(f"{k}={json.dumps(v, ensure_ascii=False, default=str)[:60]}"
-                             for k, v in variables.items()) if variables else "—"
-        return f"ВЫПОЛНЕНИЕ ОК\nШаги:\n{steps_text}\nДанные:\n{data_text}\nПеременные: {var_text}"
+        var_text = json.dumps(variables, ensure_ascii=False, default=str)[:800] if variables else "—"
+        skipped_note = f"\n(SHOW/SAVE пропущены на этапе подготовки: {', '.join(skipped_human_output)})" if skipped_human_output else ""
+        return (f"ВЫПОЛНЕНИЕ ОК{skipped_note}\nШаги:\n{steps_text}\n"
+                f"Данные (все таблицы скрипта, list of dict):\n{data_text}\nПеременные: {var_text}")
 
     except BaseException as e:
         return f"ОШИБКА ВЫПОЛНЕНИЯ: {str(e)}"
