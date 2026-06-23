@@ -822,6 +822,96 @@ def get_variable_type(text:str, current_state:dict):
         
 
 
+def _calc_tz(opt):
+    """Часовой пояс для datetime-операций: UTC по умолчанию, иначе zoneinfo по имени."""
+    import datetime
+    if opt is None or opt == "":
+        return datetime.timezone.utc
+    from zoneinfo import ZoneInfo
+    return ZoneInfo(str(opt))
+
+
+def _resolve_calc_operand(token, variables, current_state):
+    """Операнд CALC: имя переменной -> её значение; иначе литерал через get_variable_type."""
+    token = str(token).strip()
+    if token in variables:
+        return variables[token]
+    gvt = get_variable_type(token, current_state)
+    if gvt[0]:
+        return gvt[3][1]
+    raise ValueError(f"cannot resolve operand '{token}' (not a variable or literal)")
+
+
+def execute_calc(command, variables, current_state):
+    """Вычислить CALC(X, Y, operation[, optional]) -> значение для переменной result_name.
+
+    Математика (X, Y — int/float): PLUS, MINUS, MULT, DEV (деление), POW (степень; optional или Y).
+    Текст: TRIM (strip X, optional=символы; Y игнор.), CONCAT (X+Y, optional=разделитель),
+           SPLIT (X по Y, optional=maxsplit -> list), RE_SEARCH (Y в X -> bool),
+           RE_SUBSTRING (первое совпадение Y в X, optional=номер группы).
+    Datetime-как-текст: DATETIME_FORMAT (X из формата Y в формат optional),
+           UNIXTIME_TO_DATETIME (X unixtime -> формат Y, optional=tz),
+           DATETIME_TO_UNIXTIME (X из формата Y -> int, optional=tz)."""
+    import datetime
+    op = (command.get("operation") or "").strip().upper()
+    try:
+        x = _resolve_calc_operand(command["calc_x"], variables, current_state)
+        y = _resolve_calc_operand(command["calc_y"], variables, current_state)
+        opt = None
+        if command.get("calc_optional") not in (None, ""):
+            opt = _resolve_calc_operand(command["calc_optional"], variables, current_state)
+
+        if op in ("PLUS", "MINUS", "MULT", "DEV", "POW"):
+            for operand in (x, y):
+                if isinstance(operand, bool) or not isinstance(operand, (int, float)):
+                    raise ValueError(f"{op} requires int/float operands")
+            if op == "PLUS":
+                result = x + y
+            elif op == "MINUS":
+                result = x - y
+            elif op == "MULT":
+                result = x * y
+            elif op == "DEV":
+                if y == 0:
+                    raise ValueError("division by zero")
+                result = x / y
+            else:  # POW
+                exponent = opt if opt is not None else y
+                if isinstance(exponent, bool) or not isinstance(exponent, (int, float)):
+                    raise ValueError("POW exponent must be int/float")
+                result = x ** exponent
+
+        elif op == "TRIM":
+            result = str(x).strip(str(opt)) if opt is not None else str(x).strip()
+        elif op == "CONCAT":
+            result = (str(x) + str(opt) + str(y)) if opt is not None else (str(x) + str(y))
+        elif op == "SPLIT":
+            separator = str(y) if (y is not None and y != "") else None
+            result = str(x).split(separator, int(opt)) if opt is not None else str(x).split(separator)
+        elif op == "RE_SEARCH":
+            result = re.search(str(y), str(x)) is not None
+        elif op == "RE_SUBSTRING":
+            match_obj = re.search(str(y), str(x))
+            result = "" if match_obj is None else match_obj.group(int(opt) if opt is not None else 0)
+        elif op == "DATETIME_FORMAT":
+            if opt is None:
+                raise ValueError("DATETIME_FORMAT requires output format in optional")
+            result = datetime.datetime.strptime(str(x), str(y)).strftime(str(opt))
+        elif op == "UNIXTIME_TO_DATETIME":
+            result = datetime.datetime.fromtimestamp(float(x), _calc_tz(opt)).strftime(str(y))
+        elif op == "DATETIME_TO_UNIXTIME":
+            result = int(datetime.datetime.strptime(str(x), str(y)).replace(tzinfo=_calc_tz(opt)).timestamp())
+        else:
+            raise ValueError(f"unknown operation '{op}'")
+
+        return True, "OK", currentFuncName(), result
+
+    except BaseException as e:
+        error_message = f"CALC {op} error: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), None
+
+
 def split_top_level(text, separator=','):
     """Разбить text по separator только на верхнем уровне вложенности.
     Разделители внутри (), [], {} и внутри строк '...'/"..." игнорируются,
@@ -966,16 +1056,29 @@ def command_parser(text:str, current_state:dict):
                         command["parameters"][splitted[0].strip(" ")] = splitted[1].strip(" ")
 
             case "CALC":
-                # CALC foo + bar as foobar
-                match = re.search(r"^\s*(\S+)\s*(\+|\*|-)\s*(\S+)\s+(as|AS|As|as)\s+(\S+)\s*$", command["line"])
-                if match:
-                    command["variable_name_1"] = match.group(1).strip(" ")
-                    command["operation"] = match.group(2).strip(" ")
-                    command["variable_name_2"] = match.group(3).strip(" ")
-                    command["result_name"] = match.group(5).strip(" ")
-                else:
+                # CALC(X, Y, operation[, optional]) AS Z
+                calc_line = command["line"].strip()
+                as_match = re.search(r'^(.*\))\s+(?:as|AS|As|aS)\s+(\S+)\s*$', calc_line, flags=re.DOTALL)
+                if not as_match:
                     command["parsed"] = False
-                    command["parsed_comment"] = "not recognized"
+                    command["parsed_comment"] = "CALC format: CALC(X, Y, operation[, optional]) AS Z"
+                else:
+                    command["result_name"] = as_match.group(2).strip()
+                    calc_body = as_match.group(1).strip()
+                    inner_match = re.search(r"^\((.*)\)$", calc_body, flags=re.DOTALL)
+                    if not inner_match:
+                        command["parsed"] = False
+                        command["parsed_comment"] = "CALC format: CALC(X, Y, operation[, optional]) AS Z"
+                    else:
+                        calc_args = [a.strip() for a in split_top_level(inner_match.group(1), ',')]
+                        if len(calc_args) < 3:
+                            command["parsed"] = False
+                            command["parsed_comment"] = "CALC needs at least (X, Y, operation)"
+                        else:
+                            command["calc_x"] = calc_args[0]
+                            command["calc_y"] = calc_args[1]
+                            command["operation"] = calc_args[2].strip('"\'')
+                            command["calc_optional"] = calc_args[3] if len(calc_args) >= 4 else None
 
             case "PRINT":
                 # PRINT(variable_or_table) -> вывод значения/таблицы в markdown

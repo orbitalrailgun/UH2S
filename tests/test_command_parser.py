@@ -11,7 +11,7 @@
 """
 import unittest
 
-from app.engine import command_parser, get_variable_type
+from app.engine import command_parser, get_variable_type, execute_calc
 
 try:
     from app.engine import split_top_level
@@ -153,14 +153,93 @@ class TestApply(unittest.TestCase):
         self.assertEqual(c["apply"]["columns"], [{"column": "GAS", "as": "g"}])
 
 
-class TestCalc(unittest.TestCase):
-    def test_calc(self):
-        c = one("CALC a + b AS c")
+class TestCalcParse(unittest.TestCase):
+    def test_calc_basic(self):
+        c = one("CALC(a, b, PLUS) AS c")
         self.assertTrue(c["parsed"])
-        self.assertEqual(c["variable_name_1"], "a")
-        self.assertEqual(c["operation"], "+")
-        self.assertEqual(c["variable_name_2"], "b")
+        self.assertEqual(c["calc_x"], "a")
+        self.assertEqual(c["calc_y"], "b")
+        self.assertEqual(c["operation"], "PLUS")
+        self.assertIsNone(c["calc_optional"])
         self.assertEqual(c["result_name"], "c")
+
+    def test_calc_with_optional(self):
+        c = one('CALC(ts, "%Y-%m-%d %H:%M:%S", DATETIME_FORMAT, "%d.%m.%Y") AS d')
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["calc_x"], "ts")
+        self.assertEqual(c["calc_y"], '"%Y-%m-%d %H:%M:%S"')
+        self.assertEqual(c["operation"], "DATETIME_FORMAT")
+        self.assertEqual(c["calc_optional"], '"%d.%m.%Y"')
+        self.assertEqual(c["result_name"], "d")
+
+    def test_calc_too_few_args(self):
+        c = one("CALC(a, PLUS) AS c")
+        self.assertFalse(c["parsed"])
+
+
+CS_VARS = {"app_name": "test", "app_version": "0", "username": "tester"}
+
+
+def calc(x, y, operation, optional=None, variables=None):
+    command = {"calc_x": x, "calc_y": y, "operation": operation, "calc_optional": optional}
+    return execute_calc(command, variables or {}, CS_VARS)
+
+
+class TestCalcExec(unittest.TestCase):
+    def test_plus(self):
+        self.assertEqual(calc("2", "3", "PLUS")[3], 5)
+
+    def test_minus_vars(self):
+        self.assertEqual(calc("a", "b", "MINUS", variables={"a": 10, "b": 4})[3], 6)
+
+    def test_mult(self):
+        self.assertEqual(calc("2.5", "4", "MULT")[3], 10.0)
+
+    def test_dev(self):
+        self.assertEqual(calc("10", "4", "DEV")[3], 2.5)
+
+    def test_dev_zero(self):
+        self.assertFalse(calc("1", "0", "DEV")[0])
+
+    def test_pow_with_y(self):
+        self.assertEqual(calc("2", "10", "POW")[3], 1024)
+
+    def test_pow_with_optional(self):
+        self.assertEqual(calc("2", "0", "POW", optional="3")[3], 8)
+
+    def test_math_non_numeric(self):
+        self.assertFalse(calc('"x"', "1", "PLUS")[0])
+
+    def test_trim(self):
+        self.assertEqual(calc('"  hi  "', '""', "TRIM")[3], "hi")
+
+    def test_concat(self):
+        self.assertEqual(calc('"a"', '"b"', "CONCAT")[3], "ab")
+
+    def test_concat_sep(self):
+        self.assertEqual(calc('"a"', '"b"', "CONCAT", optional='"-"')[3], "a-b")
+
+    def test_split(self):
+        self.assertEqual(calc('"a,b,c"', '","', "SPLIT")[3], ["a", "b", "c"])
+
+    def test_re_search_true(self):
+        self.assertTrue(calc('"abc123"', '"\\d+"', "RE_SEARCH")[3])
+
+    def test_re_substring(self):
+        self.assertEqual(calc('"abc123def"', '"\\d+"', "RE_SUBSTRING")[3], "123")
+
+    def test_datetime_format(self):
+        r = calc('"2026-06-23 10:30:00"', '"%Y-%m-%d %H:%M:%S"', "DATETIME_FORMAT", optional='"%d.%m.%Y"')
+        self.assertEqual(r[3], "23.06.2026")
+
+    def test_datetime_to_unixtime_and_back(self):
+        ts = calc('"2026-06-23 00:00:00"', '"%Y-%m-%d %H:%M:%S"', "DATETIME_TO_UNIXTIME")[3]
+        self.assertIsInstance(ts, int)
+        back = calc(str(ts), '"%Y-%m-%d %H:%M:%S"', "UNIXTIME_TO_DATETIME")[3]
+        self.assertEqual(back, "2026-06-23 00:00:00")
+
+    def test_unknown_op(self):
+        self.assertFalse(calc("1", "2", "NOPE")[0])
 
 
 class TestNotify(unittest.TestCase):

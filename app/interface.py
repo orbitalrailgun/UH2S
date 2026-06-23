@@ -253,7 +253,7 @@ def _step_label(command):
     if kind == "NOTIFY":
         return f"NOTIFY {command.get('notifier', '?')}"
     if kind == "CALC":
-        return f"CALC {command.get('result_name', '?')}"
+        return f"CALC {command.get('operation', '?')}({command.get('calc_x', '?')}, {command.get('calc_y', '?')}) → {command.get('result_name', '?')}"
     return kind
 
 
@@ -1092,10 +1092,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 commands_executor_result = await run.io_bound(commands_executor, parsed_command, current_state)
                 if not commands_executor_result[0]:
                     logger_log(syslog.LOG_ERR, get_log_message(commands_executor_result[1], currentFuncName(), current_state))
-                    # ни один GET/NOTIFY не стартовал -> это ошибка валидации/пре-флайта
-                    started = any(c.get("_status") in ("running", "done", "error")
-                                  for c in parsed_command if c["command"] in ("GET", "NOTIFY"))
-                    if not started:
+                    # если конкретный шаг уже помечен error — ошибка на нём, валидация остаётся done;
+                    # иначе это ошибка пре-флайта/резолва -> помечаем валидацию
+                    if not any(c.get("_status") == "error" for c in parsed_command):
                         validation_step["_status"] = "error"
                         validation_step["_info"] = commands_executor_result[1]
                     # все ещё не выполненные шаги отклонены: после ошибки они не запустятся

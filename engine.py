@@ -4,7 +4,7 @@ import multiprocessing
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
 #from app.validation import json_validate
-from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, get_variable_type, get_notifier_function
+from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, get_variable_type, get_notifier_function, execute_calc
 from app.db import get_actual_object_by_name, get_secret, get_source_threads_pool, get_user_by_username
 
 
@@ -15,8 +15,14 @@ def commands_executor(commands:list,current_state:dict):
         if command["command"] == "DEF":
             variables[command['variable_name']] = command['variable_value']
         if command["command"] == "CALC":
-            # реализовать базовые функции integer, float, datetime, string
-            pass
+            calc_result = execute_calc(command, variables, current_state)
+            if not calc_result[0]:
+                if "_status" in command:
+                    command["_status"] = "error"
+                    command["_info"] = calc_result[1]
+                logger_log(syslog.LOG_ERR, get_log_message(f"{calc_result[1]}", currentFuncName(), current_state))
+                return False, calc_result[1], currentFuncName(), {}
+            variables[command["result_name"]] = calc_result[3]
         # после присваивания идёт инъектирование. Инъектирование можно перенести и вне (после всех def и calc)
         if "parameters" in command:
             variables2command_injection_result = process_injections(command['parameters'], variables, current_state)
