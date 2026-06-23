@@ -5,7 +5,7 @@ from app.logging import get_log_message, logger_log, currentFuncName
 from app.validation import json_validate
 
 # импорт источников
-from app.sources.netbox import execute_netbox_finder, execute_netbox_search_cidr_by_ipaddress
+from app.sources.netbox import execute_netbox_search, execute_netbox_search_cidr_by_ipaddress
 from app.sources.elastic import execute_elasctic_query_via_client, execute_elasctic_aggs_via_client, execute_function_linux_pid_hierarchy_elastic, execute_function_linux_pid_siblings_elastic
 from app.sources.elastic_requests import execute_elastic_query as execute_elasctic_query_via_requests, execute_elastic_aggs as execute_elasctic_aggs_via_requests, execute_function_linux_pid_hierarchy_elastic_requests, execute_function_linux_pid_siblings_elastic_requests
 from app.sources.opensearch import execute_opensearch_query, execute_opensearch_aggs
@@ -239,13 +239,17 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
     },
     "netbox":{
         "functions":{
-            "finder":{
+            "search":{
                 "required":{
-                    "target":"127.0.0.1",
-                    "fast_flag":False
+                    "target":"127.0.0.1"
+                },
+                "unrequired":{
+                    "object_types":["ipam/ip-addresses","ipam/prefixes","dcim/devices","virtualization/virtual-machines"],
+                    "limit":50,
+                    "flatten":False
                 },
                 "functions":{
-                    "query": execute_netbox_finder,
+                    "query": execute_netbox_search,
                     #"converter": lambda: None
                 }
             },
@@ -253,22 +257,23 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                 "required":{
                     "target":"127.0.0.1"
                 },
+                "unrequired":{
+                    "flatten":False
+                },
                 "functions":{
                     "query": execute_netbox_search_cidr_by_ipaddress,
                     #"converter": lambda: None
                 }
             }
-        }, 
+        },
         "required":{
             "url":"https://netbox.example.ru",
-            "host":"netbox.example.ru",
-            "port":443,
-            #"auth_type":"api_key",
             "timeout": 60,
+            #"key":{"system":"foo", "account":"bar"},
             "max_threads":10
-        }, 
+        },
         "unrequired":{
-            "use_ssl":True
+            "verify":True
         }
     },
     "manticoresearch":{

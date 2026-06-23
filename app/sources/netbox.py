@@ -1,174 +1,145 @@
-import json
 import ipaddress
-#from netbox import Netbox
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.sources.additional.flatten import flatten_data
 
-def execute_netbox_search_cidr_by_ipaddress(parameters, source_object, data_map, current_state):
+# Типы объектов для общего поиска (как в строке поиска NetBox). Перекрывается параметром object_types.
+NETBOX_DEFAULT_OBJECT_TYPES = [
+    "ipam/ip-addresses",
+    "ipam/prefixes",
+    "ipam/ip-ranges",
+    "ipam/aggregates",
+    "ipam/vlans",
+    "ipam/vrfs",
+    "dcim/devices",
+    "dcim/interfaces",
+    "dcim/sites",
+    "dcim/racks",
+    "virtualization/virtual-machines",
+    "virtualization/interfaces",
+    "tenancy/tenants",
+    "tenancy/contacts",
+    "circuits/circuits",
+]
+
+
+def _netbox_headers(source):
+    return {
+        'Authorization': f'Token {source["key"]["value"]}',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+    }
+
+
+def execute_netbox_search(parameters, source_object, data_map, current_state):
+    """Общий поиск по NetBox (REST API 4.x), аналог строки поиска.
+
+    Параметры:
+      target        -- строка поиска (передаётся как ?q= в каждый тип объекта);
+      object_types  -- (опц.) список путей API для поиска (по умолчанию NETBOX_DEFAULT_OBJECT_TYPES);
+      limit         -- (опц.) максимум записей на тип объекта (по умолчанию 50);
+      flatten       -- (опц., bool) уплощить вложенные поля (по умолчанию False — полные объекты).
+
+    Возврат: list of dict — найденные объекты со всеми полями, помеченные полем object_type."""
     import requests
     try:
+        logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
         query = parameters
         source = source_object
-        
-        headers = {
-            'Authorization': f'Token {source["key"]["value"]}',
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-        response = requests.get( f'{source["url"]}/api/ipam/prefixes/?contains={query["target"]}', headers=headers)
 
-        if response.status_code != 200:
-            return False, f"response.status_code is not 200: {response.status_code}", currentFuncName(), []
-        
-        response_data = response.json()
+        target = query["target"]
+        object_types = query["object_types"] if query.get("object_types") else NETBOX_DEFAULT_OBJECT_TYPES
+        limit = int(query["limit"]) if query.get("limit") else 50
+        flatten_flag = bool(query.get("flatten", False))
+        verify = source["verify"] if "verify" in source else True
+        timeout = source["timeout"] if "timeout" in source else 60
 
-        if response_data['count'] <= 0:
-            return True, f"Not found", currentFuncName(), []
-        
-        if "results" not in response_data:
-            return False, f"Results node not found", currentFuncName(), []
-        
-        base_depth = -1
+        headers = _netbox_headers(source)
+        base_url = source["url"].rstrip("/")
+
         data = []
-        for result in response_data["results"]:
-            if "_depth" not in result:
-                continue
-            if result["_depth"] > base_depth:
-                data = [flatten_data(result)]
-                base_depth = result["_depth"]
-        
-        if len(data) == 1:
-            return True, "ОК", currentFuncName(), data
-        else:
-            return False, "_depth in result not found?", currentFuncName(), data
+        for object_type in object_types:
+            collected = 0
+            page_size = min(limit, 1000)
+            next_url = f"{base_url}/api/{object_type}/?q={target}&limit={page_size}"
+            while next_url and collected < limit:
+                response = requests.get(next_url, headers=headers, verify=verify, timeout=timeout)
+                if response.status_code != 200:
+                    # не валим весь поиск из-за одного типа (может быть 400/403) — логируем и идём дальше
+                    logger_log(syslog.LOG_WARNING, get_log_message(
+                        f"netbox search {object_type} http {response.status_code}", currentFuncName(), current_state))
+                    break
+                payload = response.json()
+                for result in payload.get("results", []):
+                    record = flatten_data(result) if flatten_flag else result
+                    if isinstance(record, dict):
+                        record["object_type"] = object_type
+                    data.append(record)
+                    collected += 1
+                    if collected >= limit:
+                        break
+                next_url = payload.get("next")
 
-    except BaseException as e:
-        error_message = f"fail: {str(e)}"
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(data)} objects", currentFuncName(), current_state))
+        return True, str(len(data)), currentFuncName(), data
+
+    except Exception as e:
+        error_message = f"netbox search fail: {str(e)}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
 
-def netbox_finder(target, url, token_netbox, fast_mode):
-    import requests
-    netbox = {'target': target}
-    potential_contacts = set()
-    try:
-        headers = {
-            'Authorization': f'Token {token_netbox}',
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-        response = requests.get( f'{url}/api/ipam/ip-addresses/?q={target}/', headers=headers)
 
+def execute_netbox_search_cidr_by_ipaddress(parameters, source_object, data_map, current_state):
+    """Поиск ближайшего наименьшего (наиболее специфичного) префикса, содержащего IP.
+
+    Если отдельной записи об IP нет, возвращает самую узкую сеть из NetBox, в которую входит адрес.
+    Параметры: target -- IP-адрес; flatten -- (опц.) уплощить результат.
+    Возврат: list of dict (0 или 1 элемент)."""
+    import requests
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
+        query = parameters
+        source = source_object
+
+        target = query["target"]
+        flatten_flag = bool(query.get("flatten", False))
+        verify = source["verify"] if "verify" in source else True
+        timeout = source["timeout"] if "timeout" in source else 60
+
+        headers = _netbox_headers(source)
+        base_url = source["url"].rstrip("/")
+
+        response = requests.get(f"{base_url}/api/ipam/prefixes/?contains={target}", headers=headers, verify=verify, timeout=timeout)
         if response.status_code != 200:
             return False, f"response.status_code is not 200: {response.status_code}", currentFuncName(), []
-        
-        response_data = response.json()
 
-        if response_data['count'] <= 0:
-            return True, f"Not found", currentFuncName(), []
-        
-        result = response_data['results'][0]
+        results = response.json().get("results", [])
+        if not results:
+            return True, "not found", currentFuncName(), []
 
-        if result.get('description'):
-            netbox['description'] = result['description']
+        # среди содержащих адрес префиксов выбираем самый специфичный (наибольшая длина маски)
+        best = None
+        best_prefixlen = -1
+        for result in results:
+            prefix = result.get("prefix")
+            if not prefix:
+                continue
+            try:
+                network = ipaddress.ip_network(prefix, strict=False)
+            except ValueError:
+                continue
+            if network.prefixlen > best_prefixlen:
+                best_prefixlen = network.prefixlen
+                best = result
 
-        device_url = ''
-        if result["assigned_object"]:
-            if 'device' in result["assigned_object"]:
-                netbox['hostname'] = result["assigned_object"]['device']['display']
-                device_url = f'{url}/api/dcim/devices/?q={netbox["hostname"]}'
+        if best is None:
+            return True, "not found", currentFuncName(), []
 
-            elif 'virtual_machine' in result["assigned_object"]:
-                netbox['hostname'] = result["assigned_object"]['virtual_machine']['display']
-                device_url = f'{url}/api/virtualization/virtual-machines/?q={netbox["hostname"]}'
-
-            if device_url:
-                device_response = requests.get(device_url, headers=headers).json()
-                if device_response['count'] > 0:
-                    device_result = device_response['results'][0]
-                    # тут неплохо было бы отдельно приносить список custom_fields в query и пробегаться по нему
-                    if device_result['description']:
-                                    netbox['description_of_assignment'] = device_result['description']
-                    if device_result['custom_fields'].get('owner'):
-                                    netbox['owner'] = device_result['custom_fields']['owner']
-                    if device_result['custom_fields'].get('Service owner'):
-                                    netbox['service owner'] = device_result['custom_fields']['Service owner']
-                    if device_result['custom_fields'].get('team'):
-                                    netbox['team'] = device_result['custom_fields']['team']
-                    if device_result['custom_fields'].get('product'):
-                                    netbox['product'] = device_result['custom_fields']['product']
-                    if device_result['custom_fields'].get('project'):
-                                    netbox['project'] = device_result['custom_fields']['project']
-                    if device_result['custom_fields'].get('cluster'):
-                                    netbox['cluster'] = device_result['custom_fields']['cluster']
-                    if device_result['custom_fields'].get('ssh_custom_key'):
-                                    netbox['ssh_custom_key'] = device_result['custom_fields']['ssh_custom_key']
-                    if device_result['custom_fields'].get('ssh_keys_groups'):
-                                    netbox['ssh_keys_groups'] = device_result['custom_fields']['ssh_keys_groups']
-                    if device_result['custom_fields'].get('ssh_keys_groups'):
-                                    netbox['ssh_keys_groups'] = device_result['custom_fields']['ssh_keys_groups']
-                    if device_result['custom_fields'].get('project_name'):
-                                    netbox['project_name'] = device_result['custom_fields']['project_name']
-                    if device_result['custom_fields'].get('env'):
-                                    netbox['env'] = device_result['custom_fields']['env']
-                    if fast_mode == False:
-                                contacts_response = requests.get(
-                                    f'{url}/api/tenancy/contact-assignments/?object_id={device_result["id"]}',
-                                    headers=headers
-                                )
-
-                                if contacts_response.status_code == 200:
-                                    contacts_data = contacts_response.json()
-
-                                    if contacts_data['count'] > 0:
-                                        for contact in contacts_data['results']:
-                                            potential_contacts.add(contact['contact']['display'])
-        if fast_mode == False:
-            way = []
-            prefix_response = requests.get(f'{url}/api/ipam/prefixes/?q={target}', headers=headers)
-            if prefix_response.status_code == 200:
-                prefix_data = prefix_response.json()
-
-                if prefix_data['count'] > 0:
-                    for prefix in prefix_data['results']:
-                        if prefix.get('description'):
-                            way.append(f'{prefix["display"]} ({prefix["description"]})')
-                        else:
-                            way.append(f'{prefix["display"]} (No info)')
-
-                    netbox['description_of_subnet'] = ' -> '.join(way).lower()
-
-            else:
-                netbox['errors'] = f'{prefix_response.status_code}: Netbox search is not performed'
-            netbox['potential_contacts'] = ', '.join(sorted(potential_contacts))
-
-    except requests.exceptions.RequestException as e:
-            return False, f'Error connecting to Netbox API: {e}', currentFuncName(), []
-
-    except KeyError as e:
-            return False, f'KeyError: {e}. Check configuration or parameters.', currentFuncName(), []
+        record = flatten_data(best) if flatten_flag else best
+        logger_log(syslog.LOG_DEBUG, get_log_message("done", currentFuncName(), current_state))
+        return True, "OK", currentFuncName(), [record]
 
     except Exception as e:
-            return False, f'Unexpected error occurred: {e}', currentFuncName(), []
-    
-    return True, f"OK", currentFuncName(), [{k: v for k, v in netbox.items() if v}]
-
-
-#def execute_netbox_finder(data_map, source, query, step, parameters, current_state):
-def execute_netbox_finder(parameters, source_object, data_map, current_state):
-    query = parameters
-    source = source_object
-    logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
-    try:
-        netbox_finder_result = netbox_finder(query["target"], f"{source["url"]}", source["key"]["value"], query["fast_flag"]) # раньше был source["url"][0]
-        if netbox_finder_result[0] == False:
-                error_message = f"netbox_finder fail: {netbox_finder_result[1]}"
-                logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
-                return False, error_message, currentFuncName(), []
-        logger_log(syslog.LOG_DEBUG, get_log_message("done", currentFuncName(), current_state))
-        return True, "ОК", currentFuncName(), netbox_finder_result[3]
-    except BaseException as e:
-        error_message = f"fail: {str(e)}"
+        error_message = f"netbox search_cidr_by_ip fail: {str(e)}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
