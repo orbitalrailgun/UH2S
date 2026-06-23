@@ -230,7 +230,10 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
             if executed_command.get("_status") == "pending":
                 executed_command["_status"] = "running"
             if executed_command.get("is_script"):
-                results[executed_command["data_name"]] = run_script_command(executed_command, current_data_map, current_state)
+                if "apply" in executed_command:
+                    results[executed_command["data_name"]] = run_apply_script_command(executed_command, current_data_map, current_state)
+                else:
+                    results[executed_command["data_name"]] = run_script_command(executed_command, current_data_map, current_state)
             elif "apply" in executed_command:
                 results[executed_command["data_name"]] = run_apply_command(executed_command, current_data_map, current_state)
             else:
@@ -350,73 +353,114 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
 
 MAX_SCRIPT_DEPTH = 10
 
-def run_script_command(command, data_map, current_state):
-    """Выполнить вложенный сохранённый скрипт: GET script:<name>(params) AS result.
-
-    Объект скрипта: {"script": "<тело DSL>", "return": "<имя данных или переменной>"}.
-    Параметры вызова типизируются и инъектируются в под-скрипт (перекрывают его DEF),
-    под-скрипт исполняется рекурсивно тем же движком, наружу возвращается значение по 'return'."""
-    try:
-        script_object = command["script_object"]
-        script_json = script_object["json"]
-        script_name = script_object["name"]
-
-        if "script" not in script_json:
-            error_message = f"script object '{script_name}' has no 'script' body"
-            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-            return False, error_message, currentFuncName(), {}
-        return_name = script_json.get("return")
-        if not return_name:
-            error_message = f"script object '{script_name}' has no 'return' name"
-            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-            return False, error_message, currentFuncName(), {}
-
-        # типизация переданных параметров -> переменные под-скрипта
-        injected_variables = {}
-        for key, value in command["parameters"].items():
-            if isinstance(value, str):
-                get_variable_type_result = get_variable_type(value, current_state)
-                injected_variables[key] = get_variable_type_result[3][1] if get_variable_type_result[0] else value
-            else:
-                injected_variables[key] = value
-
-        # защита от рекурсии/циклов
-        script_stack = current_state.get("_script_stack", [])
-        if script_name in script_stack:
-            error_message = f"script recursion cycle: {' -> '.join(script_stack + [script_name])}"
-            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-            return False, error_message, currentFuncName(), {}
-        if len(script_stack) >= MAX_SCRIPT_DEPTH:
-            error_message = f"script recursion too deep (>{MAX_SCRIPT_DEPTH})"
-            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-            return False, error_message, currentFuncName(), {}
-        sub_state = dict(current_state)
-        sub_state["_script_stack"] = script_stack + [script_name]
-
-        # под-скрипт уже распарсен и провалидирован на этапе резолва
-        sub_commands = command.get("sub_commands") or command_parser(script_json["script"], sub_state)
-        sub_result = commands_executor(sub_commands, sub_state, injected_variables)
-        if not sub_result[0]:
-            error_message = f"script '{script_name}' error: {sub_result[1]}"
-            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-            return False, error_message, currentFuncName(), {}
-
-        sub_variables, sub_result_map = sub_result[3]
-
-        # возврат по json['return']: таблица (данные) или переменная
-        if return_name in sub_result_map and sub_result_map[return_name][0]:
-            data = sub_result_map[return_name][3]
-        elif return_name in sub_variables:
-            data = sub_variables[return_name]
+def _type_script_params(parameters, current_state):
+    """Типизация параметров вызова -> значения-переменные для под-скрипта."""
+    injected = {}
+    for key, value in parameters.items():
+        if isinstance(value, str):
+            get_variable_type_result = get_variable_type(value, current_state)
+            injected[key] = get_variable_type_result[3][1] if get_variable_type_result[0] else value
         else:
-            error_message = f"script '{script_name}' return '{return_name}' not found in its data/variables"
-            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-            return False, error_message, currentFuncName(), {}
+            injected[key] = value
+    return injected
 
-        info = str(len(data)) if isinstance(data, list) else "1"
-        return True, info, currentFuncName(), data
 
+def _execute_script(command, injected_variables, current_state):
+    """Исполнить под-скрипт command['script_object'] с заданными injected_variables.
+    Возвращает (ok, info, func, data) — data по json['return'] (таблица или переменная).
+    Защита от рекурсии/циклов через current_state['_script_stack']."""
+    script_object = command["script_object"]
+    script_json = script_object["json"]
+    script_name = script_object["name"]
+
+    if "script" not in script_json:
+        return False, f"script object '{script_name}' has no 'script' body", currentFuncName(), {}
+    return_name = script_json.get("return")
+    if not return_name:
+        return False, f"script object '{script_name}' has no 'return' name", currentFuncName(), {}
+
+    script_stack = current_state.get("_script_stack", [])
+    if script_name in script_stack:
+        return False, f"script recursion cycle: {' -> '.join(script_stack + [script_name])}", currentFuncName(), {}
+    if len(script_stack) >= MAX_SCRIPT_DEPTH:
+        return False, f"script recursion too deep (>{MAX_SCRIPT_DEPTH})", currentFuncName(), {}
+    sub_state = dict(current_state)
+    sub_state["_script_stack"] = script_stack + [script_name]
+
+    # под-скрипт уже распарсен и провалидирован на этапе резолва
+    sub_commands = command.get("sub_commands") or command_parser(script_json["script"], sub_state)
+    sub_result = commands_executor(sub_commands, sub_state, injected_variables)
+    if not sub_result[0]:
+        return False, f"script '{script_name}' error: {sub_result[1]}", currentFuncName(), {}
+
+    sub_variables, sub_result_map = sub_result[3]
+    if return_name in sub_result_map and sub_result_map[return_name][0]:
+        data = sub_result_map[return_name][3]
+    elif return_name in sub_variables:
+        data = sub_variables[return_name]
+    else:
+        return False, f"script '{script_name}' return '{return_name}' not found in its data/variables", currentFuncName(), {}
+
+    info = str(len(data)) if isinstance(data, list) else "1"
+    return True, info, currentFuncName(), data
+
+
+def run_script_command(command, data_map, current_state):
+    """Выполнить вложенный сохранённый скрипт: GET script:<name>(params) AS result."""
+    try:
+        injected_variables = _type_script_params(command["parameters"], current_state)
+        return _execute_script(command, injected_variables, current_state)
     except BaseException as e:
         error_message = f"run_script_command fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), {}
+
+
+def run_apply_script_command(command, data_map, current_state):
+    """APPLY поверх вызова скрипта: под-скрипт исполняется для каждой строки apply-данных.
+    Параметры строки инъектируются в параметры вызова, результаты помечаются applied_* и склеиваются."""
+    try:
+        import pandas
+        applyed_data = data_map[command['apply']['data']]
+        if len(applyed_data) == 0:
+            return True, "empty applyed data", currentFuncName(), []
+        # проверяем, что применяемые столбцы есть в каждой строке
+        for i, line in enumerate(applyed_data):
+            for column in command['apply']['columns']:
+                if column['column'] not in line:
+                    return False, f"there is not column {column['column']} in {i} line of {command['apply']['data']}", currentFuncName(), []
+
+        data = []
+        for i, line in enumerate(applyed_data):
+            # параметры строки -> инъекция в параметры вызова скрипта
+            row_variables = {column["as"]: line[column['column']] for column in command['apply']['columns']}
+            injection = process_injections(command["parameters"], row_variables, current_state)
+            if not injection[0]:
+                return False, f"apply var injection error: {injection[1]}", currentFuncName(), []
+            injected_variables = _type_script_params(injection[3], current_state)
+
+            shard_result = _execute_script(command, injected_variables, current_state)
+            if not shard_result[0]:
+                return False, f"apply script {i} iteration error: {shard_result[1]}", currentFuncName(), {}
+
+            shard_data = shard_result[3]
+            if not isinstance(shard_data, list):
+                # скрипт вернул переменную (не таблицу) -> нормализуем в строку
+                shard_data = [{"value": shard_data}]
+            # помечаем applied_<as>
+            for shard_line in shard_data:
+                if isinstance(shard_line, dict):
+                    for column in command['apply']['columns']:
+                        shard_line[f"applied_{column["as"]}"] = line[column['column']]
+            data = data + shard_data
+
+        # дедубликация при необходимости
+        if "unique" in command["apply"] and len(command["apply"]["unique"]) > 0:
+            data = pandas.DataFrame(data).drop_duplicates(command["apply"]["unique"]).to_dict('records')
+
+        return True, str(len(data)), currentFuncName(), data
+
+    except BaseException as e:
+        error_message = f"run_apply_script_command fail: {str(e)}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), {}

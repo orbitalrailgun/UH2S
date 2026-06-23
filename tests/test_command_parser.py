@@ -436,6 +436,31 @@ class TestApplyExec(unittest.TestCase):
         self.assertFalse(res[0])
 
 
+class TestApplyScriptExec(unittest.TestCase):
+    """APPLY поверх вызова скрипта: под-скрипт прогоняется на каждую строку (офлайн, без БД)."""
+
+    def test_apply_over_script(self):
+        from engine import run_apply_script_command
+        # под-скрипт: удваивает строковый параметр target через CONCAT, возвращает переменную
+        body = 'DEF "z" AS target | CALC(target, target, CONCAT) AS doubled'
+        sub_commands = command_parser(body, CS)
+        command = {
+            "command": "GET",
+            "apply": {"data": "src", "columns": [{"column": "v", "as": "x"}], "unique": []},
+            "parameters": {"target": "%(x)s"},
+            "script_object": {"name": "s", "roles": ["default"], "json": {"script": body, "return": "doubled"}},
+            "sub_commands": sub_commands,
+            "data_name": "out",
+        }
+        data_map = {"src": [{"v": "ab"}, {"v": "cd"}]}
+        res = run_apply_script_command(command, data_map, {**CS, "roles": [], "processes": 1})
+        self.assertTrue(res[0], res[1])
+        self.assertEqual(res[3], [
+            {"value": "abab", "applied_x": "ab"},
+            {"value": "cdcd", "applied_x": "cd"},
+        ])
+
+
 class TestSequentialOutput(unittest.TestCase):
     def test_get_then_print_then_show(self):
         script = (
