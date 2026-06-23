@@ -580,13 +580,18 @@ def main_page(keycloak_openid, current_state):
             current_state["ui_spinner"] = execution_spinner
             current_state["ui_status"] = execution_status
 
-    # persistent-вкладки: каждая панель строится ОДИН раз; переключение НЕ очищает интерфейс
-    panel_settings = ui.card().classes('w-full h-full')
-    panel_secrets = ui.card().classes('w-full h-full')
-    panel_objects = ui.card().classes('w-full h-full')
-    panel_ai = ui.card().classes('w-full h-full')
-    panel_harvester = ui.card().classes('w-full h-full')
-    panel_history = ui.card().classes('w-full h-full')
+    # persistent-вкладки: панель строится ОДИН раз; переключение НЕ очищает интерфейс и НЕ
+    # использует display:none. Неактивные панели уводятся за экран (с сохранением ширины),
+    # поэтому внутренние табы Quasar остаются измеренными и не пересчитывают layout при показе
+    # (устраняет мелькание/«сжатие» на пару кадров).
+    ui.add_css(".uh-panel-offscreen { position: absolute !important; left: -100000px !important; top: 0 !important; width: 100% !important; }")
+
+    panel_settings = ui.card().classes('w-full h-full uh-panel-offscreen')
+    panel_secrets = ui.card().classes('w-full h-full uh-panel-offscreen')
+    panel_objects = ui.card().classes('w-full h-full uh-panel-offscreen')
+    panel_ai = ui.card().classes('w-full h-full uh-panel-offscreen')
+    panel_harvester = ui.card().classes('w-full h-full uh-panel-offscreen')
+    panel_history = ui.card().classes('w-full h-full uh-panel-offscreen')
     panels = {
         "Settings": panel_settings, "Secrets": panel_secrets, "Objects": panel_objects,
         "AI": panel_ai, "Harvester": panel_harvester, "History": panel_history,
@@ -594,11 +599,10 @@ def main_page(keycloak_openid, current_state):
 
     def show_panel(name):
         for panel_name, panel in panels.items():
-            panel.set_visibility(panel_name == name)
-
-    # скрываем все панели до наполнения, чтобы они не мелькали при первичной отрисовке
-    for panel in panels.values():
-        panel.set_visibility(False)
+            if panel_name == name:
+                panel.classes(remove='uh-panel-offscreen')
+            else:
+                panel.classes(add='uh-panel-offscreen')
 
     with panel_settings:
         ui.label("Settings — не реализовано")
