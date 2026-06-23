@@ -1,7 +1,7 @@
 from app.login import try_login
 from app.validation import check_current_user_status
 from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id
-from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat
+from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
 import json
@@ -1238,6 +1238,66 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
         logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
         return False, error_message, currentFuncName(), None
     
+def _extract_run_block(text):
+    """Извлечь скрипт из блока ```run ...``` ответа агента (первый блок), иначе None."""
+    import re
+    match = re.search(r"```run\s*\n(.*?)```", text or "", flags=re.DOTALL)
+    return match.group(1).strip() if match else None
+
+
+def run_agent_script(script_text, current_state):
+    """Выполнить сгенерированный агентом скрипт и вернуть компактную сводку результата (для LLM).
+    Запуск идёт от имени текущего пользователя (по его ролям); пишется в историю с пометкой agent."""
+    try:
+        parsed = command_parser(script_text, current_state)
+        parse_errors = [c for c in parsed if not c.get("parsed", True)]
+        if parse_errors:
+            return "ОШИБКА ПАРСИНГА: " + "; ".join(
+                f"{c.get('command', '?')}: {c.get('parsed_comment', '?')}" for c in parse_errors)
+
+        for c in parsed:
+            c["_status"] = "pending"
+            c["_info"] = ""
+        result = commands_executor(parsed, current_state)
+
+        steps_text = "\n".join(
+            f"  {STEP_ICONS.get(c.get('_status', 'pending'), '·')} {_step_label(c)}"
+            + (f" — {c.get('_info')}" if c.get("_info") else "")
+            for c in parsed)
+
+        # запись в историю как агентский запуск
+        try:
+            history_steps = [{"command": c.get("command"), "label": _step_label(c),
+                              "status": c.get("_status", "pending"), "info": c.get("_info", "")} for c in parsed]
+            create_execution(str(uuid.uuid4()), current_state.get("username", "unknown"),
+                             1 if result[0] else 0,
+                             {"script": script_text, "steps": history_steps, "agent": True}, current_state)
+            history_refresh = current_state.get("ui_history_refresh")
+            if history_refresh is not None:
+                history_refresh()
+        except BaseException:
+            pass
+
+        if not result[0]:
+            return f"ВЫПОЛНЕНИЕ ПРЕРВАНО: {result[1]}\nШаги:\n{steps_text}"
+
+        variables, result_map = result[3]
+        data_lines = []
+        for name, res in result_map.items():
+            if res[0] and isinstance(res[3], list):
+                rows = res[3]
+                cols = list(rows[0].keys())[:30] if rows and isinstance(rows[0], dict) else []
+                sample = json.dumps(rows[0], ensure_ascii=False, default=str)[:400] if rows else ""
+                data_lines.append(f"  - {name}: {len(rows)} строк; колонки: {cols}; пример: {sample}")
+        data_text = "\n".join(data_lines) if data_lines else "  (нет табличных данных)"
+        var_text = ", ".join(f"{k}={json.dumps(v, ensure_ascii=False, default=str)[:60]}"
+                             for k, v in variables.items()) if variables else "—"
+        return f"ВЫПОЛНЕНИЕ ОК\nШаги:\n{steps_text}\nДанные:\n{data_text}\nПеременные: {var_text}"
+
+    except BaseException as e:
+        return f"ОШИБКА ВЫПОЛНЕНИЯ: {str(e)}"
+
+
 def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
     """История запусков скриптов (таблица executions): список + просмотр скрипта и шагов."""
     try:
@@ -1401,8 +1461,14 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                         if not conversation:
                             ui.markdown("_Диалог пуст. Напишите запрос — например: «нужно получить алерты из thehive и обогатить данными из netbox»._")
                         for message in conversation:
-                            who = "🧑 **Вы:**" if message["role"] == "user" else "🤖 **Агент:**"
-                            ui.markdown(f"{who}\n\n{message['content']}", extras=['tables', 'fenced-code-blocks'])
+                            content = message.get("content", "")
+                            if message["role"] == "user" and content.startswith("РЕЗУЛЬТАТ ВЫПОЛНЕНИЯ СКРИПТА"):
+                                who = "🛠 **Результат выполнения:**"
+                            elif message["role"] == "user":
+                                who = "🧑 **Вы:**"
+                            else:
+                                who = "🤖 **Агент:**"
+                            ui.markdown(f"{who}\n\n{content}", extras=['tables', 'fenced-code-blocks'])
 
                 def accessible_objects_lines():
                     get_all_actual_objects_result = get_all_actual_objects(current_state)
@@ -1444,11 +1510,34 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     if status is not None:
                         status.set_text("AI думает…")
                     try:
-                        system_prompt = build_agent_system_prompt(accessible_objects_lines(), recent_history_lines(), describe_sources_catalog())
-                        messages = llm_build_messages(system_prompt, conversation, llm_context_window(selected["json"]))
-                        ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
-                        conversation.append({"role": "assistant", "content": reply if ok else f"⚠️ Ошибка LLM: {reply}"})
-                        render_chat()
+                        context_window = llm_context_window(selected["json"])
+                        max_iterations = 5   # лимит цикла «ответ -> запуск -> ответ»
+                        for iteration in range(max_iterations):
+                            system_prompt = build_agent_system_prompt(accessible_objects_lines(), recent_history_lines(), describe_sources_catalog())
+                            messages = llm_build_messages(system_prompt, conversation, context_window)
+                            ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
+                            if not ok:
+                                conversation.append({"role": "assistant", "content": f"⚠️ Ошибка LLM: {reply}"})
+                                render_chat()
+                                break
+                            conversation.append({"role": "assistant", "content": reply})
+                            render_chat()
+
+                            run_script = _extract_run_block(reply)
+                            if not run_script:
+                                break  # финальный ответ — агент не просит выполнения
+
+                            if status is not None:
+                                status.set_text("Агент выполняет скрипт…")
+                            exec_summary = await run.io_bound(run_agent_script, run_script, current_state)
+                            exec_summary = llm_truncate_to_tokens(exec_summary, max(512, context_window // 4))
+                            conversation.append({"role": "user", "content": "РЕЗУЛЬТАТ ВЫПОЛНЕНИЯ СКРИПТА:\n" + exec_summary})
+                            render_chat()
+                            if status is not None:
+                                status.set_text("AI думает…")
+                        else:
+                            conversation.append({"role": "assistant", "content": "_(достигнут лимит итераций выполнения)_"})
+                            render_chat()
                     except BaseException as e:
                         conversation.append({"role": "assistant", "content": f"⚠️ Ошибка: {str(e)}"})
                         render_chat()
