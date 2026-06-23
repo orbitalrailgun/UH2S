@@ -910,7 +910,25 @@ def get_source_function(source_type, function_name, current_state:dict):
     
     return True, "Ok", currentFuncName(), (function_parameters, function_object)
 
-    
+
+def describe_sources_catalog():
+    """Компактный каталог зарегистрированных источников и их функций с обязательными и
+    опциональными параметрами — для системного промпта AI-агента."""
+    lines = []
+    for source_type in sorted(ENGINE_SOURCES_AND_FUNCTIONS_MAP.keys()):
+        functions = (ENGINE_SOURCES_AND_FUNCTIONS_MAP[source_type] or {}).get("functions", {}) or {}
+        for function_name in functions:
+            function_spec = functions[function_name] or {}
+            # пропускаем незарегистрированные/заглушечные функции (без исполнителя)
+            if "query" not in (function_spec.get("functions") or {}):
+                continue
+            required = list((function_spec.get("required") or {}).keys())
+            optional = list((function_spec.get("unrequired") or {}).keys())
+            required_text = ", ".join(required) if required else "—"
+            optional_text = ", ".join(optional) if optional else "—"
+            lines.append(f"- {source_type}:{function_name} | обязательные: {required_text} | опц.: {optional_text}")
+    return "\n".join(lines)
+
 
 def get_variable_type(text:str, current_state:dict):
     # empty

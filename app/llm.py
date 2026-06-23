@@ -69,14 +69,17 @@ In-memory SQL поверх собранных данных: sqlite3_im:query(que
 """
 
 
-def build_agent_system_prompt(objects_lines, history_lines):
-    """Системный промпт агента: роль + краткая документация DSL + доступные объекты + история."""
+def build_agent_system_prompt(objects_lines, history_lines, sources_catalog=None):
+    """Системный промпт агента: роль + краткая документация DSL + каталог источников
+    (обязательные/опц. параметры функций) + доступные объекты + история."""
     parts = [
         "Ты — ассистент Universal Harvester. Помогаешь пользователю писать и отлаживать "
         "DSL-скрипты и объекты, объясняешь возможности. Отвечай на русском, кратко и по делу. "
-        "Скрипты оформляй в блоках кода.",
+        "Скрипты оформляй в блоках кода. При написании GET учитывай обязательные параметры функций источников.",
         "# Язык скриптов (DSL)\n" + PROJECT_DOC,
     ]
+    if sources_catalog:
+        parts.append("# Источники и функции (обязательные/опц. параметры)\n" + sources_catalog)
     if objects_lines:
         parts.append("# Доступные объекты (имя и тип)\n" + "\n".join(objects_lines))
     if history_lines:
@@ -101,46 +104,86 @@ def llm_build_messages(system_prompt, conversation, context_window):
     return [{"role": "system", "content": system_prompt}] + list(reversed(kept))
 
 
+def _log_llm_request(current_state, level, model, provider, url, prompt_tokens, completion_tokens, duration_ms, note=""):
+    """Структурное логирование LLM-запроса: модель, провайдер, токены вход/выход, длительность.
+    Пользователь подставляется get_log_message из current_state['username']."""
+    message = (f"llm request: model={model} provider={provider} "
+               f"prompt_tokens={prompt_tokens} completion_tokens={completion_tokens} duration_ms={duration_ms} {note}").strip()
+    log = get_log_message(message, currentFuncName(), current_state)
+    log["event"] = "llm_request"
+    log["llm_model"] = model
+    log["llm_provider"] = provider
+    log["llm_url"] = url
+    log["prompt_tokens"] = prompt_tokens
+    log["completion_tokens"] = completion_tokens
+    log["total_tokens"] = (prompt_tokens or 0) + (completion_tokens or 0)
+    log["duration_ms"] = duration_ms
+    logger_log(level, log)
+
+
 def llm_chat(llm_json, messages, current_state):
     """Отправить чат-запрос к LLM. Возврат (ok: bool, content_or_error: str).
 
     ollama -> POST {url}/api/chat (options.num_ctx = context_window);
-    openai -> POST {url}/chat/completions (url уже включает /v1)."""
+    openai -> POST {url}/chat/completions (url уже включает /v1).
+    Каждый запрос логируется (модель, провайдер, токены вход/выход, длительность, пользователь)."""
     import requests
+    import time
+    provider = (llm_json.get("type") or "ollama").strip().lower()
+    url = (llm_json.get("url") or "").rstrip("/")
+    model = llm_json.get("model", "")
+    timeout = llm_json.get("request_timeout", 120)
+    verify = llm_json.get("verify", True)
+    headers = _llm_headers(llm_json, current_state)
+
+    if not url:
+        return False, "в объекте llm не задан url"
+
+    start = time.monotonic()
     try:
-        provider = (llm_json.get("type") or "ollama").strip().lower()
-        url = (llm_json.get("url") or "").rstrip("/")
-        model = llm_json.get("model", "")
-        timeout = llm_json.get("request_timeout", 120)
-        verify = llm_json.get("verify", True)
-        headers = _llm_headers(llm_json, current_state)
-
-        if not url:
-            return False, "в объекте llm не задан url"
-
         if provider == "ollama":
             body = {"model": model, "messages": messages, "stream": False,
                     "options": {"num_ctx": llm_context_window(llm_json)}}
             response = requests.post(f"{url}/api/chat", json=body, headers=headers, verify=verify, timeout=timeout)
+            duration_ms = int((time.monotonic() - start) * 1000)
             if response.status_code not in (200, 201):
+                _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"http {response.status_code}")
                 return False, f"ollama chat http {response.status_code}: {response.text[:300]}"
-            return True, response.json().get("message", {}).get("content", "")
+            payload = response.json()
+            content = payload.get("message", {}).get("content", "")
+            prompt_tokens = payload.get("prompt_eval_count")
+            completion_tokens = payload.get("eval_count")
 
-        if provider in ("openai", "openai_compatible"):
+        elif provider in ("openai", "openai_compatible"):
             body = {"model": model, "messages": messages, "stream": False}
             response = requests.post(f"{url}/chat/completions", json=body, headers=headers, verify=verify, timeout=timeout)
+            duration_ms = int((time.monotonic() - start) * 1000)
             if response.status_code not in (200, 201):
+                _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"http {response.status_code}")
                 return False, f"openai chat http {response.status_code}: {response.text[:300]}"
-            choices = response.json().get("choices", [])
+            payload = response.json()
+            choices = payload.get("choices", [])
             content = choices[0].get("message", {}).get("content", "") if choices else ""
-            return True, content
+            usage = payload.get("usage", {}) or {}
+            prompt_tokens = usage.get("prompt_tokens")
+            completion_tokens = usage.get("completion_tokens")
 
-        return False, f"неизвестный тип llm '{provider}' (ollama | openai)"
+        else:
+            return False, f"неизвестный тип llm '{provider}' (ollama | openai)"
+
+        # если сервер не вернул счётчики токенов — оцениваем (консервативно)
+        if prompt_tokens is None:
+            prompt_tokens = sum(llm_estimate_tokens(m.get("content", "")) for m in messages)
+        if completion_tokens is None:
+            completion_tokens = llm_estimate_tokens(content)
+
+        _log_llm_request(current_state, syslog.LOG_INFO, model, provider, url, prompt_tokens, completion_tokens, duration_ms)
+        return True, content
 
     except Exception as e:
-        error_message = f"llm chat fail: {str(e)}"
-        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-        return False, error_message
+        duration_ms = int((time.monotonic() - start) * 1000)
+        _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"fail: {str(e)}")
+        return False, f"llm chat fail: {str(e)}"
 
 
 def _llm_resolve_key(llm_json, current_state):

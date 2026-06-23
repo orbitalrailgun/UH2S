@@ -510,6 +510,17 @@ class TestJiraUnfold(unittest.TestCase):
         self.assertNotIn("customfield_10010", flat)
 
 
+class TestSourcesCatalog(unittest.TestCase):
+    def test_catalog_lists_required_and_optional(self):
+        from app.engine import describe_sources_catalog
+        catalog = describe_sources_catalog()
+        self.assertIn("irp_thehive:get_alerts | обязательные: filter, limit", catalog)
+        self.assertIn("jira_sm:search_issues | обязательные: jql", catalog)
+        self.assertIn("netbox:search_cidr_by_ip | обязательные: target", catalog)
+        # незарегистрированные/заглушечные функции не попадают
+        self.assertNotIn("teleport:", catalog)
+
+
 class TestLlmContext(unittest.TestCase):
     def test_context_window(self):
         from app.llm import llm_context_window

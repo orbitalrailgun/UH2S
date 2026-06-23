@@ -11,7 +11,7 @@ from nicegui import ui, app, Client, run
 from app.logging import get_log_message, logger_log, currentFuncName
 from typing import Dict, Any, Tuple
 from engine import commands_executor
-from app.engine import command_parser
+from app.engine import command_parser, describe_sources_catalog
 from app.validation import json_validate, validate_itemname, validate_comment
 # via grok
 # Theme definitions
@@ -1444,7 +1444,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     if status is not None:
                         status.set_text("AI думает…")
                     try:
-                        system_prompt = build_agent_system_prompt(accessible_objects_lines(), recent_history_lines())
+                        system_prompt = build_agent_system_prompt(accessible_objects_lines(), recent_history_lines(), describe_sources_catalog())
                         messages = llm_build_messages(system_prompt, conversation, llm_context_window(selected["json"]))
                         ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
                         conversation.append({"role": "assistant", "content": reply if ok else f"⚠️ Ошибка LLM: {reply}"})
