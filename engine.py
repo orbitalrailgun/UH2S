@@ -165,7 +165,17 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                         return False, error_message, currentFuncName(), commands
                     command["parameters"][parameter] = get_variable_type_result[3][1]
-            
+
+            # best-effort типизация остальных (необязательных) параметров: движок проверяет
+            # типы только required, поэтому опц. параметры приходят сырыми строками из парсера.
+            # Приводим к типу там, где get_variable_type уверенно распознаёт (list/dict/int/float/bool/quoted-string).
+            for optional_parameter in command["parameters"]:
+                value = command["parameters"][optional_parameter]
+                if isinstance(value, str):
+                    optional_type_result = get_variable_type(value, current_state)
+                    if optional_type_result[0]:
+                        command["parameters"][optional_parameter] = optional_type_result[3][1]
+
             # get secrets
             if "key" in source_object["json"]:
                 if isinstance(source_object["json"]["key"], dict):

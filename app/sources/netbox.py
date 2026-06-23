@@ -1,7 +1,36 @@
+import json
 import ipaddress
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.sources.additional.flatten import flatten_data
+
+
+def _as_bool(value, default=False):
+    """Привести значение к bool (строки 'true'/'1'/'yes' -> True)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _as_object_types(value, default):
+    """Нормализовать object_types: list -> как есть; строка '[...]' -> JSON; 'a,b' -> split; иначе default."""
+    if isinstance(value, list):
+        return value or default
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = json.loads(text)
+                return parsed if isinstance(parsed, list) and parsed else default
+            except Exception:
+                return default
+        if text:
+            return [part.strip() for part in text.split(",") if part.strip()]
+    return default
 
 # Типы объектов для общего поиска (как в строке поиска NetBox). Перекрывается параметром object_types.
 NETBOX_DEFAULT_OBJECT_TYPES = [
@@ -48,9 +77,12 @@ def execute_netbox_search(parameters, source_object, data_map, current_state):
         source = source_object
 
         target = query["target"]
-        object_types = query["object_types"] if query.get("object_types") else NETBOX_DEFAULT_OBJECT_TYPES
-        limit = int(query["limit"]) if query.get("limit") else 50
-        flatten_flag = bool(query.get("flatten", False))
+        object_types = _as_object_types(query.get("object_types"), NETBOX_DEFAULT_OBJECT_TYPES)
+        try:
+            limit = int(query["limit"]) if query.get("limit") else 50
+        except (TypeError, ValueError):
+            limit = 50
+        flatten_flag = _as_bool(query.get("flatten", False))
         verify = source["verify"] if "verify" in source else True
         timeout = source["timeout"] if "timeout" in source else 60
 
@@ -102,7 +134,7 @@ def execute_netbox_search_cidr_by_ipaddress(parameters, source_object, data_map,
         source = source_object
 
         target = query["target"]
-        flatten_flag = bool(query.get("flatten", False))
+        flatten_flag = _as_bool(query.get("flatten", False))
         verify = source["verify"] if "verify" in source else True
         timeout = source["timeout"] if "timeout" in source else 60
 
