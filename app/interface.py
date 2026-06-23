@@ -230,7 +230,7 @@ def records_to_download(tables_data, fmt, base_name):
     raise ValueError(f"unknown format '{fmt}' (xlsx | csv_in_zip | json_in_zip)")
 
 
-STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌", "rejected": "⛔"}
+STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌", "rejected": "⛔", "warning": "⚠️"}
 
 def _step_label(command):
     """Человекочитаемая подпись шага для панели прогресса выполнения."""
@@ -1040,7 +1040,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 for command in steps:
                     state = command.get("_status", "pending")
                     info = command.get("_info", "")
-                    suffix = f" — {info}" if (state in ("done", "error") and info) else ""
+                    suffix = f" — {info}" if (state in ("done", "error", "warning") and info) else ""
                     with ui.row().classes('items-center gap-2 no-wrap'):
                         if state == "running":
                             ui.spinner(size='sm')

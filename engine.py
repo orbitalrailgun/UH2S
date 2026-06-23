@@ -63,11 +63,47 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                     logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                     return False, error_message, currentFuncName(), commands
 
+                # сверка DEF скрипта и переданных параметров
+                script_json = script_object["json"]
+                if "script" not in script_json:
+                    command["_status"] = "error"
+                    command["_info"] = "у объекта скрипта нет тела 'script'"
+                    error_message = f"script object {script_object["name"]} has no 'script' body"
+                    logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+                    return False, error_message, currentFuncName(), commands
+
+                sub_commands = command_parser(script_json["script"], current_state)
+                bad_sub = [c for c in sub_commands if not c.get("parsed", True)]
+                if bad_sub:
+                    command["_status"] = "error"
+                    command["_info"] = f"ошибка парсинга тела скрипта: {bad_sub[0].get("parsed_comment", "?")}"
+                    error_message = f"script {script_object["name"]} body parse error: {bad_sub[0].get("parsed_comment", "?")}"
+                    logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+                    return False, error_message, currentFuncName(), commands
+
+                def_names = set(c["variable_name"] for c in sub_commands if c["command"] == "DEF" and "variable_name" in c)
+                param_names = set(command["parameters"].keys())
+
+                # параметр без соответствующего DEF -> error
+                extra_params = param_names - def_names
+                if extra_params:
+                    command["_status"] = "error"
+                    command["_info"] = f"параметры без DEF в скрипте: {", ".join(sorted(extra_params))}"
+                    error_message = f"script {script_object["name"]}: unknown parameters (no matching DEF): {", ".join(sorted(extra_params))}"
+                    logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+                    return False, error_message, currentFuncName(), commands
+
+                # DEF без переданного параметра (захардкожено) -> warning
+                uncovered_defs = def_names - param_names
+                if uncovered_defs:
+                    command["_warning"] = f"DEF без входного параметра (захардкожено): {", ".join(sorted(uncovered_defs))}"
+
                 command["is_script"] = True
                 command["source_type"] = "script"     # чтобы get_command_dependency не падал
                 command["function_parameters"] = {}    # у скрипта нет схемы required-параметров
                 command["script_object"] = script_object
                 command["source_object"] = script_object
+                command["sub_commands"] = sub_commands  # переиспользуем при исполнении (без повторного парсинга)
                 continue
 
             #получаем исполняемый объект по имени, тут исполняемым обектом может быть source или script
@@ -202,10 +238,14 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
             for r in results.keys():
                 result_map[r] = results[r]
             step_result = results[executed_command["data_name"]]
-            # прогресс (UI): статус шага по результату
+            # прогресс (UI): статус шага по результату (warning -> при наличии предупреждения, напр. незаполненные DEF скрипта)
             if "_status" in executed_command:
-                executed_command["_status"] = "done" if step_result[0] else "error"
-                executed_command["_info"] = step_result[1]
+                if step_result[0]:
+                    executed_command["_status"] = "warning" if executed_command.get("_warning") else "done"
+                    executed_command["_info"] = executed_command.get("_warning") or step_result[1]
+                else:
+                    executed_command["_status"] = "error"
+                    executed_command["_info"] = step_result[1]
             # прерываем выполнение при ошибке шага: последующие шаги не должны запускаться
             if not step_result[0]:
                 error_message = f"step '{executed_command.get('data_name', '?')}' failed: {step_result[1]}"
@@ -352,8 +392,8 @@ def run_script_command(command, data_map, current_state):
         sub_state = dict(current_state)
         sub_state["_script_stack"] = script_stack + [script_name]
 
-        # парсинг и рекурсивное исполнение под-скрипта
-        sub_commands = command_parser(script_json["script"], sub_state)
+        # под-скрипт уже распарсен и провалидирован на этапе резолва
+        sub_commands = command.get("sub_commands") or command_parser(script_json["script"], sub_state)
         sub_result = commands_executor(sub_commands, sub_state, injected_variables)
         if not sub_result[0]:
             error_message = f"script '{script_name}' error: {sub_result[1]}"
