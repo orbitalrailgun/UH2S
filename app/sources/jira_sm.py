@@ -104,8 +104,11 @@ def execute_jira_search_issues(parameters, source_object, data_map, current_stat
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
 
-        # для раскрытия customfield_* запрашиваем карту имён (expand=names), кроме raw-режима
-        request_expand = expand if raw_flag else _expand_with_names(expand)
+        # для раскрытия customfield_* запрашиваем карту имён (expand=names), кроме raw-режима.
+        # В POST /search поле expand ДОЛЖНО быть списком (не строкой) — иначе Jira отвечает 400.
+        expand_parts = [p.strip() for p in (expand or "").split(",") if p.strip()]
+        if not raw_flag and "names" not in expand_parts:
+            expand_parts.append("names")
 
         data = []
         start_at = 0
@@ -114,8 +117,8 @@ def execute_jira_search_issues(parameters, source_object, data_map, current_stat
             body = {"jql": jql, "startAt": start_at, "maxResults": page_size}
             if fields:
                 body["fields"] = fields
-            if request_expand:
-                body["expand"] = request_expand
+            if expand_parts:
+                body["expand"] = expand_parts
             response = requests.post(f"{url}/rest/api/2/search", headers=headers, json=body, verify=verify, timeout=timeout)
             if response.status_code != 200:
                 return False, f"jira search_issues http {response.status_code} ({response.text[:512]})", currentFuncName(), []
