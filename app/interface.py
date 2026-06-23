@@ -1,9 +1,10 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id
 import syslog
 import asyncio
 import json
+import uuid
 from nicegui import ui, app, Client, run
 from app.logging import get_log_message, logger_log, currentFuncName
 from typing import Dict, Any, Tuple
@@ -1186,6 +1187,22 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     spinner.visible = False
                 if status is not None:
                     status.set_text("")
+                # запись запуска в историю (executions) + обновление вкладки History
+                try:
+                    history_steps = [{
+                        "command": step_command.get("command"),
+                        "label": _step_label(step_command),
+                        "status": step_command.get("_status", "pending"),
+                        "info": step_command.get("_info", ""),
+                    } for step_command in (current_state.get("ui_steps") or [])]
+                    execution_success = 1 if all(s["status"] not in ("error", "rejected") for s in history_steps) else 0
+                    create_execution(str(uuid.uuid4()), current_state.get("username", "unknown"), execution_success,
+                                     {"script": codemirror_script.value, "steps": history_steps}, current_state)
+                    history_refresh = current_state.get("ui_history_refresh")
+                    if history_refresh is not None:
+                        history_refresh()
+                except BaseException as history_error:
+                    logger_log(syslog.LOG_ERR, get_log_message(f"history record fail: {str(history_error)}", currentFuncName(), current_state))
 
         with interface_container:
             # весь блок harvester — в вертикально-прокручиваемом контейнере.
@@ -1218,12 +1235,69 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
         return False, error_message, currentFuncName(), None
     
 def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
-    """История запусков. Этап 1 — заглушка; наполнение в этапе 2 (таблица executions)."""
+    """История запусков скриптов (таблица executions): список + просмотр скрипта и шагов."""
     try:
         logger_log(syslog.LOG_INFO, get_log_message("Starting", currentFuncName(), current_state))
         interface_container.clear()
+        current_user = current_state.get("username", "unknown")
+
+        def update_history_grid():
+            get_executions_result = get_executions(current_user, current_state)
+            executions = get_executions_result[3] if get_executions_result[0] else []
+            grid_data = [{
+                "id": e["id"],
+                "timestamp": e["timestamp"],
+                "status": "✅ ok" if e["status"] == 1 else "❌ fail",
+            } for e in executions]
+            grid_history.options['columnDefs'] = [
+                {"headerName": "Timestamp", "field": "timestamp", "filter": True, "sortable": True, "minWidth": 220},
+                {"headerName": "Status", "field": "status", "filter": True, "sortable": True, "minWidth": 100},
+                {"headerName": "ID", "field": "id", "filter": True, "sortable": True, "minWidth": 300},
+            ]
+            grid_history.options['rowData'] = grid_data
+            grid_history.options['rowSelection'] = "single"
+            grid_history.options['pagination'] = True
+            grid_history.options['paginationPageSize'] = 20
+            grid_history.options['enableCellTextSelection'] = True
+            grid_history.options['domLayout'] = "normal"
+            grid_history.update()
+
+        async def grid_history_click():
+            selected_row = (await grid_history.get_selected_row()) or {}
+            if not selected_row:
+                return
+            get_execution_by_id_result = get_execution_by_id(selected_row["id"], current_state)
+            if not get_execution_by_id_result[0]:
+                ui.notify(get_execution_by_id_result[1], type="negative")
+                return
+            execution = get_execution_by_id_result[3]
+            execution_json = execution.get("json", {}) or {}
+            codemirror_history.value = execution_json.get("script", "")
+            steps_history_panel.clear()
+            with steps_history_panel:
+                ui.markdown(f"**Статус:** {'✅ ok' if execution['status'] == 1 else '❌ fail'} · {execution['timestamp']}")
+                for step in execution_json.get("steps", []):
+                    icon = STEP_ICONS.get(step.get("status", "pending"), "·")
+                    info = step.get("info", "")
+                    suffix = f" — {info}" if info else ""
+                    ui.label(f"{icon} {step.get('label', step.get('command', '?'))}{suffix}").classes('text-sm').style(
+                        "font-family: 'Orbitron', 'Roboto', sans-serif;")
+
         with interface_container:
-            ui.label("История запусков — будет реализована на этапе 2 (таблица executions).")
+            with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
+                with ui.row().classes('items-center'):
+                    ui.label("История запусков").classes('text-lg')
+                    ui.button("Refresh", icon='refresh').on_click(lambda: update_history_grid())
+                grid_history = ui.aggrid({}).classes('w-full').style('height: 35vh')
+                grid_history.on("selectionChanged", grid_history_click)
+                ui.label("Скрипт")
+                codemirror_history = ui.codemirror().classes('w-full').style('max-height: 25vh')
+                steps_history_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
+
+        # ссылку на обновление кладём в current_state — Harvester дёрнет её после запуска
+        current_state["ui_history_refresh"] = update_history_grid
+        update_history_grid()
+
         return True, "OK", currentFuncName(), None
     except BaseException as e:
         error_message = f"fail: {str(e)}"

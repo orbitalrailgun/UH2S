@@ -674,3 +674,86 @@ def get_user_by_username(username, current_state):
             connection.close()
         logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
         return False, str(e), currentFuncName(), None
+
+
+def create_execution(execution_id, owner, status, json_object, current_state):
+    """Записать запуск скрипта в таблицу executions (параметризованный INSERT — текст скрипта
+    может содержать кавычки)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        query = f"INSERT INTO executions (id, owner, timestamp, status, json) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder});"
+        cursor = connection.cursor()
+        cursor.execute(query, (execution_id, owner, currentTimestamp(), int(status), json.dumps(json_object, ensure_ascii=False)))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), execution_id
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def get_executions(owner, current_state, limit=500):
+    """Список запусков владельца (новые сверху). json не парсится (только метаданные)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        query = f"SELECT id, owner, timestamp, status FROM executions WHERE owner LIKE {placeholder} ORDER BY timestamp DESC LIMIT {int(limit)};"
+        cursor = connection.cursor()
+        cursor.execute(query, (owner,))
+        result = cursor.fetchall()
+        cursor.close()
+        connection.close()
+
+        columns = ["id", "owner", "timestamp", "status"]
+        executions = [dict(zip(columns, line)) for line in result] if result else []
+        return True, "Ok", currentFuncName(), executions
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def get_execution_by_id(execution_id, current_state):
+    """Полная запись запуска по id (json распарсен)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        query = f"SELECT id, owner, timestamp, status, json FROM executions WHERE id LIKE {placeholder};"
+        cursor = connection.cursor()
+        cursor.execute(query, (execution_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        connection.close()
+
+        if not result:
+            return False, "execution not found", currentFuncName(), None
+
+        columns = ["id", "owner", "timestamp", "status", "json"]
+        execution = dict(zip(columns, result))
+        execution["json"] = json.loads(execution["json"]) if execution["json"] else {}
+        return True, "Ok", currentFuncName(), execution
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
