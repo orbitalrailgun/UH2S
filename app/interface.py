@@ -1,6 +1,7 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id
+from app.llm import llm_health_check
 import syslog
 import asyncio
 import json
@@ -1360,30 +1361,44 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
         #         ui.label('You do not have object_admin role')
         #         return False, f"There is not object_admin role for username {current_user}", currentFuncName(), None
         
-        # скелет интерфейса
+        def list_llm_objects():
+            get_all_actual_objects_result = get_all_actual_objects(current_state)
+            objects = get_all_actual_objects_result[3] if get_all_actual_objects_result[0] else []
+            return [o["name"] for o in objects if o.get("type") == "llm"]
+
+        async def select_llm_and_check():
+            name = select_llm.value
+            if not name:
+                return
+            get_object_result = get_actual_object_by_name(name, "('llm')", current_state)
+            if not get_object_result[0]:
+                current_state["ui_selected_llm"] = None
+                llm_status_label.set_text(f"❌ {get_object_result[1]}")
+                return
+            llm_json = get_object_result[3]["json"]
+            llm_status_label.set_text("🔄 проверка готовности…")
+            ok, message = await run.io_bound(llm_health_check, llm_json, current_state)
+            current_state["ui_selected_llm"] = {"name": name, "json": llm_json, "ready": ok}
+            llm_status_label.set_text(("✅ " if ok else "❌ ") + message)
+
         with interface_container:
-            with ui.tabs().classes('w-full') as tabs:
-                tab_chat = ui.tab('Chat')
-                #tab_history = ui.tab('History')
-                tab_knowledgebase = ui.tab('Knowledge base')
-            with ui.tab_panels(tabs, value=tab_chat).classes('w-full h-full') as ai_panels:
-                with ui.tab_panel(tab_chat):
-                    card_aichat = ui.card()
-                    codemirror_aichat = ui.codemirror()
-                    with ui.row():
-                        select_ai_lmm = ui.select(["empty"], value="empty")
-                        button_aichat_send = ui.button("Send")#.on_click(button_script_click)
-                        button_aichat_attachment = ui.button("Attach")#.on_click(button_script_click)
-                        button_aichat_clear = ui.button("Clear")#.on_click(button_script_click)
+            with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
+                with ui.row().classes('items-center w-full'):
+                    select_llm = ui.select(list_llm_objects(), label="LLM", with_input=True).classes('grow')
+                    select_llm.on_value_change(lambda: select_llm_and_check())
+                    ui.button("Refresh", icon='refresh').on_click(lambda: select_llm.set_options(list_llm_objects()))
+                    ui.button("Проверить", icon='check').on_click(select_llm_and_check)
+                llm_status_label = ui.label("LLM не выбрана").classes('text-sm').style(
+                    "font-family: 'Orbitron', 'Roboto', sans-serif;")
 
-                with ui.tab_panel(tab_knowledgebase):
-                    grid_datavars = ui.aggrid({})
-                    ui.mermaid('''
-                        graph LR;
-                            A --> B;
-                            A --> C;
-                    ''')
-
+                # окно чата (этап 4)
+                ui.separator()
+                ai_chat_panel = ui.element('div').classes('w-full').style('overflow-y: auto; padding: 4px 8px')
+                with ai_chat_panel:
+                    ui.markdown("_Чат с агентом — этап 4. Сейчас доступен выбор LLM и проверка готовности._")
+                with ui.row().classes('w-full items-center'):
+                    ai_chat_input = ui.input("Сообщение агенту").classes('grow')
+                    ui.button("Send", icon='send')  # подключим на этапе 4
 
     except BaseException as e:
         error_message = f"fail: {str(e)}"

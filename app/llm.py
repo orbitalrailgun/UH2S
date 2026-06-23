@@ -1,53 +1,80 @@
-def simple_chat(message, history, llm_object, current_state):
-    """
-    Этап 1
-    Выделяем смысловую нагрузку запроса, выделяем маркеры поиска данных (о чём вопрос)
-    
-    Этап 2
-    Согласно маркерам/тегам поиска обращаемся к долговременной памяти и выделяем графовый контекст
-    
-    Этап 3
-    Добавляем графовый контекст к исходному запросу, добавляем список возможных обогащений по типам данных и контексту
-    
-    Этап 4 
-    Делаем обогащения, повторяем запрос с дополнительным контекстом
+import syslog
+from app.logging import get_log_message, logger_log, currentFuncName
+from app.db import get_secret
 
-    Этап 5
-    Формируем окончательный ответ
-
-    Этап 6
-    Записываем в долговременную память факт и суть запроса
-
-    Этап 7
-    Записываем в долговременную память факт и суть ответа
-    """
-    pass
-
-def mem_load_knowledge(knowledge_content, llm_object, current_state):
-    pass
-
-def mem_load_knowledge_attachment(knowledge_content, llm_object, current_state):
-    pass
-
-def get_raw_context_from_message(message, llm_object, current_state):
-    """Функция из любых входных данных выделяет контекстные теги, 
-    которые в дальнейшем будут применяться для поиска данных в долговременной памяти"""
-
-    system_prompt = """You're an expert linguistic and data assistant tasked with extracting key searchable tags from any given text or data. These tags should represent important entities, events, locations, processes, or attributes that characterize the content of the source material. Your goal is to accurately identify types of subjects, objects, actions, and attributes necessary for effective information retrieval.
-
-    Your main tasks are:
-
-        Extracting Subjects: Proper names, organizations, people, items.
-        Identifying Objects: Specific things, concepts, places.
-        Pulling Actions: Verbs representing core processes or state changes.
-        Formatting the extracted tags into a JSON array:
-
-    ["Subject1", "Object1", "Action1", "Attribute1"...]
-
-    Example 1:Input Text: Katya bought a new phone at the electronics store.Search Tags: ["Katya", "Phone", "Electronics Store", "Bought"]
-
-    Example 2:Input Text: A St. Petersburg company released a new book by a famous writer.Search Tags: ["St. Petersburg Company", "Book", "Writer", "Released"]
-
-    Make sure your tags are concise, clear, and reflect the essence of the provided text."""
+# Объект типа llm (раздел Objects):
+# {
+#   "type": "ollama" | "openai",          # провайдер: Ollama API или OpenAI-совместимый
+#   "url": "http://host:11434",            # базовый URL (без хвостовых путей)
+#   "model": "llama3.2",                   # имя модели
+#   "request_timeout": 60,                 # таймаут запроса, сек
+#   "verify": true,                        # проверять TLS
+#   "key": {"system": "...", "account": "..."}  # опц.: секрет -> Bearer (нужен для openai)
+# }
 
 
+def _llm_resolve_key(llm_json, current_state):
+    """Достать токен из секрета по llm_json['key'] = {system, account}; иначе пустая строка."""
+    key = llm_json.get("key")
+    if isinstance(key, dict) and "system" in key and "account" in key:
+        get_secret_result = get_secret(key["system"], key["account"], current_state)
+        if get_secret_result[0]:
+            return get_secret_result[3]
+    return ""
+
+
+def _llm_headers(llm_json, current_state):
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": f'{current_state.get("app_name", "UH")}/{current_state.get("app_version", "0")}',
+    }
+    token = _llm_resolve_key(llm_json, current_state)
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def llm_health_check(llm_json, current_state):
+    """Проверка готовности LLM-объекта. Возврат (ok: bool, message: str).
+
+    ollama  -> GET {url}/api/tags  (+ наличие модели);
+    openai  -> GET {url}/v1/models (Bearer из key)."""
+    import requests
+    try:
+        provider = (llm_json.get("type") or "ollama").strip().lower()
+        url = (llm_json.get("url") or "").rstrip("/")
+        model = llm_json.get("model", "")
+        timeout = llm_json.get("request_timeout", 30)
+        verify = llm_json.get("verify", True)
+        headers = _llm_headers(llm_json, current_state)
+
+        if not url:
+            return False, "в объекте llm не задан url"
+
+        if provider == "ollama":
+            response = requests.get(f"{url}/api/tags", headers=headers, verify=verify, timeout=timeout)
+            if response.status_code != 200:
+                return False, f"ollama /api/tags http {response.status_code}"
+            available = [m.get("name") or m.get("model") for m in response.json().get("models", [])]
+            available = [m for m in available if m]
+            if model and model not in available and not any(model in m for m in available):
+                shown = ", ".join(available[:10]) if available else "—"
+                return False, f"ollama доступна, но модель '{model}' не найдена (есть: {shown})"
+            return True, f"ollama готова, модель '{model}'"
+
+        if provider in ("openai", "openai_compatible"):
+            response = requests.get(f"{url}/v1/models", headers=headers, verify=verify, timeout=timeout)
+            if response.status_code != 200:
+                return False, f"openai /v1/models http {response.status_code} ({response.text[:200]})"
+            data = response.json().get("data", [])
+            ids = [m.get("id") for m in data] if isinstance(data, list) else []
+            if model and ids and model not in ids:
+                return False, f"openai доступна, но модель '{model}' не в списке"
+            return True, f"openai-совместимый сервер готов, модель '{model}'"
+
+        return False, f"неизвестный тип llm '{provider}' (ollama | openai)"
+
+    except Exception as e:
+        error_message = f"health check fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message
