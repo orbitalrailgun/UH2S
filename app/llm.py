@@ -5,12 +5,18 @@ from app.db import get_secret
 # Объект типа llm (раздел Objects):
 # {
 #   "type": "ollama" | "openai",          # провайдер: Ollama API или OpenAI-совместимый
-#   "url": "http://host:11434",            # базовый URL (без хвостовых путей)
+#   "url": "...",                          # см. ниже про точность url
 #   "model": "llama3.2",                   # имя модели
 #   "request_timeout": 60,                 # таймаут запроса, сек
 #   "verify": true,                        # проверять TLS
 #   "key": {"system": "...", "account": "..."}  # опц.: секрет -> Bearer (нужен для openai)
 # }
+#
+# ВАЖНО про url:
+#   ollama -> базовый URL без путей, напр. "http://host:11434"
+#             (функции обращаются к {url}/api/tags, {url}/api/chat)
+#   openai -> URL ДОЛЖЕН включать /v1, напр. "https://foundation-models.api.cloud.ru/v1"
+#             (функции обращаются к {url}/models, {url}/chat/completions — без добавления /v1)
 
 
 def _llm_resolve_key(llm_json, current_state):
@@ -63,9 +69,10 @@ def llm_health_check(llm_json, current_state):
             return True, f"ollama готова, модель '{model}'"
 
         if provider in ("openai", "openai_compatible"):
-            response = requests.get(f"{url}/v1/models", headers=headers, verify=verify, timeout=timeout)
+            # url уже включает /v1 -> обращаемся к {url}/models
+            response = requests.get(f"{url}/models", headers=headers, verify=verify, timeout=timeout)
             if response.status_code != 200:
-                return False, f"openai /v1/models http {response.status_code} ({response.text[:200]})"
+                return False, f"openai {url}/models http {response.status_code} ({response.text[:200]})"
             data = response.json().get("data", [])
             ids = [m.get("id") for m in data] if isinstance(data, list) else []
             if model and ids and model not in ids:
