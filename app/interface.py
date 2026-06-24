@@ -573,15 +573,22 @@ def main_page(keycloak_openid, current_state):
                     menu_item.on('click', lambda t=target: show_panel(t))
             ui.switch('Light Theme', value=theme == 'light', on_change=toggle_theme).classes('hover-glow')
 
-            # индикатор выполнения операций (справа от переключателя темы)
+            # индикаторы выполнения: отдельно Harvester и AI — работают НЕЗАВИСИМО,
+            # запуск скрипта не гасит индикатор работающего AI и наоборот
             with ui.row().classes('items-center'):
                 execution_spinner = ui.spinner(size='lg').props('color=white')
                 execution_spinner.visible = False
                 execution_status = ui.label('').classes('text-sm').style(
                     "font-family: 'Orbitron', 'Roboto', sans-serif; letter-spacing: 1px;")
-            # ссылки на индикатор кладём в current_state, чтобы их видели обработчики draw_* (тот же объект)
-            current_state["ui_spinner"] = execution_spinner
+                ai_spinner = ui.spinner('dots', size='lg').props('color=cyan')
+                ai_spinner.visible = False
+                ai_status = ui.label('').classes('text-sm').style(
+                    "font-family: 'Orbitron', 'Roboto', sans-serif; letter-spacing: 1px;")
+            # ссылки на индикаторы кладём в current_state, чтобы их видели обработчики draw_*
+            current_state["ui_spinner"] = execution_spinner       # Harvester
             current_state["ui_status"] = execution_status
+            current_state["ui_ai_spinner"] = ai_spinner           # AI
+            current_state["ui_ai_status"] = ai_status
 
     # persistent-вкладки: панель строится ОДИН раз; переключение НЕ очищает интерфейс и НЕ
     # использует display:none. Неактивные панели уводятся за экран (с сохранением ширины),
@@ -1513,8 +1520,8 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     ai_chat_input.value = ""
                     render_chat()
 
-                    spinner = current_state.get("ui_spinner")
-                    status = current_state.get("ui_status")
+                    spinner = current_state.get("ui_ai_spinner")
+                    status = current_state.get("ui_ai_status")
                     if spinner is not None:
                         spinner.visible = True
                     if status is not None:
