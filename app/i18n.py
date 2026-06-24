@@ -140,6 +140,15 @@ TRANSLATIONS = {
         "objects.empty_roles_list": "Empty roles list", "objects.name_used": "Name is used for another object",
         "objects.name_test_error": "Error testing the new object name", "objects.create_error": "Error creating the object",
         "objects.done": "Done",
+        # AI
+        "ai.check": "Check", "ai.refresh": "Refresh", "ai.send": "Send", "ai.clear": "Clear",
+        "ai.not_selected": "No LLM selected", "ai.checking": "🔄 checking readiness…",
+        "ai.context_suffix": " · context: {n} tok.",
+        "ai.empty_chat": "_The dialog is empty. Type a request — for example: “fetch alerts from thehive and enrich them with netbox data”._",
+        "ai.who.action": "🛠 **Action result:**", "ai.who.you": "🧑 **You:**", "ai.who.agent": "🤖 **Agent:**",
+        "ai.select_first": "First select an LLM and check its readiness", "ai.thinking": "AI is thinking…",
+        "ai.agent_action": "Agent: {action}…", "ai.llm_error": "⚠️ LLM error: {error}", "ai.error": "⚠️ Error: {error}",
+        "ai.input_placeholder": "Message to the agent",
     },
     "ru": {
         # навигация
@@ -264,6 +273,15 @@ TRANSLATIONS = {
         "objects.empty_roles_list": "Пустой список ролей", "objects.name_used": "Имя занято другим объектом",
         "objects.name_test_error": "Ошибка проверки имени объекта", "objects.create_error": "Ошибка создания объекта",
         "objects.done": "Готово",
+        # AI
+        "ai.check": "Проверить", "ai.refresh": "Обновить", "ai.send": "Отправить", "ai.clear": "Очистить",
+        "ai.not_selected": "LLM не выбрана", "ai.checking": "🔄 проверка готовности…",
+        "ai.context_suffix": " · контекст: {n} ток.",
+        "ai.empty_chat": "_Диалог пуст. Напишите запрос — например: «нужно получить алерты из thehive и обогатить данными из netbox»._",
+        "ai.who.action": "🛠 **Результат действия:**", "ai.who.you": "🧑 **Вы:**", "ai.who.agent": "🤖 **Агент:**",
+        "ai.select_first": "Сначала выберите LLM и проверьте готовность", "ai.thinking": "AI думает…",
+        "ai.agent_action": "Агент: {action}…", "ai.llm_error": "⚠️ Ошибка LLM: {error}", "ai.error": "⚠️ Ошибка: {error}",
+        "ai.input_placeholder": "Сообщение агенту",
     },
 }
 

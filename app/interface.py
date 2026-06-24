@@ -2505,6 +2505,9 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
 
         interface_container.clear()
 
+        lang = current_state.get("lang", DEFAULT_LANGUAGE)
+        tr = lambda key, **kw: translate(key, lang, **kw)
+
         current_user = current_state.get("username", "unknown")
 
         get_user_by_username_result = get_user_by_username(current_user, current_state)
@@ -2541,19 +2544,19 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                 llm_status_label.set_text(f"❌ {get_object_result[1]}")
                 return
             llm_json = get_object_result[3]["json"]
-            llm_status_label.set_text("🔄 проверка готовности…")
+            llm_status_label.set_text(tr("ai.checking"))
             ok, message = await run.io_bound(llm_health_check, llm_json, current_state)
             current_state["ui_selected_llm"] = {"name": name, "json": llm_json, "ready": ok}
-            llm_status_label.set_text(("✅ " if ok else "❌ ") + message + f" · контекст: {llm_context_window(llm_json)} ток.")
+            llm_status_label.set_text(("✅ " if ok else "❌ ") + message + tr("ai.context_suffix", n=llm_context_window(llm_json)))
 
         with interface_container:
             with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
                 with ui.row().classes('items-center w-full'):
                     select_llm = ui.select(list_llm_objects(), label="LLM", with_input=True).classes('grow')
                     select_llm.on_value_change(lambda: select_llm_and_check())
-                    ui.button("Refresh", icon='refresh').on_click(lambda: select_llm.set_options(list_llm_objects()))
-                    ui.button("Проверить", icon='check').on_click(select_llm_and_check)
-                llm_status_label = ui.label("LLM не выбрана").classes('text-sm').style(
+                    ui.button(tr("ai.refresh"), icon='refresh').on_click(lambda: select_llm.set_options(list_llm_objects()))
+                    ui.button(tr("ai.check"), icon='check').on_click(select_llm_and_check)
+                llm_status_label = ui.label(tr("ai.not_selected")).classes('text-sm').style(
                     "font-family: 'Orbitron', 'Roboto', sans-serif;")
 
                 # окно чата с агентом
@@ -2564,15 +2567,15 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     chat_display.clear()
                     with chat_display:
                         if not conversation:
-                            ui.markdown("_Диалог пуст. Напишите запрос — например: «нужно получить алерты из thehive и обогатить данными из netbox»._")
+                            ui.markdown(tr("ai.empty_chat"))
                         for message in conversation:
                             content = message.get("content", "")
                             if message["role"] == "user" and content.startswith("РЕЗУЛЬТАТ ДЕЙСТВИЯ"):
-                                who = "🛠 **Результат действия:**"
+                                who = tr("ai.who.action")
                             elif message["role"] == "user":
-                                who = "🧑 **Вы:**"
+                                who = tr("ai.who.you")
                             else:
-                                who = "🤖 **Агент:**"
+                                who = tr("ai.who.agent")
                             ui.markdown(f"{who}\n\n{content}", extras=['tables', 'fenced-code-blocks'])
 
                 def _role_allowed(object_roles):
@@ -2657,7 +2660,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                 async def send_message():
                     selected = current_state.get("ui_selected_llm")
                     if not selected or not selected.get("json"):
-                        ui.notify("Сначала выберите LLM и проверьте готовность", type="negative")
+                        ui.notify(tr("ai.select_first"), type="negative")
                         return
                     user_text = (ai_chat_input.value or "").strip()
                     if not user_text:
@@ -2671,7 +2674,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     if spinner is not None:
                         spinner.visible = True
                     if status is not None:
-                        status.set_text("AI думает…")
+                        status.set_text(tr("ai.thinking"))
                     try:
                         context_window = llm_context_window(selected["json"])
                         # лимит цикла «ответ -> действие -> ответ» — глобальная настройка (Settings → AI)
@@ -2685,7 +2688,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             messages = llm_build_messages(system_prompt, conversation, context_window)
                             ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
                             if not ok:
-                                conversation.append({"role": "assistant", "content": f"⚠️ Ошибка LLM: {reply}"})
+                                conversation.append({"role": "assistant", "content": tr("ai.llm_error", error=reply)})
                                 render_chat()
                                 break
                             conversation.append({"role": "assistant", "content": reply})
@@ -2696,13 +2699,13 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                                 break  # финальный ответ (текст или ```harvester) — действий нет
 
                             if status is not None:
-                                status.set_text(f"Агент: {action}…")
+                                status.set_text(tr("ai.agent_action", action=action))
                             action_result = await run.io_bound(dispatch_action, action, argument)
                             action_result = llm_truncate_to_tokens(action_result, max(512, context_window // 4))
                             conversation.append({"role": "user", "content": f"РЕЗУЛЬТАТ ДЕЙСТВИЯ [{action}]:\n{action_result}"})
                             render_chat()
                             if status is not None:
-                                status.set_text("AI думает…")
+                                status.set_text(tr("ai.thinking"))
                         else:
                             # лимит действий исчерпан — просим финальный вариант без действий
                             conversation.append({"role": "user", "content":
@@ -2711,10 +2714,10 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             system_prompt = build_agent_system_prompt()
                             messages = llm_build_messages(system_prompt, conversation, context_window)
                             ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
-                            conversation.append({"role": "assistant", "content": reply if ok else f"⚠️ Ошибка LLM: {reply}"})
+                            conversation.append({"role": "assistant", "content": reply if ok else tr("ai.llm_error", error=reply)})
                             render_chat()
                     except BaseException as e:
-                        conversation.append({"role": "assistant", "content": f"⚠️ Ошибка: {str(e)}"})
+                        conversation.append({"role": "assistant", "content": tr("ai.error", error=str(e))})
                         render_chat()
                     finally:
                         if spinner is not None:
@@ -2724,10 +2727,10 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
 
                 chat_display = ui.element('div').classes('w-full').style('flex: 1 1 auto; min-height: 30vh; overflow-y: auto; padding: 4px 8px; border: 1px solid var(--panel-bg)')
                 with ui.row().classes('w-full items-center'):
-                    ai_chat_input = ui.input("Сообщение агенту").classes('grow')
+                    ai_chat_input = ui.input(tr("ai.input_placeholder")).classes('grow')
                     ai_chat_input.on('keydown.enter', lambda: send_message())
-                    ui.button("Send", icon='send').on_click(send_message)
-                    ui.button("Clear", icon='delete').on_click(lambda: (conversation.clear(), render_chat()))
+                    ui.button(tr("ai.send"), icon='send').on_click(send_message)
+                    ui.button(tr("ai.clear"), icon='delete').on_click(lambda: (conversation.clear(), render_chat()))
                 render_chat()
 
     except BaseException as e:
