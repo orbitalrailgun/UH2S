@@ -333,6 +333,12 @@ COLOR_ROLES = [
 ]
 
 # Значения по умолчанию для «Внешнего вида» (persist в settings, scope user:<username>).
+# Темы редактора кода CodeMirror (значение = имя темы CodeMirror в NiceGUI).
+CODEMIRROR_THEMES = [
+    "monokai", "dracula", "oneDark", "vscodeDark", "githubDark", "solarizedDark", "basicDark",
+    "vscodeLight", "githubLight", "solarizedLight", "basicLight",
+]
+
 APPEARANCE_DEFAULTS = {
     "theme": "dark",
     "font": FONT_OPTIONS[0],
@@ -341,6 +347,7 @@ APPEARANCE_DEFAULTS = {
     "table_font_size": 13,
     # оверрайды цветов по теме: {"dark": {role: "#hex", ...}, "light": {...}}
     "colors": {},
+    "codemirror_theme": "monokai",
 }
 
 
@@ -361,13 +368,37 @@ def apply_appearance(appearance):
         table_font_size = APPEARANCE_DEFAULTS["table_font_size"]
     font = appearance.get("font") or APPEARANCE_DEFAULTS["font"]
     table_font = appearance.get("table_font") or APPEARANCE_DEFAULTS["table_font"]
+    dark_js = "true" if theme == "dark" else "false"
     ui.run_javascript(
         "const r = document.documentElement.style;"
         f"r.setProperty('--app-font', `{font}`);"
         f"r.setProperty('--app-font-size', '{font_size}px');"
         f"r.setProperty('--app-table-font', `{table_font}`);"
         f"r.setProperty('--app-table-font-size', '{table_font_size}px');"
+        # режим Quasar dark: перекрашивает поля ввода, меню, лейблы и пр. под тёмную тему
+        f"document.body.classList.toggle('body--dark', {dark_js});"
     )
+
+
+def make_codemirror(current_state, **kwargs):
+    """Создать редактор CodeMirror с темой из настроек и зарегистрировать его для живой смены темы."""
+    theme = current_state.get("codemirror_theme") or APPEARANCE_DEFAULTS["codemirror_theme"]
+    try:
+        editor = ui.codemirror(theme=theme, **kwargs)
+    except BaseException:
+        editor = ui.codemirror(**kwargs)
+    current_state.setdefault("ui_codemirrors", []).append(editor)
+    return editor
+
+
+def apply_codemirror_theme(current_state, theme):
+    """Живо сменить тему всех зарегистрированных редакторов CodeMirror."""
+    current_state["codemirror_theme"] = theme
+    for editor in current_state.get("ui_codemirrors", []) or []:
+        try:
+            editor.theme = theme
+        except BaseException:
+            pass
 
 
 async def login_page(current_state: Dict[str, Any]):
@@ -399,6 +430,25 @@ async def login_page(current_state: Dict[str, Any]):
         }
         .ag-cell, .ag-cell-value, .ag-header-cell-text, .ag-header-group-cell {
             font-size: var(--app-table-font-size, 13px) !important;
+        }
+        /* Цвета AG Grid — следуют палитре темы (по умолчанию грид светлый) */
+        .ag-root-wrapper {
+            --ag-background-color: var(--card-bg) !important;
+            --ag-foreground-color: var(--text-color) !important;
+            --ag-data-color: var(--text-color) !important;
+            --ag-secondary-foreground-color: var(--text-color) !important;
+            --ag-header-background-color: var(--panel-bg) !important;
+            --ag-header-foreground-color: var(--text-color) !important;
+            --ag-odd-row-background-color: var(--panel-bg) !important;
+            --ag-row-border-color: var(--panel-bg) !important;
+            --ag-border-color: var(--panel-bg) !important;
+            --ag-control-panel-background-color: var(--panel-bg) !important;
+            --ag-subheader-background-color: var(--panel-bg) !important;
+            --ag-selected-row-background-color: var(--accent-color) !important;
+            --ag-row-hover-color: var(--panel-bg) !important;
+            --ag-input-focus-border-color: var(--accent-color) !important;
+            background: var(--card-bg) !important;
+            color: var(--text-color) !important;
         }
         /* Карточки/панели разделов следуют теме (по умолчанию q-card белая) */
         .q-card {
@@ -558,6 +608,25 @@ def main_page(keycloak_openid, current_state):
         .ag-cell, .ag-cell-value, .ag-header-cell-text, .ag-header-group-cell {
             font-size: var(--app-table-font-size, 13px) !important;
         }
+        /* Цвета AG Grid — следуют палитре темы (по умолчанию грид светлый) */
+        .ag-root-wrapper {
+            --ag-background-color: var(--card-bg) !important;
+            --ag-foreground-color: var(--text-color) !important;
+            --ag-data-color: var(--text-color) !important;
+            --ag-secondary-foreground-color: var(--text-color) !important;
+            --ag-header-background-color: var(--panel-bg) !important;
+            --ag-header-foreground-color: var(--text-color) !important;
+            --ag-odd-row-background-color: var(--panel-bg) !important;
+            --ag-row-border-color: var(--panel-bg) !important;
+            --ag-border-color: var(--panel-bg) !important;
+            --ag-control-panel-background-color: var(--panel-bg) !important;
+            --ag-subheader-background-color: var(--panel-bg) !important;
+            --ag-selected-row-background-color: var(--accent-color) !important;
+            --ag-row-hover-color: var(--panel-bg) !important;
+            --ag-input-focus-border-color: var(--accent-color) !important;
+            background: var(--card-bg) !important;
+            color: var(--text-color) !important;
+        }
         /* Карточки/панели разделов следуют теме (по умолчанию q-card белая) */
         .q-card {
             background: var(--card-bg) !important;
@@ -635,6 +704,9 @@ def main_page(keycloak_openid, current_state):
     saved_appearance = get_setting(appearance_scope, "appearance", {}, current_state)[3] or {}
     appearance_state = {**APPEARANCE_DEFAULTS, "theme": theme, **saved_appearance}
     apply_appearance(appearance_state)
+    # тема редактора кода: реестр редакторов и активная тема ДО построения панелей
+    current_state["ui_codemirrors"] = []
+    current_state["codemirror_theme"] = appearance_state.get("codemirror_theme") or APPEARANCE_DEFAULTS["codemirror_theme"]
 
     def logout() -> None:
         app.storage.user.clear()
@@ -760,6 +832,13 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         ).classes('w-32')
 
                     ui.separator()
+                    ui.label("Редактор кода (CodeMirror)").style("color: var(--accent-color);")
+                    codemirror_theme_select = ui.select(
+                        CODEMIRROR_THEMES, value=appearance.get("codemirror_theme", APPEARANCE_DEFAULTS["codemirror_theme"]),
+                        label="Тема редактора"
+                    ).classes('w-64')
+
+                    ui.separator()
                     ui.label("Цвета интерфейса").style("color: var(--accent-color);")
                     ui.markdown("Цвета задаются отдельно для тёмной и светлой темы — редактируется текущая выбранная тема.").classes('text-xs opacity-60')
 
@@ -791,6 +870,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             "table_font": (table_font_select.value or APPEARANCE_DEFAULTS["table_font"]).strip(),
                             "table_font_size": int(table_font_size_input.value or APPEARANCE_DEFAULTS["table_font_size"]),
                             "colors": colors_state,
+                            "codemirror_theme": codemirror_theme_select.value or APPEARANCE_DEFAULTS["codemirror_theme"],
                         }
 
                     def preview():
@@ -799,6 +879,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             return
                         sync_colors()
                         apply_appearance(collect())
+                        apply_codemirror_theme(current_state, codemirror_theme_select.value or APPEARANCE_DEFAULTS["codemirror_theme"])
 
                     def on_theme_change():
                         # при смене темы перерисовать пикеры под её эффективные цвета
@@ -818,6 +899,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             return
                         app.storage.user.update({'theme': new_appearance["theme"]})  # синхронизация с login-страницей
                         apply_appearance(new_appearance)
+                        apply_codemirror_theme(current_state, new_appearance["codemirror_theme"])
                         ui.notify("Внешний вид сохранён", type="positive")
 
                     def reset_defaults():
@@ -827,6 +909,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         font_size_input.value = APPEARANCE_DEFAULTS["font_size"]
                         table_font_select.value = APPEARANCE_DEFAULTS["table_font"]
                         table_font_size_input.value = APPEARANCE_DEFAULTS["table_font_size"]
+                        codemirror_theme_select.value = APPEARANCE_DEFAULTS["codemirror_theme"]
                         colors_state.clear()
                         eff = effective_colors(APPEARANCE_DEFAULTS["theme"])
                         for role, _ in COLOR_ROLES:
@@ -836,7 +919,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                     # живой предпросмотр при изменении контролов
                     theme_select.on('update:model-value', lambda: on_theme_change())
-                    for control in (font_select, font_size_input, table_font_select, table_font_size_input):
+                    for control in (font_select, font_size_input, table_font_select, table_font_size_input, codemirror_theme_select):
                         control.on('update:model-value', lambda: preview())
                     for role, _ in COLOR_ROLES:
                         color_pickers[role].on('update:model-value', lambda: preview())
@@ -844,8 +927,6 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     with ui.row().classes('gap-2 mt-2'):
                         ui.button("Сохранить", icon='save', on_click=save).classes('hover-glow')
                         ui.button("Сбросить", icon='restart_alt', on_click=reset_defaults).props('outline')
-
-                    ui.markdown("_Тема CodeMirror (редактор кода) будет добавлена в следующей итерации._").classes('text-xs opacity-60')
 
         return True, "Ok", currentFuncName(), None
 
@@ -1115,7 +1196,7 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 with ui.tab_panel(tab_one_object):
                     grid_object_versions = ui.aggrid({})
                     grid_object_versions.on("selectionChanged", grid_object_versions_click)
-                    codemirror_show_object_version = ui.codemirror()
+                    codemirror_show_object_version = make_codemirror(current_state)
                     
 
                 with ui.tab_panel(tab_object_editor):
@@ -1127,7 +1208,7 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
                         button_save_new_object_version.on_click(save_button_of_object_editor)
                         button_delete_object = ui.button("Delete")
                         #button_delete_object.on_click(save_button_of_object_editor)
-                    codemirror_edit_object_version = ui.codemirror()
+                    codemirror_edit_object_version = make_codemirror(current_state)
                     
 
                 with ui.tab_panel(tab_object_creator):
@@ -1138,7 +1219,7 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
                         input_new_object_roles.value = '["default"]'
                         button_create_new_object = ui.button("Create")
                         button_create_new_object.on_click(create_button_object)
-                    codemirror_create_new_object = ui.codemirror()
+                    codemirror_create_new_object = make_codemirror(current_state)
 
         update_grid_objects_list(grid_objects_list, current_state)
 
@@ -1461,7 +1542,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     with ui.tab_panel(tab_script):
                         # сворачиваемый блок скрипта (вместе с кнопкой Execute) — освобождает место под результаты
                         with ui.expansion('Скрипт', icon='code', value=True).classes('w-full'):
-                            codemirror_script = ui.codemirror().classes('w-full').style('max-height: 30vh')
+                            codemirror_script = make_codemirror(current_state).classes('w-full').style('max-height: 30vh')
                             button_script = ui.button("Execute").on_click(button_script_click)
                         # сворачиваемый блок прогресса шагов (вариант A): список команд со статусами
                         with ui.expansion('Шаги выполнения', icon='list', value=True).classes('w-full'):
@@ -1472,7 +1553,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
 
                     with ui.tab_panel(tab_datavars):
                         grid_datavars = ui.aggrid({}).classes('w-full').style('height: 60vh')
-                        codemirror_datavar = ui.codemirror().classes('w-full')
+                        codemirror_datavar = make_codemirror(current_state).classes('w-full')
 
     except BaseException as e:
         error_message = f"fail: {str(e)}"
@@ -1637,7 +1718,7 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 grid_history = ui.aggrid({}).classes('w-full').style('height: 35vh')
                 grid_history.on("selectionChanged", grid_history_click)
                 ui.label("Скрипт")
-                codemirror_history = ui.codemirror().classes('w-full').style('max-height: 25vh')
+                codemirror_history = make_codemirror(current_state).classes('w-full').style('max-height: 25vh')
                 steps_history_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
 
         # ссылку на обновление кладём в current_state — Harvester дёрнет её после запуска
