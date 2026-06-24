@@ -132,6 +132,7 @@ def db_init(current_state):
         cursor.execute("CREATE TABLE IF NOT EXISTS objects (name TEXT, roles TEXT, version INTEGER, timestamp TEXT, type TEXT, owner TEXT, json TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS executions (id TEXT, owner TEXT, timestamp TEXT, status INTEGER, json TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS storage (id TEXT, owner TEXT, execution TEXT, json TEXT);")
+        cursor.execute("CREATE TABLE IF NOT EXISTS settings (scope TEXT, key TEXT, value TEXT);")
         connection.commit()
         cursor.execute("INSERT INTO access_networks(cidr, allow, comment) SELECT '127.0.0.0/8', true, 'localhost' WHERE NOT EXISTS(SELECT * FROM access_networks);")
         cursor.execute("INSERT INTO users(enabled, name, pass, roles, json) SELECT true, 'harvester', '$2a$12$csKo6ccYS3Kjc3e2JAu4VucbzO9vTBlvdjxCoTOVAYSnli2EXll3q', '[\"fullmaster\"]', '{}' WHERE NOT EXISTS(SELECT * FROM users) AND NOT EXISTS(SELECT * FROM storage) AND NOT EXISTS(SELECT * FROM objects) AND NOT EXISTS(SELECT * FROM executions);")
@@ -814,6 +815,124 @@ def get_execution_by_id(execution_id, current_state):
         execution = dict(zip(columns, result))
         execution["json"] = json.loads(execution["json"]) if execution["json"] else {}
         return True, "Ok", currentFuncName(), execution
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+# ───────────────────────── Хранилище настроек (settings) ─────────────────────────
+# Таблица settings(scope, key, value): value хранится как JSON (любой тип).
+# Конвенция scope: "global" — глобальные/админские; "user:<username>" — персональные.
+
+SETTINGS_SCOPE_GLOBAL = "global"
+
+
+def settings_user_scope(username):
+    return f"user:{username}"
+
+
+def get_setting(scope, key, default, current_state):
+    """Получить одну настройку (JSON-декод). Не найдено -> (True, ..., default); ошибка -> (False, ..., default)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), default
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"SELECT value FROM settings WHERE scope = {placeholder} AND key = {placeholder};", (scope, key))
+        row = cursor.fetchone()
+        cursor.close()
+        connection.close()
+
+        if not row or row[0] is None:
+            return True, "default", currentFuncName(), default
+        return True, "Ok", currentFuncName(), json.loads(row[0])
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), default
+
+
+def get_settings(scope, current_state):
+    """Все настройки scope как dict {key: value}."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), {}
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"SELECT key, value FROM settings WHERE scope = {placeholder};", (scope,))
+        rows = cursor.fetchall()
+        cursor.close()
+        connection.close()
+
+        result = {}
+        for key, value in (rows or []):
+            try:
+                result[key] = json.loads(value) if value is not None else None
+            except BaseException:
+                result[key] = value
+        return True, "Ok", currentFuncName(), result
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), {}
+
+
+def set_setting(scope, key, value, current_state):
+    """Upsert настройки (UPDATE, иначе INSERT). value JSON-кодируется (параметризованно)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        value_json = json.dumps(value, ensure_ascii=False)
+        cursor = connection.cursor()
+        cursor.execute(f"UPDATE settings SET value = {placeholder} WHERE scope = {placeholder} AND key = {placeholder};",
+                       (value_json, scope, key))
+        if cursor.rowcount == 0:
+            cursor.execute(f"INSERT INTO settings (scope, key, value) VALUES ({placeholder}, {placeholder}, {placeholder});",
+                           (scope, key, value_json))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def delete_setting(scope, key, current_state):
+    """Удалить настройку scope/key."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"DELETE FROM settings WHERE scope = {placeholder} AND key = {placeholder};", (scope, key))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
 
     except BaseException as e:
         if 'connection' in locals():
