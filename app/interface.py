@@ -1093,83 +1093,158 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                     ui.button("Сохранить метаданные", icon='save', on_click=save_metadata).classes('hover-glow')
 
-                    # ───────────────────── Управление пользователями (только fullmaster) ─────────────────────
+                    # ──────────── Управление пользователями (роли fullmaster / useradmin) ────────────
                     current_roles = user_meta_result[3].get("roles", []) if user_meta_result[0] else []
-                    if "fullmaster" in current_roles:
+                    if any(role in current_roles for role in ("fullmaster", "useradmin")):
                         ui.separator()
                         ui.label("Управление пользователями (админ)").style(
                             "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
-                        ui.markdown("Сброс пароля и блокировка немедленно завершают все сессии этого пользователя.").classes('text-xs opacity-60')
+                        ui.markdown("Фильтрация по колонкам (username, роли, метаданные). Сброс пароля и блокировка немедленно завершают все сессии пользователя.").classes('text-xs opacity-60')
 
-                        admin_container = ui.column().classes('w-full gap-2')
+                        grid_users = ui.aggrid({}).classes('w-full').style('height: 40vh')
 
-                        def render_user_admin():
-                            admin_container.clear()
+                        ui.label("Действия по выбранному пользователю").style("color: var(--accent-color);")
+                        selected_user_label = ui.label("Пользователь не выбран").classes('text-sm').style('font-weight:700')
+                        admin_roles_input = ui.input(label="Роли (JSON-массив)", value="[]").classes('w-full max-w-md')
+                        admin_reset_pw_input = ui.input(label="Новый пароль (сброс)", password=True, password_toggle_button=True).classes('w-full max-w-md')
+                        ui.label("Метаданные пользователя (JSON)").classes('text-xs opacity-60')
+                        admin_meta_editor = make_codemirror(current_state).classes('w-full').style('max-height: 25vh')
+                        admin_selected = {"name": None, "enabled": None}
+
+                        def refresh_users_grid():
                             list_result = list_users(current_state)
-                            with admin_container:
-                                if not list_result[0]:
-                                    ui.label(f"Ошибка списка пользователей: {list_result[1]}").classes('text-red-400')
-                                    return
-                                for user_row in list_result[3]:
-                                    with ui.card().classes('w-full'):
-                                        with ui.row().classes('items-center justify-between w-full'):
-                                            ui.label(user_row['name']).style('font-weight:700')
-                                            ui.label("активна" if user_row['enabled'] else "заблокирована").classes('text-xs').style(
-                                                f"color: {'#22C55E' if user_row['enabled'] else '#EF4444'}")
-                                        roles_input = ui.input(label="Роли (JSON-массив)",
-                                                               value=json.dumps(user_row['roles'], ensure_ascii=False)).classes('w-full')
-                                        reset_pw_input = ui.input(label="Новый пароль (сброс)", password=True,
-                                                                  password_toggle_button=True).classes('w-full max-w-md')
-                                        with ui.row().classes('gap-2 flex-wrap'):
-                                            def make_toggle_enabled(name=user_row['name'], enabled=user_row['enabled']):
-                                                def _toggle():
-                                                    if name == username and enabled:
-                                                        ui.notify("Нельзя заблокировать собственную учётную запись", type="negative")
-                                                        return
-                                                    result = set_user_enabled(name, not enabled, current_state)
-                                                    if not result[0]:
-                                                        ui.notify(f"Ошибка: {result[1]}", type="negative")
-                                                        return
-                                                    ui.notify((f"Разблокирован: {name}" if not enabled
-                                                               else f"Заблокирован: {name} (сессии завершены)"), type="positive")
-                                                    render_user_admin()
-                                                return _toggle
-                                            ui.button("Разблокировать" if not user_row['enabled'] else "Заблокировать",
-                                                      icon='lock_open' if not user_row['enabled'] else 'block',
-                                                      on_click=make_toggle_enabled()).props('outline')
+                            rows = []
+                            if list_result[0]:
+                                for u in list_result[3]:
+                                    rows.append({
+                                        "username": u["name"],
+                                        "enabled": ("да" if u["enabled"] else "нет"),
+                                        "roles": json.dumps(u["roles"], ensure_ascii=False),
+                                        "metadata": json.dumps(u["json"], ensure_ascii=False),
+                                    })
+                            else:
+                                ui.notify(f"Ошибка списка пользователей: {list_result[1]}", type="negative")
+                            grid_users.options["columnDefs"] = [
+                                {"headerName": "Username", "field": "username", "filter": True, "sortable": True, "resizable": True, "minWidth": 160, "tooltipField": "username"},
+                                {"headerName": "Активна", "field": "enabled", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
+                                {"headerName": "Роли", "field": "roles", "filter": True, "sortable": True, "resizable": True, "minWidth": 200, "tooltipField": "roles"},
+                                {"headerName": "Метаданные", "field": "metadata", "filter": True, "sortable": True, "resizable": True, "minWidth": 240, "tooltipField": "metadata"},
+                            ]
+                            grid_users.options["rowData"] = rows
+                            grid_users.options["rowSelection"] = "single"
+                            grid_users.options["pagination"] = True
+                            grid_users.options["paginationPageSize"] = 20
+                            grid_users.options["enableCellTextSelection"] = True
+                            grid_users.options["enableBrowserTooltips"] = True
+                            grid_users.options["defaultColDef"] = {"filter": True, "sortable": True, "resizable": True, "minWidth": 140}
+                            grid_users.options["domLayout"] = "normal"
+                            grid_users.update()
 
-                                            def make_save_roles(name=user_row['name'], inp=roles_input):
-                                                def _save():
-                                                    if not json_validate(inp.value or ""):
-                                                        ui.notify("Роли должны быть JSON-массивом", type="negative")
-                                                        return
-                                                    parsed = json.loads(inp.value)
-                                                    if not isinstance(parsed, list):
-                                                        ui.notify("Роли должны быть JSON-массивом (список строк)", type="negative")
-                                                        return
-                                                    result = set_user_roles(name, parsed, current_state)
-                                                    if not result[0]:
-                                                        ui.notify(f"Ошибка: {result[1]}", type="negative")
-                                                        return
-                                                    ui.notify(f"Роли обновлены: {name}", type="positive")
-                                                return _save
-                                            ui.button("Сохранить роли", icon='save', on_click=make_save_roles())
+                        def _refresh_selected_label():
+                            if not admin_selected["name"]:
+                                selected_user_label.set_text("Пользователь не выбран")
+                                block_user_button.set_text("Заблокировать")
+                                return
+                            selected_user_label.set_text(
+                                f"Пользователь: {admin_selected['name']} ({'активна' if admin_selected['enabled'] else 'заблокирована'})")
+                            block_user_button.set_text("Разблокировать" if not admin_selected["enabled"] else "Заблокировать")
 
-                                            def make_reset_pw(name=user_row['name'], inp=reset_pw_input):
-                                                def _reset():
-                                                    if not check_regex_rule(inp.value or "", REGEX_PASSWORD_RULE):
-                                                        ui.notify("Пароль не соответствует требованиям сложности", type="negative")
-                                                        return
-                                                    import bcrypt
-                                                    new_hash = bcrypt.hashpw((inp.value).encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
-                                                    result = set_user_password(name, new_hash, current_state)
-                                                    if not result[0]:
-                                                        ui.notify(f"Ошибка: {result[1]}", type="negative")
-                                                        return
-                                                    inp.value = ""
-                                                    ui.notify(f"Пароль сброшен для {name} (сессии завершены)", type="positive")
-                                                return _reset
-                                            ui.button("Сбросить пароль", icon='password', on_click=make_reset_pw()).props('outline')
+                        async def on_user_selected():
+                            row = (await grid_users.get_selected_row()) or {}
+                            if not row:
+                                return
+                            admin_selected["name"] = row.get("username")
+                            admin_selected["enabled"] = (row.get("enabled") == "да")
+                            admin_roles_input.value = row.get("roles") or "[]"
+                            admin_reset_pw_input.value = ""
+                            try:
+                                admin_meta_editor.value = json.dumps(json.loads(row.get("metadata") or "{}"), ensure_ascii=False, indent=2)
+                            except BaseException:
+                                admin_meta_editor.value = row.get("metadata") or "{}"
+                            _refresh_selected_label()
+
+                        def toggle_user_enabled():
+                            name = admin_selected["name"]
+                            if not name:
+                                ui.notify("Выберите пользователя в таблице", type="warning")
+                                return
+                            if name == username and admin_selected["enabled"]:
+                                ui.notify("Нельзя заблокировать собственную учётную запись", type="negative")
+                                return
+                            result = set_user_enabled(name, not admin_selected["enabled"], current_state)
+                            if not result[0]:
+                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                return
+                            ui.notify((f"Разблокирован: {name}" if not admin_selected["enabled"]
+                                       else f"Заблокирован: {name} (сессии завершены)"), type="positive")
+                            admin_selected["enabled"] = not admin_selected["enabled"]
+                            _refresh_selected_label()
+                            refresh_users_grid()
+
+                        def save_user_roles():
+                            name = admin_selected["name"]
+                            if not name:
+                                ui.notify("Выберите пользователя в таблице", type="warning")
+                                return
+                            if not json_validate(admin_roles_input.value or ""):
+                                ui.notify("Роли должны быть JSON-массивом", type="negative")
+                                return
+                            parsed = json.loads(admin_roles_input.value)
+                            if not isinstance(parsed, list):
+                                ui.notify("Роли должны быть JSON-массивом (список строк)", type="negative")
+                                return
+                            result = set_user_roles(name, parsed, current_state)
+                            if not result[0]:
+                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                return
+                            ui.notify(f"Роли обновлены: {name}", type="positive")
+                            refresh_users_grid()
+
+                        def reset_user_password():
+                            name = admin_selected["name"]
+                            if not name:
+                                ui.notify("Выберите пользователя в таблице", type="warning")
+                                return
+                            if not check_regex_rule(admin_reset_pw_input.value or "", REGEX_PASSWORD_RULE):
+                                ui.notify("Пароль не соответствует требованиям сложности", type="negative")
+                                return
+                            import bcrypt
+                            new_hash = bcrypt.hashpw((admin_reset_pw_input.value).encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
+                            result = set_user_password(name, new_hash, current_state)
+                            if not result[0]:
+                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                return
+                            admin_reset_pw_input.value = ""
+                            ui.notify(f"Пароль сброшен для {name} (сессии завершены)", type="positive")
+
+                        def save_user_metadata():
+                            name = admin_selected["name"]
+                            if not name:
+                                ui.notify("Выберите пользователя в таблице", type="warning")
+                                return
+                            text = admin_meta_editor.value or ""
+                            if not json_validate(text):
+                                ui.notify("Метаданные должны быть корректным JSON", type="negative")
+                                return
+                            parsed = json.loads(text)
+                            if not isinstance(parsed, dict):
+                                ui.notify("Метаданные должны быть JSON-объектом ({...})", type="negative")
+                                return
+                            result = update_user_metadata(name, parsed, current_state)
+                            if not result[0]:
+                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                return
+                            ui.notify(f"Метаданные сохранены: {name}", type="positive")
+                            refresh_users_grid()
+
+                        with ui.row().classes('gap-2 flex-wrap'):
+                            block_user_button = ui.button("Заблокировать", icon='block', on_click=toggle_user_enabled).props('outline')
+                            ui.button("Сохранить роли", icon='save', on_click=save_user_roles)
+                            ui.button("Сохранить метаданные", icon='save', on_click=save_user_metadata)
+                            ui.button("Сбросить пароль", icon='password', on_click=reset_user_password).props('outline')
+                            ui.button("Обновить список", icon='refresh', on_click=refresh_users_grid).props('flat')
+
+                        grid_users.on("selectionChanged", on_user_selected)
 
                         with ui.expansion("Создать пользователя", icon='person_add').classes('w-full'):
                             new_user_name = ui.input(label="Имя пользователя").classes('w-full max-w-md')
@@ -1201,12 +1276,11 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                 new_user_pw.value = ""
                                 new_user_roles.value = "[]"
                                 ui.notify(f"Пользователь создан: {name}", type="positive")
-                                render_user_admin()
+                                refresh_users_grid()
 
                             ui.button("Создать", icon='person_add', on_click=create_new_user).classes('hover-glow')
 
-                        ui.button("Обновить список", icon='refresh', on_click=render_user_admin).props('outline')
-                        render_user_admin()
+                        refresh_users_grid()
 
         return True, "Ok", currentFuncName(), None
 
