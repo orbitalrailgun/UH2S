@@ -901,11 +901,11 @@ def main_page(keycloak_openid, current_state):
                 execution_spinner = ui.spinner(size='lg').props('color=white')
                 execution_spinner.visible = False
                 execution_status = ui.label('').classes('text-sm').style(
-                    "font-family: 'Orbitron', 'Roboto', sans-serif; letter-spacing: 1px;")
+                    "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif); letter-spacing: 1px;")
                 ai_spinner = ui.spinner('dots', size='lg').props('color=cyan')
                 ai_spinner.visible = False
                 ai_status = ui.label('').classes('text-sm').style(
-                    "font-family: 'Orbitron', 'Roboto', sans-serif; letter-spacing: 1px;")
+                    "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif); letter-spacing: 1px;")
             # ссылки на индикаторы кладём в current_state, чтобы их видели обработчики draw_*
             current_state["ui_spinner"] = execution_spinner       # Harvester
             current_state["ui_status"] = execution_status
@@ -961,7 +961,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                 with ui.column().classes('w-full gap-4 p-2'):
                     # ──────────── Язык интерфейса ────────────
                     ui.label(tr("settings.language.title")).style(
-                        "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                        "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif); font-size: 1.25rem; color: var(--title-color);")
                     with ui.row().classes('items-end gap-2'):
                         language_select = ui.select(SUPPORTED_LANGUAGES, value=lang, label=tr("settings.language.label")).classes('w-64')
 
@@ -975,7 +975,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                     ui.separator()
                     ui.label(tr("settings.section.appearance")).style(
-                        "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                        "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif); font-size: 1.25rem; color: var(--title-color);")
                     ui.markdown(tr("settings.appearance.hint"))
 
                     theme_select = ui.select(
@@ -1122,7 +1122,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     # ───────────────────────── Учётная запись (self-service) ─────────────────────────
                     ui.separator()
                     ui.label(tr("settings.section.account")).style(
-                        "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                        "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif); font-size: 1.25rem; color: var(--title-color);")
                     ui.markdown(tr("settings.account.user", name=username)).classes('text-sm')
 
                     ui.label(tr("settings.account.changepw")).style("color: var(--accent-color);")
@@ -1211,7 +1211,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     if any(role in current_roles for role in ("fullmaster", "useradmin")):
                         ui.separator()
                         ui.label(tr("settings.section.users")).style(
-                            "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                            "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif); font-size: 1.25rem; color: var(--title-color);")
                         ui.markdown(tr("settings.users.hint")).classes('text-xs opacity-60')
 
                         grid_users = ui.aggrid({}).classes('w-full').style('height: 40vh')
@@ -1400,7 +1400,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     if any(role in current_roles for role in ("fullmaster", "aiadmin")):
                         ui.separator()
                         ui.label(tr("settings.section.ai")).style(
-                            "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                            "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif); font-size: 1.25rem; color: var(--title-color);")
 
                         ui.label(tr("settings.ai.limits")).style("color: var(--accent-color);")
                         max_iter_value = get_setting("global", "agent_max_iterations", 10, current_state)[3] or 10
@@ -1486,7 +1486,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     if any(role in current_roles for role in ("fullmaster", "netadmin")):
                         ui.separator()
                         ui.label(tr("settings.section.networks")).style(
-                            "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                            "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif); font-size: 1.25rem; color: var(--title-color);")
                         ui.markdown(tr("settings.net.hint")).classes('text-xs text-orange-400')
 
                         net_grid = ui.aggrid({}).classes('w-full').style('height: 30vh')
@@ -1575,7 +1575,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     if any(role in current_roles for role in ("fullmaster", "apiadmin")):
                         ui.separator()
                         ui.label(tr("settings.section.apikeys")).style(
-                            "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                            "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif); font-size: 1.25rem; color: var(--title-color);")
                         ui.markdown(tr("settings.api.hint")).classes('text-xs opacity-60')
 
                         keys_grid = ui.aggrid({}).classes('w-full').style('height: 28vh')
@@ -2172,7 +2172,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         else:
                             ui.label(STEP_ICONS.get(state, "·"))
                         ui.label(f"{_step_label(command)}{suffix}").classes('text-sm').style(
-                            "font-family: 'Orbitron', 'Roboto', sans-serif;")
+                            "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);")
 
         async def button_script_click():
             execution_start = time.monotonic()
@@ -2477,7 +2477,7 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     info = step.get("info", "")
                     suffix = f" — {info}" if info else ""
                     ui.label(f"{icon} {step.get('label', step.get('command', '?'))}{suffix}").classes('text-sm').style(
-                        "font-family: 'Orbitron', 'Roboto', sans-serif;")
+                        "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);")
 
         with interface_container:
             with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
@@ -2561,7 +2561,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     ui.button(tr("ai.refresh"), icon='refresh').on_click(lambda: select_llm.set_options(list_llm_objects()))
                     ui.button(tr("ai.check"), icon='check').on_click(select_llm_and_check)
                 llm_status_label = ui.label(tr("ai.not_selected")).classes('text-sm').style(
-                    "font-family: 'Orbitron', 'Roboto', sans-serif;")
+                    "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);")
 
                 # окно чата с агентом
                 ui.separator()
