@@ -685,6 +685,8 @@ async def login_page(current_state: Dict[str, Any]):
                 else:
                     ui.notify(tr("login.failed"), type='negative')
 
+            # вход по Enter в поле пароля
+            password_input.on('keydown.enter', handle_login)
             login_button = ui.button(tr("login.login"), on_click=handle_login).classes('w-full hover-glow mb-2').style('background: var(--accent-color)')
             # опциональная кнопка входа через Keycloak (только если включён keycloak)
             if current_state.get("keycloak_flag", False):
