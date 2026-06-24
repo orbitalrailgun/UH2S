@@ -160,6 +160,14 @@ TRANSLATIONS = {
         "harv.show.bad_type": "unknown type «{type}» (table | matplotlib)",
         "harv.save.no_data": "no table data: {tables}", "harv.save.no_tables": "no tables specified",
         "harv.save.downloading": "💾 Downloading **{filename}** ({tables} tbl., {rows} rows)",
+        # History
+        "history.title": "Run history", "history.refresh": "Refresh", "history.search": "Search by script text",
+        "history.script_label": "Script",
+        "history.col.timestamp": "Timestamp", "history.col.user": "User", "history.col.source": "Source",
+        "history.col.status": "Status", "history.col.duration": "Duration, s", "history.col.script": "Script", "history.col.id": "ID",
+        "history.source.agent": "🤖 agent", "history.source.manual": "manual",
+        "history.status.ok": "✅ ok", "history.status.fail": "❌ fail",
+        "history.detail": "**Status:** {status} · {owner} · {ts}{dur}", "history.dur_suffix": " · {sec:.3f} s",
     },
     "ru": {
         # навигация
@@ -304,6 +312,14 @@ TRANSLATIONS = {
         "harv.show.bad_type": "неизвестный тип «{type}» (table | matplotlib)",
         "harv.save.no_data": "нет табличных данных: {tables}", "harv.save.no_tables": "не указаны таблицы",
         "harv.save.downloading": "💾 Скачивание **{filename}** ({tables} табл., {rows} строк)",
+        # History
+        "history.title": "История запусков", "history.refresh": "Обновить", "history.search": "Поиск по тексту скрипта",
+        "history.script_label": "Скрипт",
+        "history.col.timestamp": "Время", "history.col.user": "Пользователь", "history.col.source": "Источник",
+        "history.col.status": "Статус", "history.col.duration": "Длительность, с", "history.col.script": "Скрипт", "history.col.id": "ID",
+        "history.source.agent": "🤖 агент", "history.source.manual": "ручной",
+        "history.status.ok": "✅ ок", "history.status.fail": "❌ сбой",
+        "history.detail": "**Статус:** {status} · {owner} · {ts}{dur}", "history.dur_suffix": " · {sec:.3f} с",
     },
 }
 

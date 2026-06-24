@@ -2409,6 +2409,8 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
     try:
         logger_log(syslog.LOG_INFO, get_log_message("Starting", currentFuncName(), current_state))
         interface_container.clear()
+        lang = current_state.get("lang", DEFAULT_LANGUAGE)
+        tr = lambda key, **kw: translate(key, lang, **kw)
         current_user = current_state.get("username", "unknown")
         is_fullmaster = "fullmaster" in current_state.get("roles", [])
         history_cache = {"executions": []}   # кэш загруженных записей (для поиска без обращений в БД)
@@ -2424,20 +2426,20 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 grid_data.append({
                     "timestamp": e["timestamp"],
                     "owner": e["owner"],
-                    "source": "🤖 agent" if e.get("agent") else "ручной",
-                    "status": "✅ ok" if e["status"] == 1 else "❌ fail",
+                    "source": tr("history.source.agent") if e.get("agent") else tr("history.source.manual"),
+                    "status": tr("history.status.ok") if e["status"] == 1 else tr("history.status.fail"),
                     "duration": f'{e["duration"]:.3f}' if isinstance(e.get("duration"), (int, float)) else "",
                     "script": preview,
                     "id": e["id"],
                 })
             grid_history.options['columnDefs'] = [
-                {"headerName": "Timestamp", "field": "timestamp", "filter": True, "sortable": True, "minWidth": 210},
-                {"headerName": "User", "field": "owner", "filter": True, "sortable": True, "minWidth": 120},
-                {"headerName": "Source", "field": "source", "filter": True, "sortable": True, "minWidth": 100},
-                {"headerName": "Status", "field": "status", "filter": True, "sortable": True, "minWidth": 90},
-                {"headerName": "Duration, s", "field": "duration", "filter": True, "sortable": True, "minWidth": 110},
-                {"headerName": "Script", "field": "script", "filter": True, "sortable": True, "minWidth": 320, "tooltipField": "script"},
-                {"headerName": "ID", "field": "id", "filter": True, "sortable": True, "minWidth": 280},
+                {"headerName": tr("history.col.timestamp"), "field": "timestamp", "filter": True, "sortable": True, "minWidth": 210},
+                {"headerName": tr("history.col.user"), "field": "owner", "filter": True, "sortable": True, "minWidth": 120},
+                {"headerName": tr("history.col.source"), "field": "source", "filter": True, "sortable": True, "minWidth": 100},
+                {"headerName": tr("history.col.status"), "field": "status", "filter": True, "sortable": True, "minWidth": 90},
+                {"headerName": tr("history.col.duration"), "field": "duration", "filter": True, "sortable": True, "minWidth": 110},
+                {"headerName": tr("history.col.script"), "field": "script", "filter": True, "sortable": True, "minWidth": 320, "tooltipField": "script"},
+                {"headerName": tr("history.col.id"), "field": "id", "filter": True, "sortable": True, "minWidth": 280},
             ]
             grid_history.options['rowData'] = grid_data
             grid_history.options['rowSelection'] = "single"
@@ -2468,9 +2470,8 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
             steps_history_panel.clear()
             with steps_history_panel:
                 duration = execution_json.get("duration_seconds")
-                duration_text = f" · {duration:.3f} c" if isinstance(duration, (int, float)) else ""
-                ui.markdown(f"**Статус:** {'✅ ok' if execution['status'] == 1 else '❌ fail'} · "
-                            f"{execution.get('owner', '?')} · {execution['timestamp']}{duration_text}")
+                duration_text = tr("history.dur_suffix", sec=duration) if isinstance(duration, (int, float)) else ""
+                ui.markdown(tr("history.detail", status=(tr("history.status.ok") if execution['status'] == 1 else tr("history.status.fail")), owner=execution.get('owner', '?'), ts=execution['timestamp'], dur=duration_text))
                 for step in execution_json.get("steps", []):
                     icon = STEP_ICONS.get(step.get("status", "pending"), "·")
                     info = step.get("info", "")
@@ -2481,13 +2482,13 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
         with interface_container:
             with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
                 with ui.row().classes('items-center w-full'):
-                    ui.label("История запусков").classes('text-lg')
-                    ui.button("Refresh", icon='refresh').on_click(lambda: update_history_grid())
-                    search_history_input = ui.input("Поиск по тексту скрипта").classes('grow').on('keydown.enter', lambda: apply_history_filter())
+                    ui.label(tr("history.title")).classes('text-lg')
+                    ui.button(tr("history.refresh"), icon='refresh').on_click(lambda: update_history_grid())
+                    search_history_input = ui.input(tr("history.search")).classes('grow').on('keydown.enter', lambda: apply_history_filter())
                     ui.button(icon='search').on_click(lambda: apply_history_filter())
                 grid_history = ui.aggrid({}).classes('w-full').style('height: 35vh')
                 grid_history.on("selectionChanged", grid_history_click)
-                ui.label("Скрипт")
+                ui.label(tr("history.script_label"))
                 codemirror_history = make_codemirror(current_state).classes('w-full').style('max-height: 25vh')
                 steps_history_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
 
