@@ -432,9 +432,9 @@ def main():
         text = payload.get("text", "")
         files = payload.get("files", [])
 
-        # нет бинарных артефактов -> простой текстовый ответ
+        # нет бинарных артефактов -> простой текстовый ответ (с финальным переводом строки для CLI)
         if not files:
-            return Response(content=text, media_type="text/plain; charset=utf-8")
+            return Response(content=(text + "\n") if text else "\n", media_type="text/plain; charset=utf-8")
 
         # есть файлы/изображения -> zip (output.txt + артефакты, имена уникализируются)
         import io
