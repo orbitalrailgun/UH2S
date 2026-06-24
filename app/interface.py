@@ -281,16 +281,18 @@ THEMES = {
     }
 }
 
-def update_theme(theme: str):
+def update_theme(theme: str, color_overrides=None):
+    # палитра темы + персональные оверрайды цветов (этап 2 Settings)
+    palette = {**THEMES.get(theme, THEMES['dark']), **(color_overrides or {})}
     css = f"""
         :root {{
-            --bg-color: {THEMES[theme]['bg']};
-            --text-color: {THEMES[theme]['text']};
-            --accent-color: {THEMES[theme]['accent']};
-            --card-bg: {THEMES[theme]['card']};
-            --glow: {THEMES[theme]['glow']};
-            --title-color: {THEMES[theme]['title']};
-            --panel-bg: {THEMES[theme]['panel']};
+            --bg-color: {palette['bg']};
+            --text-color: {palette['text']};
+            --accent-color: {palette['accent']};
+            --card-bg: {palette['card']};
+            --glow: {palette['glow']};
+            --title-color: {palette['title']};
+            --panel-bg: {palette['panel']};
         }}
         html, body {{
             margin: 0;
@@ -319,6 +321,17 @@ FONT_OPTIONS = [
     "'Courier New', ui-monospace, monospace",
 ]
 
+# Роли палитры, доступные для пользовательской настройки цвета (ключ THEMES -> подпись).
+# glow намеренно не выносим — это CSS box-shadow, а не простой цвет.
+COLOR_ROLES = [
+    ("bg", "Фон"),
+    ("text", "Текст"),
+    ("accent", "Акцент"),
+    ("card", "Карточки"),
+    ("title", "Заголовки"),
+    ("panel", "Панели"),
+]
+
 # Значения по умолчанию для «Внешнего вида» (persist в settings, scope user:<username>).
 APPEARANCE_DEFAULTS = {
     "theme": "dark",
@@ -326,14 +339,18 @@ APPEARANCE_DEFAULTS = {
     "font_size": 14,
     "table_font": FONT_OPTIONS[1],
     "table_font_size": 13,
+    # оверрайды цветов по теме: {"dark": {role: "#hex", ...}, "light": {...}}
+    "colors": {},
 }
 
 
 def apply_appearance(appearance):
-    """Применить внешний вид на клиенте: тема (через update_theme) + шрифты/размеры через CSS-переменные.
+    """Применить внешний вид на клиенте: тема + оверрайды цветов (update_theme) и шрифты/размеры через CSS-переменные.
     Действует «живо» на весь UI и текстовые блоки; таблицы (AG Grid) — через override-правило в CSS."""
     appearance = {**APPEARANCE_DEFAULTS, **(appearance or {})}
-    update_theme(appearance["theme"])
+    theme = appearance["theme"]
+    color_overrides = (appearance.get("colors") or {}).get(theme, {})
+    update_theme(theme, color_overrides)
     try:
         font_size = int(appearance.get("font_size") or APPEARANCE_DEFAULTS["font_size"])
     except BaseException:
@@ -724,6 +741,30 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             label="Размер, px", value=appearance["table_font_size"], min=8, max=24, step=1
                         ).classes('w-32')
 
+                    ui.separator()
+                    ui.label("Цвета интерфейса").style("color: var(--accent-color);")
+                    ui.markdown("Цвета задаются отдельно для тёмной и светлой темы — редактируется текущая выбранная тема.").classes('text-xs opacity-60')
+
+                    # оверрайды цветов по теме: {"dark": {role: "#hex"}, "light": {...}} — живо обновляются пикерами
+                    colors_state = {t: dict(v) for t, v in (appearance.get("colors") or {}).items()}
+                    color_pickers = {}
+                    suspend = {"v": False}
+
+                    def effective_colors(theme_name):
+                        return {**THEMES.get(theme_name, THEMES["dark"]), **(colors_state.get(theme_name) or {})}
+
+                    with ui.row().classes('items-end gap-3 w-full flex-wrap'):
+                        _eff = effective_colors(appearance["theme"])
+                        for role, role_label in COLOR_ROLES:
+                            color_pickers[role] = ui.color_input(label=role_label, value=_eff[role]).classes('w-40')
+
+                    def sync_colors():
+                        # сохранить значения пикеров как оверрайды текущей темы
+                        theme_name = theme_select.value or "dark"
+                        colors_state[theme_name] = {
+                            role: (color_pickers[role].value or THEMES[theme_name][role]) for role, _ in COLOR_ROLES
+                        }
+
                     def collect():
                         return {
                             "theme": theme_select.value or "dark",
@@ -731,13 +772,27 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             "font_size": int(font_size_input.value or APPEARANCE_DEFAULTS["font_size"]),
                             "table_font": (table_font_select.value or APPEARANCE_DEFAULTS["table_font"]).strip(),
                             "table_font_size": int(table_font_size_input.value or APPEARANCE_DEFAULTS["table_font_size"]),
+                            "colors": colors_state,
                         }
 
                     def preview():
                         # применить без сохранения (для подбора)
+                        if suspend["v"]:
+                            return
+                        sync_colors()
                         apply_appearance(collect())
 
+                    def on_theme_change():
+                        # при смене темы перерисовать пикеры под её эффективные цвета
+                        suspend["v"] = True
+                        eff = effective_colors(theme_select.value or "dark")
+                        for role, _ in COLOR_ROLES:
+                            color_pickers[role].value = eff[role]
+                        suspend["v"] = False
+                        preview()
+
                     def save():
+                        sync_colors()
                         new_appearance = collect()
                         set_setting_result = set_setting(scope, "appearance", new_appearance, current_state)
                         if not set_setting_result[0]:
@@ -748,17 +803,25 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         ui.notify("Внешний вид сохранён", type="positive")
 
                     def reset_defaults():
-                        nonlocal appearance
+                        suspend["v"] = True
                         theme_select.value = APPEARANCE_DEFAULTS["theme"]
                         font_select.value = APPEARANCE_DEFAULTS["font"]
                         font_size_input.value = APPEARANCE_DEFAULTS["font_size"]
                         table_font_select.value = APPEARANCE_DEFAULTS["table_font"]
                         table_font_size_input.value = APPEARANCE_DEFAULTS["table_font_size"]
+                        colors_state.clear()
+                        eff = effective_colors(APPEARANCE_DEFAULTS["theme"])
+                        for role, _ in COLOR_ROLES:
+                            color_pickers[role].value = eff[role]
+                        suspend["v"] = False
                         preview()
 
-                    # живой предпросмотр при изменении любого контрола
-                    for control in (theme_select, font_select, font_size_input, table_font_select, table_font_size_input):
+                    # живой предпросмотр при изменении контролов
+                    theme_select.on('update:model-value', lambda: on_theme_change())
+                    for control in (font_select, font_size_input, table_font_select, table_font_size_input):
                         control.on('update:model-value', lambda: preview())
+                    for role, _ in COLOR_ROLES:
+                        color_pickers[role].on('update:model-value', lambda: preview())
 
                     with ui.row().classes('gap-2 mt-2'):
                         ui.button("Сохранить", icon='save', on_click=save).classes('hover-glow')
