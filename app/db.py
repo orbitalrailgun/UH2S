@@ -676,6 +676,50 @@ def get_user_by_username(username, current_state):
         return False, str(e), currentFuncName(), None
 
 
+def search_actual_objects(query, current_state, limit=50):
+    """Поиск по содержимому актуальных версий объектов (LIKE по json). Возвращает
+    name/type/roles(parsed)/json(raw) — фильтрация по ролям делается на уровне вызова."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        sql = f"""
+            WITH actual_version AS (
+                SELECT name, max(version) AS version FROM objects GROUP BY name
+            )
+            SELECT objects.name, objects.type, objects.roles, objects.json
+            FROM objects JOIN actual_version
+                ON objects.name = actual_version.name AND objects.version = actual_version.version
+            WHERE objects.json LIKE {placeholder}
+            ORDER BY objects.type, objects.name
+            LIMIT {int(limit)};
+        """
+        cursor = connection.cursor()
+        cursor.execute(sql, (f"%{query}%",))
+        result = cursor.fetchall()
+        cursor.close()
+        connection.close()
+
+        objects = []
+        for line in (result or []):
+            record = dict(zip(["name", "type", "roles", "json"], line))
+            try:
+                record["roles"] = json.loads(record["roles"]) if record["roles"] else []
+            except BaseException:
+                record["roles"] = []
+            objects.append(record)
+        return True, "Ok", currentFuncName(), objects
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
 def create_execution(execution_id, owner, status, json_object, current_state):
     """Записать запуск скрипта в таблицу executions (параметризованный INSERT — текст скрипта
     может содержать кавычки)."""

@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -11,7 +11,7 @@ from nicegui import ui, app, Client, run
 from app.logging import get_log_message, logger_log, currentFuncName
 from typing import Dict, Any, Tuple
 from engine import commands_executor
-from app.engine import command_parser, describe_sources_catalog
+from app.engine import command_parser, list_source_types, describe_source_functions
 from app.validation import json_validate, validate_itemname, validate_comment
 # via grok
 # Theme definitions
@@ -1245,11 +1245,17 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
         logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
         return False, error_message, currentFuncName(), None
     
-def _extract_run_block(text):
-    """Извлечь скрипт из блока ```run ...``` ответа агента (первый блок), иначе None."""
+AGENT_ACTIONS = ("run", "list_sources", "get_source_functions", "list_objects", "search_objects", "get_object")
+
+
+def _extract_action(text):
+    """Найти первый блок-действие агента ```<action> ...```; вернуть (action, argument) или (None, None).
+    Блок ```harvester``` действием НЕ является (финальный ответ)."""
     import re
-    match = re.search(r"```run\s*\n(.*?)```", text or "", flags=re.DOTALL)
-    return match.group(1).strip() if match else None
+    match = re.search(r"```(" + "|".join(AGENT_ACTIONS) + r")\b[ \t]*\n?(.*?)```", text or "", flags=re.DOTALL)
+    if not match:
+        return None, None
+    return match.group(1), match.group(2).strip()
 
 
 def run_agent_script(script_text, current_state):
@@ -1479,34 +1485,74 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             ui.markdown("_Диалог пуст. Напишите запрос — например: «нужно получить алерты из thehive и обогатить данными из netbox»._")
                         for message in conversation:
                             content = message.get("content", "")
-                            if message["role"] == "user" and content.startswith("РЕЗУЛЬТАТ ВЫПОЛНЕНИЯ СКРИПТА"):
-                                who = "🛠 **Результат выполнения:**"
+                            if message["role"] == "user" and content.startswith("РЕЗУЛЬТАТ ДЕЙСТВИЯ"):
+                                who = "🛠 **Результат действия:**"
                             elif message["role"] == "user":
                                 who = "🧑 **Вы:**"
                             else:
                                 who = "🤖 **Агент:**"
                             ui.markdown(f"{who}\n\n{content}", extras=['tables', 'fenced-code-blocks'])
 
-                def accessible_objects_lines():
+                def _role_allowed(object_roles):
+                    roles = current_state.get("roles", [])
+                    return "fullmaster" in roles or any(r in (object_roles or []) for r in roles)
+
+                def action_list_objects(type_filter):
                     get_all_actual_objects_result = get_all_actual_objects(current_state)
                     objects = get_all_actual_objects_result[3] if get_all_actual_objects_result[0] else []
-                    roles = current_state.get("roles", [])
+                    type_filter = (type_filter or "").strip() or None
                     lines = []
                     for o in objects:
-                        object_roles = o.get("roles", []) or []
-                        if "fullmaster" in roles or any(r in object_roles for r in roles):
-                            lines.append(f"- {o['name']} ({o.get('type', '?')})")
-                    return lines
+                        if not _role_allowed(o.get("roles")):
+                            continue
+                        if type_filter and o.get("type") != type_filter:
+                            continue
+                        lines.append(f"- {o['name']} ({o.get('type', '?')})")
+                    return "\n".join(lines) if lines else "объектов нет"
 
-                def recent_history_lines(limit=5):
-                    get_executions_result = get_executions(current_state.get("username", "unknown"), current_state, limit=limit)
-                    executions = get_executions_result[3] if get_executions_result[0] else []
+                def action_search_objects(query):
+                    if not query:
+                        return "укажите текст поиска"
+                    search_result = search_actual_objects(query, current_state)
+                    objects = search_result[3] if search_result[0] else []
                     lines = []
-                    for e in executions[:limit]:
-                        status_text = "ok" if e["status"] == 1 else "fail"
-                        preview = " ".join((e.get("script") or "").split())[:120]
-                        lines.append(f"- [{status_text}] {preview}")
-                    return lines
+                    for o in objects:
+                        if not _role_allowed(o.get("roles")):
+                            continue
+                        snippet = " ".join(str(o.get("json") or "").split())[:160]
+                        lines.append(f"- {o['name']} ({o.get('type', '?')}): {snippet}")
+                    return "\n".join(lines) if lines else "ничего не найдено"
+
+                def action_get_object(name):
+                    name = (name or "").strip()
+                    if not name:
+                        return "укажите имя объекта"
+                    get_object_result = get_actual_object_by_name(name, "('source', 'script', 'notifier', 'llm')", current_state)
+                    if not get_object_result[0]:
+                        return f"объект '{name}' не найден"
+                    obj = get_object_result[3]
+                    if not _role_allowed(obj.get("roles")):
+                        return f"нет доступа к объекту '{name}'"
+                    return f"{name} ({obj.get('type')}):\n" + json.dumps(obj.get("json", {}), ensure_ascii=False, indent=2)
+
+                def dispatch_action(action, argument):
+                    """Выполнить действие агента и вернуть текст результата (sync; вызывается через io_bound)."""
+                    try:
+                        if action == "run":
+                            return run_agent_script(argument, current_state)
+                        if action == "list_sources":
+                            return list_source_types()
+                        if action == "get_source_functions":
+                            return describe_source_functions((argument or "").strip())
+                        if action == "list_objects":
+                            return action_list_objects(argument)
+                        if action == "search_objects":
+                            return action_search_objects(argument)
+                        if action == "get_object":
+                            return action_get_object(argument)
+                        return f"неизвестное действие: {action}"
+                    except BaseException as e:
+                        return f"ошибка действия {action}: {str(e)}"
 
                 async def send_message():
                     selected = current_state.get("ui_selected_llm")
@@ -1528,9 +1574,9 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                         status.set_text("AI думает…")
                     try:
                         context_window = llm_context_window(selected["json"])
-                        max_iterations = 8   # лимит цикла «ответ -> запуск -> ответ»
+                        max_iterations = 10   # лимит цикла «ответ -> действие -> ответ»
                         for iteration in range(max_iterations):
-                            system_prompt = build_agent_system_prompt(accessible_objects_lines(), recent_history_lines(), describe_sources_catalog())
+                            system_prompt = build_agent_system_prompt()
                             messages = llm_build_messages(system_prompt, conversation, context_window)
                             ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
                             if not ok:
@@ -1540,24 +1586,24 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             conversation.append({"role": "assistant", "content": reply})
                             render_chat()
 
-                            run_script = _extract_run_block(reply)
-                            if not run_script:
-                                break  # финальный ответ — агент не просит выполнения
+                            action, argument = _extract_action(reply)
+                            if not action:
+                                break  # финальный ответ (текст или ```harvester) — действий нет
 
                             if status is not None:
-                                status.set_text("Агент выполняет скрипт…")
-                            exec_summary = await run.io_bound(run_agent_script, run_script, current_state)
-                            exec_summary = llm_truncate_to_tokens(exec_summary, max(512, context_window // 4))
-                            conversation.append({"role": "user", "content": "РЕЗУЛЬТАТ ВЫПОЛНЕНИЯ СКРИПТА:\n" + exec_summary})
+                                status.set_text(f"Агент: {action}…")
+                            action_result = await run.io_bound(dispatch_action, action, argument)
+                            action_result = llm_truncate_to_tokens(action_result, max(512, context_window // 4))
+                            conversation.append({"role": "user", "content": f"РЕЗУЛЬТАТ ДЕЙСТВИЯ [{action}]:\n{action_result}"})
                             render_chat()
                             if status is not None:
                                 status.set_text("AI думает…")
                         else:
-                            # лимит автозапусков исчерпан — просим финальный вариант без выполнения
+                            # лимит действий исчерпан — просим финальный вариант без действий
                             conversation.append({"role": "user", "content":
-                                "Достигнут лимит автозапусков. Приведи лучший финальный вариант скрипта в блоке "
-                                "```harvester и краткий итог (что получилось, что осталось проверить вручную). Не используй ```run."})
-                            system_prompt = build_agent_system_prompt(accessible_objects_lines(), recent_history_lines(), describe_sources_catalog())
+                                "Достигнут лимит действий. Приведи лучший финальный вариант скрипта в блоке "
+                                "```harvester и краткий итог (что получилось, что осталось проверить вручную). Без действий."})
+                            system_prompt = build_agent_system_prompt()
                             messages = llm_build_messages(system_prompt, conversation, context_window)
                             ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
                             conversation.append({"role": "assistant", "content": reply if ok else f"⚠️ Ошибка LLM: {reply}"})

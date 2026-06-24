@@ -520,6 +520,20 @@ class TestSourcesCatalog(unittest.TestCase):
         # незарегистрированные/заглушечные функции не попадают
         self.assertNotIn("teleport:", catalog)
 
+    def test_list_source_types(self):
+        from app.engine import list_source_types
+        types = list_source_types()
+        self.assertIn("jira_sm", types)
+        self.assertIn("irp_thehive", types)
+        self.assertNotIn("teleport", types)   # без зарегистрированных функций
+
+    def test_describe_source_functions(self):
+        from app.engine import describe_source_functions
+        text = describe_source_functions("jira_sm")
+        self.assertIn("search_issues | обязательные: ['jql']", text)
+        self.assertIn("конфиг source-объекта", text)
+        self.assertIn("не найден", describe_source_functions("does_not_exist"))
+
 
 class TestLlmContext(unittest.TestCase):
     def test_context_window(self):

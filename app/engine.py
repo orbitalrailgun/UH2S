@@ -930,6 +930,37 @@ def describe_sources_catalog():
     return "\n".join(lines)
 
 
+def list_source_types():
+    """Список зарегистрированных типов источников (с хотя бы одной рабочей функцией)."""
+    types = []
+    for source_type in sorted(ENGINE_SOURCES_AND_FUNCTIONS_MAP.keys()):
+        functions = (ENGINE_SOURCES_AND_FUNCTIONS_MAP[source_type] or {}).get("functions", {}) or {}
+        if any("query" in (f.get("functions") or {}) for f in functions.values()):
+            types.append(source_type)
+    return ", ".join(types)
+
+
+def describe_source_functions(source_type):
+    """Детально по одному типу источника: параметры конфигурации source-объекта и
+    обязательные/опциональные параметры каждой функции."""
+    spec = ENGINE_SOURCES_AND_FUNCTIONS_MAP.get(source_type)
+    if not spec:
+        return f"источник '{source_type}' не найден. Доступные типы: {list_source_types()}"
+    lines = [f"источник {source_type}:"]
+    src_required = list((spec.get("required") or {}).keys())
+    src_optional = list((spec.get("unrequired") or {}).keys())
+    lines.append(f"  конфиг source-объекта — обязательно: {src_required or '—'}; опц.: {src_optional or '—'}")
+    functions = spec.get("functions", {}) or {}
+    for function_name in functions:
+        function_spec = functions[function_name] or {}
+        if "query" not in (function_spec.get("functions") or {}):
+            continue
+        required = list((function_spec.get("required") or {}).keys())
+        optional = list((function_spec.get("unrequired") or {}).keys())
+        lines.append(f"  - {function_name} | обязательные: {required or '—'} | опц.: {optional or '—'}")
+    return "\n".join(lines)
+
+
 def get_variable_type(text:str, current_state:dict):
     # empty
     if len(text) == 0:
