@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -1556,30 +1556,44 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         ui.markdown("Ключи для `POST /api/script`. Запросы выполняются в контексте указанного владельца "
                                     "(его роли). Токен показывается один раз при создании — сохраните его.").classes('text-xs opacity-60')
 
-                        keys_grid = ui.aggrid({}).classes('w-full').style('height: 26vh')
-                        key_selected = {"key_hash": None}
+                        keys_grid = ui.aggrid({}).classes('w-full').style('height: 28vh')
+                        key_selected = {"key_hash": None, "enabled": None}
+
+                        def _truthy(value):
+                            return value in (1, True) or str(value).lower() in ("1", "true", "t", "yes")
 
                         def refresh_keys_grid():
                             keys_result = list_api_keys(current_state)
                             rows = []
                             if keys_result[0]:
+                                now = currentTimestamp()
                                 for key in keys_result[3]:
+                                    expires_at = key.get("expires_at") or ""
+                                    expired = bool(expires_at) and now >= expires_at
+                                    enabled = _truthy(key.get("enabled"))
                                     rows.append({
                                         "owner": key.get("owner", ""),
                                         "comment": key.get("comment", ""),
-                                        "enabled": ("да" if key.get("enabled") in (1, True) or str(key.get("enabled")).lower() in ("1", "true", "t") else "нет"),
+                                        "status": ("истёк" if expired else ("активен" if enabled else "выключен")),
+                                        "created_at": key.get("created_at", "") or "",
+                                        "created_by": key.get("created_by", "") or "",
+                                        "expires_at": expires_at or "бессрочно",
                                         "hash_prefix": (key.get("key_hash", "") or "")[:12] + "…",
                                         "key_hash": key.get("key_hash", ""),
+                                        "_enabled": enabled,
                                     })
                             keys_grid.options["columnDefs"] = [
-                                {"headerName": "Владелец", "field": "owner", "filter": True, "sortable": True, "resizable": True, "minWidth": 150},
-                                {"headerName": "Комментарий", "field": "comment", "filter": True, "sortable": True, "resizable": True, "minWidth": 220, "tooltipField": "comment"},
-                                {"headerName": "Активен", "field": "enabled", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
-                                {"headerName": "Хэш (префикс)", "field": "hash_prefix", "filter": True, "sortable": True, "resizable": True, "minWidth": 150},
+                                {"headerName": "Владелец", "field": "owner", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
+                                {"headerName": "Комментарий", "field": "comment", "filter": True, "sortable": True, "resizable": True, "minWidth": 180, "tooltipField": "comment"},
+                                {"headerName": "Статус", "field": "status", "filter": True, "sortable": True, "resizable": True, "minWidth": 100},
+                                {"headerName": "Создан", "field": "created_at", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
+                                {"headerName": "Кем создан", "field": "created_by", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
+                                {"headerName": "Истекает", "field": "expires_at", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
+                                {"headerName": "Хэш (префикс)", "field": "hash_prefix", "filter": True, "sortable": True, "resizable": True, "minWidth": 140},
                             ]
                             keys_grid.options["rowData"] = rows
                             keys_grid.options["rowSelection"] = "single"
-                            keys_grid.options["defaultColDef"] = {"filter": True, "sortable": True, "resizable": True, "minWidth": 120}
+                            keys_grid.options["defaultColDef"] = {"filter": True, "sortable": True, "resizable": True, "minWidth": 110}
                             keys_grid.options["enableCellTextSelection"] = True
                             keys_grid.options["enableBrowserTooltips"] = True
                             keys_grid.options["domLayout"] = "normal"
@@ -1588,12 +1602,14 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         async def on_key_selected():
                             row = (await keys_grid.get_selected_row()) or {}
                             key_selected["key_hash"] = row.get("key_hash")
+                            key_selected["enabled"] = row.get("_enabled")
 
                         keys_grid.on("selectionChanged", on_key_selected)
 
                         with ui.row().classes('items-end gap-2 w-full flex-wrap'):
-                            new_key_owner = ui.input(label="Владелец (username)").classes('w-64')
+                            new_key_owner = ui.input(label="Владелец (username)").classes('w-56')
                             new_key_comment = ui.input(label="Комментарий").classes('grow')
+                            new_key_ttl = ui.number(label="Срок жизни (дней, пусто = бессрочно)", min=0, step=1).classes('w-64')
 
                         def create_api_key_action():
                             owner = (new_key_owner.value or "").strip()
@@ -1605,13 +1621,15 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                 ui.notify(f"Пользователь '{owner}' не найден", type="negative")
                                 return
                             comment = (new_key_comment.value or "").strip()
-                            result = create_api_key(owner, comment, current_state)
+                            ttl_days = new_key_ttl.value or 0
+                            result = create_api_key(owner, comment, username, ttl_days, current_state)
                             if not result[0]:
                                 ui.notify(f"Ошибка: {result[1]}", type="negative")
                                 return
                             token = result[3]
                             new_key_owner.value = ""
                             new_key_comment.value = ""
+                            new_key_ttl.value = None
                             refresh_keys_grid()
                             with ui.dialog() as token_dialog, ui.card().classes('w-[36rem] max-w-full'):
                                 ui.label("API-ключ создан — сохраните его сейчас").style('font-weight:700; color: var(--title-color);')
@@ -1619,6 +1637,18 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                 ui.input(label="API key", value=token).props('readonly').classes('w-full')
                                 ui.button("Закрыть", on_click=token_dialog.close).classes('hover-glow')
                             token_dialog.open()
+
+                        def toggle_key_enabled():
+                            if not key_selected["key_hash"]:
+                                ui.notify("Выберите ключ в таблице", type="warning")
+                                return
+                            result = set_api_key_enabled(key_selected["key_hash"], not key_selected["enabled"], current_state)
+                            if not result[0]:
+                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                return
+                            ui.notify(("Ключ включён" if not key_selected["enabled"] else "Ключ выключен"), type="positive")
+                            key_selected["enabled"] = not key_selected["enabled"]
+                            refresh_keys_grid()
 
                         def delete_api_key_action():
                             if not key_selected["key_hash"]:
@@ -1634,6 +1664,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                         with ui.row().classes('gap-2 flex-wrap'):
                             ui.button("Создать ключ", icon='vpn_key', on_click=create_api_key_action).classes('hover-glow')
+                            ui.button("Вкл/выкл выбранный", icon='power_settings_new', on_click=toggle_key_enabled).props('outline')
                             ui.button("Удалить выбранный", icon='delete', on_click=delete_api_key_action).props('outline')
                             ui.button("Обновить список", icon='refresh', on_click=refresh_keys_grid).props('flat')
 
