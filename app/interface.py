@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -1367,6 +1367,96 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                         ui.button("Обновить журнал", icon='refresh', on_click=refresh_ai_log).props('outline')
                         refresh_ai_log()
+
+                    # ──────────── Разрешённые сети (IP-whitelist) — роли fullmaster / netadmin ────────────
+                    if any(role in current_roles for role in ("fullmaster", "netadmin")):
+                        ui.separator()
+                        ui.label("Разрешённые сети (доступ по IP)").style(
+                            "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                        ui.markdown("Вход разрешён только с адресов из разрешающих (allow) сетей. ⚠️ Не удаляйте сеть, "
+                                    "из которой работаете сами, — иначе будете разлогинены при следующей проверке.").classes('text-xs text-orange-400')
+
+                        net_grid = ui.aggrid({}).classes('w-full').style('height: 30vh')
+                        net_selected = {"cidr": None, "comment": None}
+
+                        def _allow_truthy(value):
+                            return value in (1, True) or str(value).lower() in ("1", "true", "t", "yes")
+
+                        def refresh_net_grid():
+                            net_result = get_access_networks(current_state)
+                            rows = []
+                            if net_result[0]:
+                                for network in net_result[3]:
+                                    rows.append({
+                                        "cidr": network.get("cidr", ""),
+                                        "allow": ("да" if _allow_truthy(network.get("allow")) else "нет"),
+                                        "comment": network.get("comment", ""),
+                                    })
+                            net_grid.options["columnDefs"] = [
+                                {"headerName": "CIDR", "field": "cidr", "filter": True, "sortable": True, "resizable": True, "minWidth": 180, "tooltipField": "cidr"},
+                                {"headerName": "Разрешает", "field": "allow", "filter": True, "sortable": True, "resizable": True, "minWidth": 120},
+                                {"headerName": "Комментарий", "field": "comment", "filter": True, "sortable": True, "resizable": True, "minWidth": 220, "tooltipField": "comment"},
+                            ]
+                            net_grid.options["rowData"] = rows
+                            net_grid.options["rowSelection"] = "single"
+                            net_grid.options["defaultColDef"] = {"filter": True, "sortable": True, "resizable": True, "minWidth": 140}
+                            net_grid.options["enableCellTextSelection"] = True
+                            net_grid.options["enableBrowserTooltips"] = True
+                            net_grid.options["domLayout"] = "normal"
+                            net_grid.update()
+
+                        async def on_net_selected():
+                            row = (await net_grid.get_selected_row()) or {}
+                            net_selected["cidr"] = row.get("cidr")
+                            net_selected["comment"] = row.get("comment")
+
+                        net_grid.on("selectionChanged", on_net_selected)
+
+                        with ui.row().classes('items-end gap-2 w-full flex-wrap'):
+                            new_net_cidr = ui.input(label="CIDR (напр. 10.0.0.0/8)").classes('w-64')
+                            new_net_comment = ui.input(label="Комментарий").classes('grow')
+                            new_net_allow = ui.checkbox("Разрешает", value=True)
+
+                        def add_network():
+                            cidr = (new_net_cidr.value or "").strip()
+                            comment = (new_net_comment.value or "").strip()
+                            import ipaddress
+                            try:
+                                ipaddress.ip_network(cidr, strict=False)
+                            except BaseException:
+                                ui.notify("Некорректный CIDR (пример: 192.168.0.0/24 или 10.1.2.3/32)", type="negative")
+                                return
+                            if not validate_comment(comment, current_state)[0]:
+                                ui.notify("Недопустимый комментарий", type="negative")
+                                return
+                            result = create_access_network(cidr, new_net_allow.value, comment, current_state)
+                            if not result[0]:
+                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                return
+                            new_net_cidr.value = ""
+                            new_net_comment.value = ""
+                            ui.notify(f"Сеть добавлена: {cidr}", type="positive")
+                            refresh_net_grid()
+
+                        def delete_network():
+                            if not net_selected["cidr"]:
+                                ui.notify("Выберите сеть в таблице", type="warning")
+                                return
+                            result = delete_access_network(net_selected["cidr"], net_selected["comment"] or "", current_state)
+                            if not result[0]:
+                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                return
+                            ui.notify(f"Сеть удалена: {net_selected['cidr']}", type="positive")
+                            net_selected["cidr"] = None
+                            net_selected["comment"] = None
+                            refresh_net_grid()
+
+                        with ui.row().classes('gap-2 flex-wrap'):
+                            ui.button("Добавить сеть", icon='add', on_click=add_network).classes('hover-glow')
+                            ui.button("Удалить выбранную", icon='delete', on_click=delete_network).props('outline')
+                            ui.button("Обновить список", icon='refresh', on_click=refresh_net_grid).props('flat')
+
+                        refresh_net_grid()
 
         return True, "Ok", currentFuncName(), None
 

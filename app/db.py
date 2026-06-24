@@ -183,6 +183,55 @@ def get_access_networks(current_state):
         logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
         return False, str(e), currentFuncName(), None
 
+
+def create_access_network(cidr, allow, comment, current_state):
+    """Добавить запись в access_networks (параметризованно). allow=True -> разрешающая сеть."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(
+            f"INSERT INTO access_networks (cidr, allow, comment) VALUES ({placeholder}, {placeholder}, {placeholder});",
+            (cidr, bool(allow), comment),
+        )
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def delete_access_network(cidr, comment, current_state):
+    """Удалить запись access_networks по cidr+comment (точное совпадение)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"DELETE FROM access_networks WHERE cidr = {placeholder} AND comment = {placeholder};", (cidr, comment))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
 def get_actual_object_by_name(name, type, current_state):
     try:
         create_db_connection_result = create_db_connection(current_state)
