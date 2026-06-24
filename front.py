@@ -13,8 +13,10 @@ import sys
 from app.logging import currentTimestamp, get_log_message, logger_log#, currentFuncName
 from app.interface import login_page
 from app.interface import main_page
+from app.interface import execute_script_api
 
 from app.db import db_init
+from app.db import verify_api_key, get_user_by_username
 
 from app.crptgrphy import decrypt
 
@@ -369,6 +371,98 @@ def main():
     #         media_type=api_scenario_launch_page_result[3]["media_type"],
     #         headers={"Content-Disposition": f"attachment; filename={api_scenario_launch_page_result[3]['filename']}"})
     
+    ########################################
+    # API: выполнение DSL-скрипта
+    ########################################
+    @app.post("/api/script")
+    async def api_script(request: Request):
+        client_ip = request.client.host
+        client_port = request.client.port
+
+        # аутентификация по API-ключу (X-API-Key или Authorization: Bearer <token>)
+        api_token = request.headers.get("x-api-key")
+        if not api_token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                api_token = auth_header[7:].strip()
+        if not api_token:
+            raise HTTPException(status_code=401, detail="missing API key (header X-API-Key)")
+
+        auth_state = {
+            "db_conf": args.db_conf_object, "app_name": APP_NAME, "app_version": APP_VERSION,
+            "main_session_id": main_session_id, "user_session_id": str(uuid.uuid4()),
+            "client_ip_address": client_ip, "client_port": client_port,
+            "username": "api", "master_key": MASTER_KEY, "itself_link": ITSELF_LINK,
+        }
+        verify_result = verify_api_key(api_token, auth_state)
+        if not verify_result[0]:
+            raise HTTPException(status_code=401, detail=verify_result[1])
+        owner = verify_result[3]
+
+        owner_user = get_user_by_username(owner, auth_state)
+        owner_roles = owner_user[3].get("roles", []) if owner_user[0] else []
+
+        # тело запроса: текст скрипта; либо JSON {"script": "..."}
+        raw_body = (await request.body()).decode("utf-8", errors="replace")
+        script_text = raw_body
+        try:
+            import json as _json
+            parsed_body = _json.loads(raw_body)
+            if isinstance(parsed_body, dict) and "script" in parsed_body:
+                script_text = parsed_body["script"]
+        except BaseException:
+            pass
+        if not script_text or not script_text.strip():
+            raise HTTPException(status_code=400, detail="empty script body")
+
+        current_state = {
+            "db_conf": args.db_conf_object, "processes": args.processes,
+            "app_name": APP_NAME, "app_version": APP_VERSION,
+            "main_session_id": main_session_id, "user_session_id": str(uuid.uuid4()),
+            "client_ip_address": client_ip, "client_port": client_port,
+            "username": owner, "roles": owner_roles, "master_key": MASTER_KEY,
+            "codemirror_theme": "monokai", "aggrid_theme": "ag-theme-balham-dark",
+            "itself_link": ITSELF_LINK, "keycloak_flag": keycloak_flag,
+        }
+
+        exec_result = await run.io_bound(execute_script_api, script_text, current_state)
+        if not exec_result[0]:
+            raise HTTPException(status_code=400, detail=exec_result[1])
+        payload = exec_result[3]
+        text = payload.get("text", "")
+        files = payload.get("files", [])
+
+        # нет бинарных артефактов -> простой текстовый ответ
+        if not files:
+            return Response(content=text, media_type="text/plain; charset=utf-8")
+
+        # есть файлы/изображения -> zip (output.txt + артефакты, имена уникализируются)
+        import io
+        import zipfile
+        zip_buffer = io.BytesIO()
+        used_names = set()
+
+        def _unique(name):
+            candidate = name
+            i = 1
+            while candidate in used_names:
+                stem, dot, ext = name.partition(".")
+                candidate = f"{stem}_{i}{dot}{ext}"
+                i += 1
+            used_names.add(candidate)
+            return candidate
+
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            if text and text.strip():
+                zf.writestr("output.txt", text.encode("utf-8"))
+            for filename, content, _media in files:
+                zf.writestr(_unique(filename), content)
+        return Response(
+            content=zip_buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=result.zip"},
+        )
+
     ########################################
     # запуск
     ########################################

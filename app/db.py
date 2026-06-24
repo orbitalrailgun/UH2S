@@ -134,6 +134,7 @@ def db_init(current_state):
         cursor.execute("CREATE TABLE IF NOT EXISTS storage (id TEXT, owner TEXT, execution TEXT, json TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS settings (scope TEXT, key TEXT, value TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS ai_log (timestamp TEXT, username TEXT, model TEXT, provider TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER, duration_ms INTEGER, ok INTEGER);")
+        cursor.execute("CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT, owner TEXT, comment TEXT, enabled BOOLEAN);")
         connection.commit()
         cursor.execute("INSERT INTO access_networks(cidr, allow, comment) SELECT '127.0.0.0/8', true, 'localhost' WHERE NOT EXISTS(SELECT * FROM access_networks);")
         cursor.execute("INSERT INTO users(enabled, name, pass, roles, json) SELECT true, 'harvester', '$2a$12$csKo6ccYS3Kjc3e2JAu4VucbzO9vTBlvdjxCoTOVAYSnli2EXll3q', '[\"fullmaster\"]', '{}' WHERE NOT EXISTS(SELECT * FROM users) AND NOT EXISTS(SELECT * FROM storage) AND NOT EXISTS(SELECT * FROM objects) AND NOT EXISTS(SELECT * FROM executions);")
@@ -949,6 +950,123 @@ def get_ai_log(current_state, limit=2000):
         columns = ["timestamp", "username", "model", "provider", "prompt_tokens", "completion_tokens", "total_tokens", "duration_ms", "ok"]
         entries = [dict(zip(columns, row)) for row in (rows or [])]
         return True, "Ok", currentFuncName(), entries
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def _hash_api_key(token):
+    import hashlib
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def create_api_key(owner, comment, current_state):
+    """Создать API-ключ для владельца (enabled=true). Возвращает токен в payload — показывается один раз.
+    В БД хранится только sha256-хэш токена."""
+    try:
+        import secrets
+        token = "uh_" + secrets.token_hex(32)
+        key_hash = _hash_api_key(token)
+
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(
+            f"INSERT INTO api_keys (key_hash, owner, comment, enabled) VALUES ({placeholder}, {placeholder}, {placeholder}, true);",
+            (key_hash, owner, comment),
+        )
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), token
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def list_api_keys(current_state):
+    """Список API-ключей (без самого токена): key_hash/owner/comment/enabled."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+
+        cursor = connection.cursor()
+        cursor.execute("SELECT key_hash, owner, comment, enabled FROM api_keys ORDER BY owner;")
+        rows = cursor.fetchall()
+        cursor.close()
+        connection.close()
+
+        keys = [dict(zip(["key_hash", "owner", "comment", "enabled"], row)) for row in (rows or [])]
+        return True, "Ok", currentFuncName(), keys
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def delete_api_key(key_hash, current_state):
+    """Удалить API-ключ по его sha256-хэшу."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"DELETE FROM api_keys WHERE key_hash = {placeholder};", (key_hash,))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def verify_api_key(token, current_state):
+    """Проверить API-ключ. Возвращает (True, ..., owner) если ключ активен и владелец не заблокирован."""
+    try:
+        key_hash = _hash_api_key(token)
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"SELECT owner, enabled FROM api_keys WHERE key_hash = {placeholder};", (key_hash,))
+        row = cursor.fetchone()
+        cursor.close()
+        connection.close()
+
+        if not row:
+            return False, "invalid api key", currentFuncName(), None
+        owner, enabled = row[0], row[1]
+        if not enabled:
+            return False, "api key disabled", currentFuncName(), None
+        # владелец не должен быть заблокирован
+        owner_result = get_user_by_username(owner, current_state)
+        if not owner_result[0] or not owner_result[3].get("enabled", False):
+            return False, "api key owner disabled or missing", currentFuncName(), None
+        return True, "Ok", currentFuncName(), owner
 
     except BaseException as e:
         if 'connection' in locals():

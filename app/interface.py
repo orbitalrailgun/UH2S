@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -231,6 +231,96 @@ def records_to_download(tables_data, fmt, base_name):
         return zip_buffer.getvalue(), f"{base}.json.zip", "application/zip"
 
     raise ValueError(f"unknown format '{fmt}' (xlsx | csv_in_zip | json_in_zip)")
+
+
+def execute_script_api(script_text, current_state):
+    """Выполнить DSL-скрипт для API (без UI). Возвращает (ok, msg, payload), где payload:
+    {"text": <PRINT и SHOW table в markdown>, "files": [(filename, bytes, media_type), ...]}.
+    PRINT -> текст; SHOW matplotlib -> PNG-файл; SHOW table -> markdown-таблица в текст; SAVE -> файл(ы)."""
+    try:
+        parsed = command_parser(script_text, current_state)
+        parse_errors = [(i, c) for i, c in enumerate(parsed) if not c.get("parsed", True)]
+        if parse_errors:
+            details = "; ".join(f"#{i + 1} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for i, c in parse_errors)
+            return False, f"parse errors: {details}", None
+
+        executor_result = commands_executor(parsed, current_state)
+        if not executor_result[0]:
+            return False, executor_result[1], None
+        variables, result_map = executor_result[3]
+
+        def _resolve_table(name):
+            if name in result_map and result_map[name][0]:
+                return result_map[name][3]
+            if isinstance(variables.get(name), list):
+                return variables[name]
+            return None
+
+        text_parts = []
+        files = []
+        plot_index = 0
+
+        for command in parsed:
+            kind = command.get("command")
+            if kind == "PRINT":
+                arg = (command.get("print_arg") or "").strip()
+                if len(arg) >= 2 and ((arg[0] == arg[-1] == '"') or (arg[0] == arg[-1] == "'")):
+                    text_parts.append(arg[1:-1])
+                    continue
+                if arg in result_map and result_map[arg][0]:
+                    text_parts.append(records_to_markdown(result_map[arg][3]))
+                elif arg in variables:
+                    value = variables[arg]
+                    if isinstance(value, list) and (len(value) == 0 or isinstance(value[0], dict)):
+                        text_parts.append(records_to_markdown(value))
+                    else:
+                        text_parts.append(f"{arg} = {json.dumps(value, ensure_ascii=False, default=str)}")
+                else:
+                    text_parts.append(arg)
+
+            elif kind == "SHOW":
+                table = (command.get("show_table") or "").strip()
+                show_type = (command.get("show_type") or "table").strip().strip('"\'').lower()
+                data = _resolve_table(table)
+                if not data:
+                    text_parts.append(f"*SHOW: нет табличных данных «{table}»*")
+                    continue
+                if show_type in ("matplotlib", "plot"):
+                    params = {}
+                    params_raw = (command.get("show_params") or "").strip()
+                    if params_raw and json_validate(params_raw):
+                        params = json.loads(params_raw)
+                    plot = render_plot_png_b64(data, params)
+                    import base64 as _b64
+                    plot_index += 1
+                    files.append((f"plot_{plot_index}_{_safe_filename(table)}.png",
+                                  _b64.b64decode(plot["b64"]), "image/png"))
+                else:  # table -> markdown в текст
+                    text_parts.append(records_to_markdown(data))
+
+            elif kind == "SAVE":
+                tables = command.get("save_tables") or []
+                fmt = (command.get("save_format") or "").strip().strip('"\'').lower()
+                tables_data = {}
+                missing = []
+                for table in tables:
+                    resolved = _resolve_table(table)
+                    if resolved is None:
+                        missing.append(table)
+                    else:
+                        tables_data[table] = resolved
+                if missing:
+                    text_parts.append(f"*SAVE: нет табличных данных: {', '.join(missing)}*")
+                    continue
+                base_name = command.get("save_filename") or (tables[0] if len(tables) == 1 else "export")
+                content, filename, media_type = records_to_download(tables_data, fmt, base_name)
+                files.append((filename, content, media_type))
+
+        return True, "Ok", {"text": "\n\n".join(p for p in text_parts if p is not None), "files": files}
+
+    except BaseException as e:
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), None
 
 
 STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌", "rejected": "⛔", "warning": "⚠️"}
@@ -1457,6 +1547,97 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             ui.button("Обновить список", icon='refresh', on_click=refresh_net_grid).props('flat')
 
                         refresh_net_grid()
+
+                    # ──────────── API-ключи (роли fullmaster / apiadmin) ────────────
+                    if any(role in current_roles for role in ("fullmaster", "apiadmin")):
+                        ui.separator()
+                        ui.label("API-ключи").style(
+                            "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                        ui.markdown("Ключи для `POST /api/script`. Запросы выполняются в контексте указанного владельца "
+                                    "(его роли). Токен показывается один раз при создании — сохраните его.").classes('text-xs opacity-60')
+
+                        keys_grid = ui.aggrid({}).classes('w-full').style('height: 26vh')
+                        key_selected = {"key_hash": None}
+
+                        def refresh_keys_grid():
+                            keys_result = list_api_keys(current_state)
+                            rows = []
+                            if keys_result[0]:
+                                for key in keys_result[3]:
+                                    rows.append({
+                                        "owner": key.get("owner", ""),
+                                        "comment": key.get("comment", ""),
+                                        "enabled": ("да" if key.get("enabled") in (1, True) or str(key.get("enabled")).lower() in ("1", "true", "t") else "нет"),
+                                        "hash_prefix": (key.get("key_hash", "") or "")[:12] + "…",
+                                        "key_hash": key.get("key_hash", ""),
+                                    })
+                            keys_grid.options["columnDefs"] = [
+                                {"headerName": "Владелец", "field": "owner", "filter": True, "sortable": True, "resizable": True, "minWidth": 150},
+                                {"headerName": "Комментарий", "field": "comment", "filter": True, "sortable": True, "resizable": True, "minWidth": 220, "tooltipField": "comment"},
+                                {"headerName": "Активен", "field": "enabled", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
+                                {"headerName": "Хэш (префикс)", "field": "hash_prefix", "filter": True, "sortable": True, "resizable": True, "minWidth": 150},
+                            ]
+                            keys_grid.options["rowData"] = rows
+                            keys_grid.options["rowSelection"] = "single"
+                            keys_grid.options["defaultColDef"] = {"filter": True, "sortable": True, "resizable": True, "minWidth": 120}
+                            keys_grid.options["enableCellTextSelection"] = True
+                            keys_grid.options["enableBrowserTooltips"] = True
+                            keys_grid.options["domLayout"] = "normal"
+                            keys_grid.update()
+
+                        async def on_key_selected():
+                            row = (await keys_grid.get_selected_row()) or {}
+                            key_selected["key_hash"] = row.get("key_hash")
+
+                        keys_grid.on("selectionChanged", on_key_selected)
+
+                        with ui.row().classes('items-end gap-2 w-full flex-wrap'):
+                            new_key_owner = ui.input(label="Владелец (username)").classes('w-64')
+                            new_key_comment = ui.input(label="Комментарий").classes('grow')
+
+                        def create_api_key_action():
+                            owner = (new_key_owner.value or "").strip()
+                            if not owner:
+                                ui.notify("Укажите владельца (username)", type="negative")
+                                return
+                            owner_user = get_user_by_username(owner, current_state)
+                            if not owner_user[0]:
+                                ui.notify(f"Пользователь '{owner}' не найден", type="negative")
+                                return
+                            comment = (new_key_comment.value or "").strip()
+                            result = create_api_key(owner, comment, current_state)
+                            if not result[0]:
+                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                return
+                            token = result[3]
+                            new_key_owner.value = ""
+                            new_key_comment.value = ""
+                            refresh_keys_grid()
+                            with ui.dialog() as token_dialog, ui.card().classes('w-[36rem] max-w-full'):
+                                ui.label("API-ключ создан — сохраните его сейчас").style('font-weight:700; color: var(--title-color);')
+                                ui.markdown("Токен показывается **один раз**. В БД хранится только его хэш.").classes('text-xs opacity-60')
+                                ui.input(label="API key", value=token).props('readonly').classes('w-full')
+                                ui.button("Закрыть", on_click=token_dialog.close).classes('hover-glow')
+                            token_dialog.open()
+
+                        def delete_api_key_action():
+                            if not key_selected["key_hash"]:
+                                ui.notify("Выберите ключ в таблице", type="warning")
+                                return
+                            result = delete_api_key(key_selected["key_hash"], current_state)
+                            if not result[0]:
+                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                return
+                            key_selected["key_hash"] = None
+                            ui.notify("API-ключ удалён", type="positive")
+                            refresh_keys_grid()
+
+                        with ui.row().classes('gap-2 flex-wrap'):
+                            ui.button("Создать ключ", icon='vpn_key', on_click=create_api_key_action).classes('hover-glow')
+                            ui.button("Удалить выбранный", icon='delete', on_click=delete_api_key_action).props('outline')
+                            ui.button("Обновить список", icon='refresh', on_click=refresh_keys_grid).props('flat')
+
+                        refresh_keys_grid()
 
         return True, "Ok", currentFuncName(), None
 
