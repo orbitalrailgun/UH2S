@@ -374,10 +374,14 @@ async def login_page(current_state: Dict[str, Any]):
             font-size: var(--app-font-size, 14px);
             letter-spacing: 1px;
         }
-        /* Шрифт/размер таблиц (AG Grid) — override темы через CSS-переменные */
-        .ag-root-wrapper, .ag-theme-balham, .ag-theme-balham-dark, .ag-theme-alpine, .ag-theme-alpine-dark {
-            --ag-font-family: var(--app-table-font, var(--app-font, inherit)) !important;
-            --ag-font-size: var(--app-table-font-size, 13px) !important;
+        /* Шрифт/размер таблиц (AG Grid) — форсируем напрямую на ячейках/заголовках,
+           независимо от класса темы (var --ag-font-family на корне темы не перебивается надёжно) */
+        .ag-root-wrapper, .ag-header, .ag-header-cell, .ag-header-cell-text, .ag-header-group-cell,
+        .ag-cell, .ag-cell-value, .ag-large-text-input, .ag-floating-filter-input {
+            font-family: var(--app-table-font, var(--app-font, inherit)) !important;
+        }
+        .ag-cell, .ag-cell-value, .ag-header-cell-text, .ag-header-group-cell {
+            font-size: var(--app-table-font-size, 13px) !important;
         }
         .main-container {
             width: 100vw;
@@ -519,10 +523,14 @@ def main_page(keycloak_openid, current_state):
             font-size: var(--app-font-size, 14px);
             letter-spacing: 1px;
         }
-        /* Шрифт/размер таблиц (AG Grid) — override темы через CSS-переменные */
-        .ag-root-wrapper, .ag-theme-balham, .ag-theme-balham-dark, .ag-theme-alpine, .ag-theme-alpine-dark {
-            --ag-font-family: var(--app-table-font, var(--app-font, inherit)) !important;
-            --ag-font-size: var(--app-table-font-size, 13px) !important;
+        /* Шрифт/размер таблиц (AG Grid) — форсируем напрямую на ячейках/заголовках,
+           независимо от класса темы (var --ag-font-family на корне темы не перебивается надёжно) */
+        .ag-root-wrapper, .ag-header, .ag-header-cell, .ag-header-cell-text, .ag-header-group-cell,
+        .ag-cell, .ag-cell-value, .ag-large-text-input, .ag-floating-filter-input {
+            font-family: var(--app-table-font, var(--app-font, inherit)) !important;
+        }
+        .ag-cell, .ag-cell-value, .ag-header-cell-text, .ag-header-group-cell {
+            font-size: var(--app-table-font-size, 13px) !important;
         }
         .main-container {
             width: 100vw;
