@@ -691,6 +691,43 @@ def set_user_password(username, password_hash, current_state):
         connection.commit()
         cursor.close()
         connection.close()
+        # смена пароля инвалидирует все активные сессии этого пользователя (self или админ)
+        bump_user_session_epoch(username, current_state)
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def get_user_session_epoch(username, current_state):
+    """Текущий session-epoch пользователя (токен инвалидации сессий). Хранится в settings(scope='session_epoch')."""
+    return get_setting("session_epoch", username, "", current_state)
+
+
+def bump_user_session_epoch(username, current_state):
+    """Сменить session-epoch пользователя — это «отзывает» все его активные сессии."""
+    import uuid
+    return set_setting("session_epoch", username, uuid.uuid4().hex, current_state)
+
+
+def set_user_enabled(username, enabled, current_state):
+    """Заблокировать/разблокировать УЗ (UPDATE users.enabled). Блокировка отзывает сессии пользователя."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"UPDATE users SET enabled = {placeholder} WHERE name = {placeholder};", (bool(enabled), username))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        bump_user_session_epoch(username, current_state)
         return True, "Ok", currentFuncName(), None
 
     except BaseException as e:

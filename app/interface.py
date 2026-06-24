@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -576,7 +576,8 @@ async def login_page(current_state: Dict[str, Any]):
                         'username': login_data['username'],
                         'authenticated': login_data['authenticated'],
                         'session_id': login_data['session_id'],
-                        "roles":login_data['roles']
+                        "roles":login_data['roles'],
+                        'session_epoch': login_data.get('session_epoch', ""),
                     })
                     user_status_label.set_text(f"USER: {login_data['username']}")
                     user_session_label.set_text(f"USER SESSION: {login_data['session_id']}")
@@ -762,6 +763,23 @@ def main_page(keycloak_openid, current_state):
     user_status = check_current_user_status(current_state)
     if user_status[0] == False or user_status[2] == False:
         logout()
+
+    # Страж сессии: периодически проверяет, не заблокирован ли пользователь и не сменился ли его
+    # session-epoch (смена пароля/блокировка админом или самим пользователем) — принудительный логаут.
+    def session_guard():
+        try:
+            user_result = get_user_by_username(current_state["username"], current_state)
+            if not user_result[0] or not user_result[3].get("enabled", False):
+                logout()
+                return
+            stored_epoch = app.storage.user.get('session_epoch', "")
+            db_epoch = get_user_session_epoch(current_state["username"], current_state)[3] or ""
+            if db_epoch != (stored_epoch or ""):
+                logout()
+        except BaseException as e:
+            logger_log(syslog.LOG_ERR, get_log_message(f"session_guard fail: {str(e)}", currentFuncName(), current_state))
+
+    ui.timer(15.0, session_guard)
 
     with ui.header(elevated=True) as top_panel:
         with ui.row().classes('items-center'):
@@ -1034,7 +1052,10 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         old_password_input.value = ""
                         new_password_input.value = ""
                         confirm_password_input.value = ""
-                        ui.notify("Пароль изменён", type="positive")
+                        # смена пароля отзывает все сессии (set_user_password бампит epoch) — выходим немедленно
+                        ui.notify("Пароль изменён. Выполняется выход…", type="positive")
+                        app.storage.user.clear()
+                        ui.navigate.to('/login')
 
                     ui.button("Сменить пароль", icon='password', on_click=change_password).classes('hover-glow')
 

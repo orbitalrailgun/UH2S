@@ -1,7 +1,7 @@
 import uuid
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
-from app.db import get_user_by_username
+from app.db import get_user_by_username, get_user_session_epoch
 from app.validation import raw_login_validation
 
 
@@ -49,7 +49,8 @@ def try_login(input_login, input_pass, current_state):  # local function to avoi
             # app.storage.user.update({'username': input_login, 'authenticated': True, 'session_id': NEW_SESSION_ID})
             # ui.navigate.to(app.storage.user.get('referrer_path', '/'))  # go back to where the user wanted to go
 
-            return True, "OK", currentFuncName, {'username': input_login, 'authenticated': True, 'session_id': new_session_id, "roles": current_user["roles"]}
+            session_epoch = get_user_session_epoch(input_login, current_state)[3] or ""
+            return True, "OK", currentFuncName, {'username': input_login, 'authenticated': True, 'session_id': new_session_id, "roles": current_user["roles"], "session_epoch": session_epoch}
         else:
             error_message = "wrong password for login {input_login}"
             logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
