@@ -677,6 +677,53 @@ def get_user_by_username(username, current_state):
         return False, str(e), currentFuncName(), None
 
 
+def set_user_password(username, password_hash, current_state):
+    """Сменить пароль пользователя (UPDATE users.pass, параметризованно). password_hash — bcrypt-хэш (str)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"UPDATE users SET pass = {placeholder} WHERE name = {placeholder};", (password_hash, username))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def update_user_metadata(username, json_object, current_state):
+    """Обновить метаданные пользователя (UPDATE users.json, параметризованно)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"UPDATE users SET json = {placeholder} WHERE name = {placeholder};",
+                       (json.dumps(json_object, ensure_ascii=False), username))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
 def search_actual_objects(query, current_state, limit=50):
     """Поиск по содержимому актуальных версий объектов (LIKE по json). Возвращает
     name/type/roles(parsed)/json(raw) — фильтрация по ролям делается на уровне вызова."""

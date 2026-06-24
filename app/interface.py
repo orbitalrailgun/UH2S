@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -12,7 +12,7 @@ from app.logging import get_log_message, logger_log, currentFuncName
 from typing import Dict, Any, Tuple
 from engine import commands_executor
 from app.engine import command_parser, list_source_types, describe_source_functions
-from app.validation import json_validate, validate_itemname, validate_comment
+from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE
 # via grok
 # Theme definitions
 
@@ -987,6 +987,81 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     with ui.row().classes('gap-2 mt-2'):
                         ui.button("Сохранить", icon='save', on_click=save).classes('hover-glow')
                         ui.button("Сбросить", icon='restart_alt', on_click=reset_defaults).props('outline')
+
+                    # ───────────────────────── Учётная запись (self-service) ─────────────────────────
+                    ui.separator()
+                    ui.label("Учётная запись").style(
+                        "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                    ui.markdown(f"Пользователь: **{username}**").classes('text-sm')
+
+                    ui.label("Смена пароля").style("color: var(--accent-color);")
+                    ui.markdown("Новый пароль: минимум 17 символов, строчные и прописные буквы, цифра и спецсимвол.").classes('text-xs opacity-60')
+                    with ui.column().classes('gap-2 w-full max-w-md'):
+                        old_password_input = ui.input(label="Текущий пароль", password=True, password_toggle_button=True).classes('w-full')
+                        new_password_input = ui.input(label="Новый пароль", password=True, password_toggle_button=True).classes('w-full')
+                        confirm_password_input = ui.input(label="Повтор нового пароля", password=True, password_toggle_button=True).classes('w-full')
+
+                    def change_password():
+                        old_pw = old_password_input.value or ""
+                        new_pw = new_password_input.value or ""
+                        confirm_pw = confirm_password_input.value or ""
+                        if not old_pw or not new_pw:
+                            ui.notify("Заполните текущий и новый пароль", type="negative")
+                            return
+                        if new_pw != confirm_pw:
+                            ui.notify("Новый пароль и повтор не совпадают", type="negative")
+                            return
+                        if not check_regex_rule(new_pw, REGEX_PASSWORD_RULE):
+                            ui.notify("Новый пароль не соответствует требованиям сложности", type="negative")
+                            return
+                        # проверяем текущий пароль через bcrypt
+                        user_result = get_user_by_username(username, current_state)
+                        if not user_result[0]:
+                            ui.notify(f"Не удалось получить пользователя: {user_result[1]}", type="negative")
+                            return
+                        stored_hash = user_result[3]["pass"]
+                        if isinstance(stored_hash, str):
+                            stored_hash = stored_hash.encode("utf-8")
+                        import bcrypt
+                        if not bcrypt.checkpw(old_pw.encode("utf-8"), stored_hash):
+                            ui.notify("Текущий пароль неверный", type="negative")
+                            return
+                        new_hash = bcrypt.hashpw(new_pw.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+                        set_result = set_user_password(username, new_hash, current_state)
+                        if not set_result[0]:
+                            ui.notify(f"Не удалось сменить пароль: {set_result[1]}", type="negative")
+                            return
+                        old_password_input.value = ""
+                        new_password_input.value = ""
+                        confirm_password_input.value = ""
+                        ui.notify("Пароль изменён", type="positive")
+
+                    ui.button("Сменить пароль", icon='password', on_click=change_password).classes('hover-glow')
+
+                    ui.separator()
+                    ui.label("Мои метаданные (JSON)").style("color: var(--accent-color);")
+                    ui.markdown("Произвольные данные вашей учётной записи (например, настройки уведомлений для NOTIFY).").classes('text-xs opacity-60')
+                    user_meta_result = get_user_by_username(username, current_state)
+                    current_meta = user_meta_result[3].get("json", {}) if user_meta_result[0] else {}
+                    metadata_editor = make_codemirror(current_state).classes('w-full').style('max-height: 30vh')
+                    metadata_editor.value = json.dumps(current_meta, ensure_ascii=False, indent=2)
+
+                    def save_metadata():
+                        text = metadata_editor.value or ""
+                        if not json_validate(text):
+                            ui.notify("Метаданные должны быть корректным JSON", type="negative")
+                            return
+                        parsed = json.loads(text)
+                        if not isinstance(parsed, dict):
+                            ui.notify("Метаданные должны быть JSON-объектом ({...})", type="negative")
+                            return
+                        update_result = update_user_metadata(username, parsed, current_state)
+                        if not update_result[0]:
+                            ui.notify(f"Не удалось сохранить метаданные: {update_result[1]}", type="negative")
+                            return
+                        ui.notify("Метаданные сохранены", type="positive")
+
+                    ui.button("Сохранить метаданные", icon='save', on_click=save_metadata).classes('hover-glow')
 
         return True, "Ok", currentFuncName(), None
 
