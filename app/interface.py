@@ -1497,6 +1497,14 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     roles = current_state.get("roles", [])
                     return "fullmaster" in roles or any(r in (object_roles or []) for r in roles)
 
+                def _script_params_summary(script_json):
+                    """Параметры скрипта = его DEF с дефолтными значениями (+ что он возвращает)."""
+                    body = (script_json or {}).get("script", "")
+                    parsed = command_parser(body, current_state)
+                    params = [f"{c['variable_name']}={json.dumps(c.get('variable_value'), ensure_ascii=False, default=str)}"
+                              for c in parsed if c.get("command") == "DEF" and "variable_name" in c]
+                    return ", ".join(params) if params else "—"
+
                 def action_list_objects(type_filter):
                     get_all_actual_objects_result = get_all_actual_objects(current_state)
                     objects = get_all_actual_objects_result[3] if get_all_actual_objects_result[0] else []
@@ -1507,7 +1515,14 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             continue
                         if type_filter and o.get("type") != type_filter:
                             continue
-                        lines.append(f"- {o['name']} ({o.get('type', '?')})")
+                        line = f"- {o['name']} ({o.get('type', '?')})"
+                        # для скриптов добавляем параметры (DEF) с дефолтами и return
+                        if o.get("type") == "script":
+                            full = get_actual_object_by_name(o["name"], "('script')", current_state)
+                            if full[0]:
+                                script_json = full[3].get("json", {}) or {}
+                                line += f" — параметры (DEF с дефолтами): {_script_params_summary(script_json)}; return: {script_json.get('return', '?')}"
+                        lines.append(line)
                     return "\n".join(lines) if lines else "объектов нет"
 
                 def action_search_objects(query):
@@ -1533,7 +1548,10 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     obj = get_object_result[3]
                     if not _role_allowed(obj.get("roles")):
                         return f"нет доступа к объекту '{name}'"
-                    return f"{name} ({obj.get('type')}):\n" + json.dumps(obj.get("json", {}), ensure_ascii=False, indent=2)
+                    header = f"{name} ({obj.get('type')}):"
+                    if obj.get("type") == "script":
+                        header += f"\nпараметры (DEF с дефолтами): {_script_params_summary(obj.get('json', {}))}"
+                    return header + "\n" + json.dumps(obj.get("json", {}), ensure_ascii=False, indent=2)
 
                 def dispatch_action(action, argument):
                     """Выполнить действие агента и вернуть текст результата (sync; вызывается через io_bound)."""
