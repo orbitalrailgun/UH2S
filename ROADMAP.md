@@ -1,8 +1,27 @@
 # Universal Harvester — проект плана развития (черновик)
 
 > Документ — предложение по развитию. Приоритеты и состав фаз согласуются с владельцем.
-> Связанные документы: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`PARSING.md`](PARSING.md),
-> [`ADDING_SOURCES.md`](ADDING_SOURCES.md).
+> Связанные документы: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`HARVESTER_DSL.md`](HARVESTER_DSL.md),
+> [`PARSING.md`](PARSING.md), [`ADDING_SOURCES.md`](ADDING_SOURCES.md).
+
+## 0. Статус: минимально рабочая версия (MVP) — зафиксировано (тег `v0.1.0-mvp`)
+
+Подтверждено на стенде и зафиксировано как MVP:
+- **Ядро**: ленивые импорты, единые сигнатуры коннекторов, прерывание прогона на ошибке шага.
+- **DSL-петля целиком**: `DEF / CALC / GET (source) / GET script / GET APPLY / PRINT / SHOW / SAVE / NOTIFY`;
+  парсер с тестами (всего ~81 тест).
+- **Коннекторы**: TheHive, NetBox (4.x), Jira SM (issues/changelog/comments/worklogs/attachments/issuelinks/CMDB),
+  in-memory SQL (sqlite3/duckdb), pandas и др.
+- **Секреты** (CRUD), **Objects** (версионирование source/script/notifier/llm).
+- **UI**: persistent-вкладки без мельканий; раздельные индикаторы Harvester/AI.
+- **History**: запись запусков (script/steps/duration/user/agent), просмотр и поиск по тексту.
+- **AI-агент**: выбор LLM (ollama/openai-совм.) + health + контроль контекста; чат; ReAct-агент,
+  который сам пишет/запускает/проверяет скрипты; контекст по запросу (действия list_sources/
+  get_source_functions/list_objects/search_objects/get_object/run) + логирование запросов (токены/модель/пользователь).
+
+Известные ограничения MVP: SQL-инъекции приняты как риск (доверенный круг); master key захардкожен в `front.py`;
+`universal_harvester`/`grafana`/`teleport` отключены/не перенесены; REST/MCP-слой наружу не сделан;
+CMDB Jira не протестирован (права). Дальнейшее развитие — фазы ниже.
 
 ## 1. Текущее состояние (на момент составления)
 
