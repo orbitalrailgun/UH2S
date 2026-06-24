@@ -2003,6 +2003,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
 
         interface_container.clear()
 
+        lang = current_state.get("lang", DEFAULT_LANGUAGE)
+        tr = lambda key, **kw: translate(key, lang, **kw)
+
         current_user = current_state.get("username", "unknown")
 
         get_user_by_username_result = get_user_by_username(current_user, current_state)
@@ -2061,7 +2064,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 data = variables[table]
 
             if not data:
-                reason = f"нет табличных данных «{table}»"
+                reason = tr("harv.show.no_data", table=table)
                 command["_info"] = reason
                 ui.markdown(f"*SHOW: {reason}*")
                 return False
@@ -2075,7 +2078,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     if json_validate(params_raw):
                         params = json.loads(params_raw)
                     else:
-                        command["_info"] = "optional_params не является валидным JSON"
+                        command["_info"] = tr("harv.show.bad_params")
                         ui.markdown(f"*SHOW: {command['_info']}*")
                         return False
                 try:
@@ -2088,7 +2091,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     ui.markdown(f"*SHOW {command['_info']}*")
                     return False
             else:
-                command["_info"] = f"неизвестный тип «{show_type}» (table | matplotlib)"
+                command["_info"] = tr("harv.show.bad_type", type=show_type)
                 ui.markdown(f"*SHOW: {command['_info']}*")
                 return False
 
@@ -2109,11 +2112,11 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     missing.append(table)
 
             if missing:
-                command["_info"] = f"нет табличных данных: {', '.join(missing)}"
+                command["_info"] = tr("harv.save.no_data", tables=', '.join(missing))
                 ui.markdown(f"*SAVE: {command['_info']}*")
                 return False
             if not tables_data:
-                command["_info"] = "не указаны таблицы"
+                command["_info"] = tr("harv.save.no_tables")
                 ui.markdown(f"*SAVE: {command['_info']}*")
                 return False
 
@@ -2132,7 +2135,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             except TypeError:
                 ui.download(content, filename)
             total = sum(len(d) for d in tables_data.values())
-            ui.markdown(f"💾 Скачивание **{filename}** ({len(tables_data)} табл., {total} строк)")
+            ui.markdown(tr("harv.save.downloading", filename=filename, tables=len(tables_data), rows=total))
             return True
 
         def _update_datavars(variables, result_map):
@@ -2144,9 +2147,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 rows.append({"name": name, "kind": "variable",
                              "rows": (len(value) if isinstance(value, (list, dict)) else 1)})
             grid_datavars.options['columnDefs'] = [
-                {"headerName": "Name", "field": "name", "filter": True, "sortable": True},
-                {"headerName": "Kind", "field": "kind", "filter": True, "sortable": True},
-                {"headerName": "Rows", "field": "rows", "filter": True, "sortable": True},
+                {"headerName": tr("harv.dv.name"), "field": "name", "filter": True, "sortable": True},
+                {"headerName": tr("harv.dv.kind"), "field": "kind", "filter": True, "sortable": True},
+                {"headerName": tr("harv.dv.rows"), "field": "rows", "filter": True, "sortable": True},
             ]
             grid_datavars.options['rowData'] = rows
             grid_datavars.options['domLayout'] = "normal"
@@ -2183,7 +2186,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             if spinner is not None:
                 spinner.visible = True
             if status is not None:
-                status.set_text("Выполняется…")
+                status.set_text(tr("harv.running"))
             try:
                 parsed_command = command_parser(codemirror_script.value, current_state)
 
@@ -2195,9 +2198,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         f"#{i + 1} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for i, c in parse_errors)
                     card_results.clear()
                     with card_results:
-                        ui.markdown("**Ошибки парсинга:**")
+                        ui.markdown(tr("harv.parse_errors"))
                         for i, c in parse_errors:
-                            ui.markdown(f"- команда {i + 1} (`{c.get('command', '?')}`): {c.get('parsed_comment', '?')}")
+                            ui.markdown(tr("harv.parse_error_item", n=i + 1, cmd=c.get('command', '?'), comment=c.get('parsed_comment', '?')))
                     return
 
                 # прогресс шагов: инициализация статусов + таймер живого опроса (поток пишет статусы)
@@ -2226,7 +2229,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                             command["_status"] = "rejected"
                     card_results.clear()
                     with card_results:
-                        ui.markdown(f"**Ошибка выполнения:** {commands_executor_result[1]}")
+                        ui.markdown(tr("harv.exec_error", error=commands_executor_result[1]))
                     ui.notify(commands_executor_result[1], type="negative")
                     return
 
@@ -2249,10 +2252,10 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         command["_status"] = "done" if ok else "error"
                         rendered += 1
                     if rendered == 0:
-                        ui.markdown("_Выполнено. В скрипте нет команд PRINT/SHOW для вывода._")
+                        ui.markdown(tr("harv.no_output"))
 
                 _update_datavars(variables, result_map)
-                ui.notify("Done", type="positive")
+                ui.notify(tr("harv.done"), type="positive")
 
             except BaseException as e:
                 error_message = f"fail: {str(e)}"
@@ -2303,16 +2306,16 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             # ограничивая высоту вьюпортом (за вычетом шапки приложения).
             with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
                 with ui.tabs().classes('w-full') as tabs:
-                    tab_script = ui.tab('Scripts')
-                    tab_datavars = ui.tab('Data/Variables')
+                    tab_script = ui.tab('Scripts', label=tr("harv.tab.scripts"))
+                    tab_datavars = ui.tab('Data/Variables', label=tr("harv.tab.datavars"))
                 with ui.tab_panels(tabs, value=tab_script).classes('w-full') as harvester_panels:
                     with ui.tab_panel(tab_script):
                         # сворачиваемый блок скрипта (вместе с кнопкой Execute) — освобождает место под результаты
-                        with ui.expansion('Скрипт', icon='code', value=True).classes('w-full'):
+                        with ui.expansion(tr("harv.script"), icon='code', value=True).classes('w-full'):
                             codemirror_script = make_codemirror(current_state).classes('w-full').style('max-height: 30vh')
-                            button_script = ui.button("Execute").on_click(button_script_click)
+                            button_script = ui.button(tr("harv.execute")).on_click(button_script_click)
                         # сворачиваемый блок прогресса шагов (вариант A): список команд со статусами
-                        with ui.expansion('Шаги выполнения', icon='list', value=True).classes('w-full'):
+                        with ui.expansion(tr("harv.steps"), icon='list', value=True).classes('w-full'):
                             steps_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
                         # вертикальный скролл — у внешнего контейнера; здесь только
                         # горизонтальный для широких таблиц (чтобы не вылезали за страницу)

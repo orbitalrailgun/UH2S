@@ -149,6 +149,17 @@ TRANSLATIONS = {
         "ai.select_first": "First select an LLM and check its readiness", "ai.thinking": "AI is thinking…",
         "ai.agent_action": "Agent: {action}…", "ai.llm_error": "⚠️ LLM error: {error}", "ai.error": "⚠️ Error: {error}",
         "ai.input_placeholder": "Message to the agent",
+        # Harvester
+        "harv.tab.scripts": "Scripts", "harv.tab.datavars": "Data/Variables",
+        "harv.script": "Script", "harv.steps": "Execution steps", "harv.execute": "Execute",
+        "harv.running": "Running…", "harv.done": "Done",
+        "harv.parse_errors": "**Parse errors:**", "harv.parse_error_item": "- command {n} (`{cmd}`): {comment}",
+        "harv.exec_error": "**Execution error:** {error}", "harv.no_output": "_Done. The script has no PRINT/SHOW commands to display._",
+        "harv.dv.name": "Name", "harv.dv.kind": "Kind", "harv.dv.rows": "Rows",
+        "harv.show.no_data": "no table data «{table}»", "harv.show.bad_params": "optional_params is not valid JSON",
+        "harv.show.bad_type": "unknown type «{type}» (table | matplotlib)",
+        "harv.save.no_data": "no table data: {tables}", "harv.save.no_tables": "no tables specified",
+        "harv.save.downloading": "💾 Downloading **{filename}** ({tables} tbl., {rows} rows)",
     },
     "ru": {
         # навигация
@@ -282,6 +293,17 @@ TRANSLATIONS = {
         "ai.select_first": "Сначала выберите LLM и проверьте готовность", "ai.thinking": "AI думает…",
         "ai.agent_action": "Агент: {action}…", "ai.llm_error": "⚠️ Ошибка LLM: {error}", "ai.error": "⚠️ Ошибка: {error}",
         "ai.input_placeholder": "Сообщение агенту",
+        # Harvester
+        "harv.tab.scripts": "Скрипты", "harv.tab.datavars": "Данные/Переменные",
+        "harv.script": "Скрипт", "harv.steps": "Шаги выполнения", "harv.execute": "Выполнить",
+        "harv.running": "Выполняется…", "harv.done": "Готово",
+        "harv.parse_errors": "**Ошибки парсинга:**", "harv.parse_error_item": "- команда {n} (`{cmd}`): {comment}",
+        "harv.exec_error": "**Ошибка выполнения:** {error}", "harv.no_output": "_Выполнено. В скрипте нет команд PRINT/SHOW для вывода._",
+        "harv.dv.name": "Имя", "harv.dv.kind": "Тип", "harv.dv.rows": "Строк",
+        "harv.show.no_data": "нет табличных данных «{table}»", "harv.show.bad_params": "optional_params не является валидным JSON",
+        "harv.show.bad_type": "неизвестный тип «{type}» (table | matplotlib)",
+        "harv.save.no_data": "нет табличных данных: {tables}", "harv.save.no_tables": "не указаны таблицы",
+        "harv.save.downloading": "💾 Скачивание **{filename}** ({tables} табл., {rows} строк)",
     },
 }
 
