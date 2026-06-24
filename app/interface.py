@@ -400,6 +400,15 @@ async def login_page(current_state: Dict[str, Any]):
         .ag-cell, .ag-cell-value, .ag-header-cell-text, .ag-header-group-cell {
             font-size: var(--app-table-font-size, 13px) !important;
         }
+        /* Карточки/панели разделов следуют теме (по умолчанию q-card белая) */
+        .q-card {
+            background: var(--card-bg) !important;
+            color: var(--text-color) !important;
+        }
+        .uh-panel {
+            background: var(--panel-bg) !important;
+            color: var(--text-color) !important;
+        }
         .main-container {
             width: 100vw;
             height: 100vh;
@@ -549,6 +558,15 @@ def main_page(keycloak_openid, current_state):
         .ag-cell, .ag-cell-value, .ag-header-cell-text, .ag-header-group-cell {
             font-size: var(--app-table-font-size, 13px) !important;
         }
+        /* Карточки/панели разделов следуют теме (по умолчанию q-card белая) */
+        .q-card {
+            background: var(--card-bg) !important;
+            color: var(--text-color) !important;
+        }
+        .uh-panel {
+            background: var(--panel-bg) !important;
+            color: var(--text-color) !important;
+        }
         .main-container {
             width: 100vw;
             height: 100vh;
@@ -674,12 +692,12 @@ def main_page(keycloak_openid, current_state):
     # (устраняет мелькание/«сжатие» на пару кадров).
     ui.add_css(".uh-panel-offscreen { position: absolute !important; left: -100000px !important; top: 0 !important; width: 100% !important; }")
 
-    panel_settings = ui.card().classes('w-full h-full uh-panel-offscreen')
-    panel_secrets = ui.card().classes('w-full h-full uh-panel-offscreen')
-    panel_objects = ui.card().classes('w-full h-full uh-panel-offscreen')
-    panel_ai = ui.card().classes('w-full h-full uh-panel-offscreen')
-    panel_harvester = ui.card().classes('w-full h-full uh-panel-offscreen')
-    panel_history = ui.card().classes('w-full h-full uh-panel-offscreen')
+    panel_settings = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
+    panel_secrets = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
+    panel_objects = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
+    panel_ai = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
+    panel_harvester = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
+    panel_history = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
     panels = {
         "Settings": panel_settings, "Secrets": panel_secrets, "Objects": panel_objects,
         "AI": panel_ai, "Harvester": panel_harvester, "History": panel_history,
