@@ -347,8 +347,19 @@ APPEARANCE_DEFAULTS = {
     "table_font_size": 13,
     # оверрайды цветов по теме: {"dark": {role: "#hex", ...}, "light": {...}}
     "colors": {},
-    "codemirror_theme": "monokai",
+    # тема редактора кода — отдельно для тёмной и светлой темы приложения
+    "codemirror_theme": {"dark": "monokai", "light": "vscodeLight"},
 }
+
+
+def resolve_codemirror_theme(appearance, theme):
+    """Тема CodeMirror для активной темы приложения. Поддерживает и старый формат (одна строка)."""
+    cm = (appearance or {}).get("codemirror_theme")
+    if isinstance(cm, dict):
+        return cm.get(theme) or APPEARANCE_DEFAULTS["codemirror_theme"].get(theme)
+    if isinstance(cm, str) and cm:
+        return cm  # legacy: одно значение на обе темы
+    return APPEARANCE_DEFAULTS["codemirror_theme"].get(theme)
 
 
 def apply_appearance(appearance, current_state=None):
@@ -734,7 +745,7 @@ def main_page(keycloak_openid, current_state):
     current_state["ui_dark_mode"] = ui.dark_mode(value=(appearance_state["theme"] == "dark"))
     # тема редактора кода: реестр редакторов и активная тема ДО построения панелей
     current_state["ui_codemirrors"] = []
-    current_state["codemirror_theme"] = appearance_state.get("codemirror_theme") or APPEARANCE_DEFAULTS["codemirror_theme"]
+    current_state["codemirror_theme"] = resolve_codemirror_theme(appearance_state, appearance_state["theme"])
     apply_appearance(appearance_state, current_state)
 
     def logout() -> None:
@@ -862,9 +873,18 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                     ui.separator()
                     ui.label("Редактор кода (CodeMirror)").style("color: var(--accent-color);")
+                    ui.markdown("Тема редактора задаётся отдельно для тёмной и светлой темы.").classes('text-xs opacity-60')
+                    # тема редактора по теме приложения: {"dark":..., "light":...} (поддержка старого строкового формата)
+                    _cm_raw = appearance.get("codemirror_theme")
+                    if isinstance(_cm_raw, dict):
+                        cm_state = {"dark": _cm_raw.get("dark") or APPEARANCE_DEFAULTS["codemirror_theme"]["dark"],
+                                    "light": _cm_raw.get("light") or APPEARANCE_DEFAULTS["codemirror_theme"]["light"]}
+                    elif isinstance(_cm_raw, str) and _cm_raw:
+                        cm_state = {"dark": _cm_raw, "light": APPEARANCE_DEFAULTS["codemirror_theme"]["light"]}
+                    else:
+                        cm_state = dict(APPEARANCE_DEFAULTS["codemirror_theme"])
                     codemirror_theme_select = ui.select(
-                        CODEMIRROR_THEMES, value=appearance.get("codemirror_theme", APPEARANCE_DEFAULTS["codemirror_theme"]),
-                        label="Тема редактора"
+                        CODEMIRROR_THEMES, value=cm_state.get(appearance["theme"]), label="Тема редактора"
                     ).classes('w-64')
 
                     ui.separator()
@@ -891,6 +911,11 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             role: (color_pickers[role].value or THEMES[theme_name][role]) for role, _ in COLOR_ROLES
                         }
 
+                    def sync_cm():
+                        # сохранить выбранную тему редактора для текущей темы приложения
+                        theme_name = theme_select.value or "dark"
+                        cm_state[theme_name] = codemirror_theme_select.value or APPEARANCE_DEFAULTS["codemirror_theme"][theme_name]
+
                     def collect():
                         return {
                             "theme": theme_select.value or "dark",
@@ -899,7 +924,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             "table_font": (table_font_select.value or APPEARANCE_DEFAULTS["table_font"]).strip(),
                             "table_font_size": int(table_font_size_input.value or APPEARANCE_DEFAULTS["table_font_size"]),
                             "colors": colors_state,
-                            "codemirror_theme": codemirror_theme_select.value or APPEARANCE_DEFAULTS["codemirror_theme"],
+                            "codemirror_theme": cm_state,
                         }
 
                     def preview():
@@ -907,20 +932,24 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         if suspend["v"]:
                             return
                         sync_colors()
+                        sync_cm()
                         apply_appearance(collect(), current_state)
-                        apply_codemirror_theme(current_state, codemirror_theme_select.value or APPEARANCE_DEFAULTS["codemirror_theme"])
+                        apply_codemirror_theme(current_state, cm_state[theme_select.value or "dark"])
 
                     def on_theme_change():
-                        # при смене темы перерисовать пикеры под её эффективные цвета
+                        # при смене темы перерисовать пикеры цветов и тему редактора под выбранную тему
                         suspend["v"] = True
-                        eff = effective_colors(theme_select.value or "dark")
+                        theme_name = theme_select.value or "dark"
+                        eff = effective_colors(theme_name)
                         for role, _ in COLOR_ROLES:
                             color_pickers[role].value = eff[role]
+                        codemirror_theme_select.value = cm_state.get(theme_name) or APPEARANCE_DEFAULTS["codemirror_theme"][theme_name]
                         suspend["v"] = False
                         preview()
 
                     def save():
                         sync_colors()
+                        sync_cm()
                         new_appearance = collect()
                         set_setting_result = set_setting(scope, "appearance", new_appearance, current_state)
                         if not set_setting_result[0]:
@@ -928,7 +957,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             return
                         app.storage.user.update({'theme': new_appearance["theme"]})  # синхронизация с login-страницей
                         apply_appearance(new_appearance, current_state)
-                        apply_codemirror_theme(current_state, new_appearance["codemirror_theme"])
+                        apply_codemirror_theme(current_state, cm_state[new_appearance["theme"]])
                         ui.notify("Внешний вид сохранён", type="positive")
 
                     def reset_defaults():
@@ -938,7 +967,9 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         font_size_input.value = APPEARANCE_DEFAULTS["font_size"]
                         table_font_select.value = APPEARANCE_DEFAULTS["table_font"]
                         table_font_size_input.value = APPEARANCE_DEFAULTS["table_font_size"]
-                        codemirror_theme_select.value = APPEARANCE_DEFAULTS["codemirror_theme"]
+                        cm_state.clear()
+                        cm_state.update(APPEARANCE_DEFAULTS["codemirror_theme"])
+                        codemirror_theme_select.value = cm_state[APPEARANCE_DEFAULTS["theme"]]
                         colors_state.clear()
                         eff = effective_colors(APPEARANCE_DEFAULTS["theme"])
                         for role, _ in COLOR_ROLES:
