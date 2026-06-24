@@ -2738,6 +2738,9 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
         interface_container.clear()
 
+        lang = current_state.get("lang", DEFAULT_LANGUAGE)
+        tr = lambda key, **kw: translate(key, lang, **kw)
+
         current_user = current_state.get("username", "unknown")
 
         get_user_by_username_result = get_user_by_username(current_user, current_state)
@@ -2756,7 +2759,7 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
         
         if not has_object_admin:
             with interface_container:
-                ui.label('You do not have secrets_admin role')
+                ui.label(tr("secrets.no_role"))
                 return False, f"There is not secrets_admin role for username {current_user}", currentFuncName(), None
             
 
@@ -2783,10 +2786,10 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
             # обновить объект
             grid.options['columnDefs'] = [
-                    {"headerName": "System", "field": "system", "filter": True, "sortable": True, "minWidth": 150},
-                    {"headerName": "Account", "field": "account", "filter": True, "sortable": True, "minWidth": 150},
-                    {"headerName": "Secret", "field": "secret", "filter": True, "sortable": True, "minWidth": 60},
-                    {"headerName": "Comment", "field": "comment", "filter": True, "sortable": True, "minWidth": 200},
+                    {"headerName": tr("secrets.col.system"), "field": "system", "filter": True, "sortable": True, "minWidth": 150},
+                    {"headerName": tr("secrets.col.account"), "field": "account", "filter": True, "sortable": True, "minWidth": 150},
+                    {"headerName": tr("secrets.col.secret"), "field": "secret", "filter": True, "sortable": True, "minWidth": 60},
+                    {"headerName": tr("secrets.col.comment"), "field": "comment", "filter": True, "sortable": True, "minWidth": 200},
                 ]
             grid.options['rowData'] = grid_data
             grid.options['defaultColDef'] = {
@@ -2825,13 +2828,13 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
             # валидация полей
             if not validate_itemname(system, current_state)[0]:
-                ui.notify("System is not valid", type="negative")
+                ui.notify(tr("secrets.invalid.system"), type="negative")
                 return
             if not validate_itemname(account, current_state)[0]:
-                ui.notify("Account is not valid", type="negative")
+                ui.notify(tr("secrets.invalid.account"), type="negative")
                 return
             if not validate_comment(comment, current_state)[0]:
-                ui.notify("Comment is not valid", type="negative")
+                ui.notify(tr("secrets.invalid.comment"), type="negative")
                 return
 
             # получаем актуальный список секретов (пустая таблица -> пустой список, это не ошибка)
@@ -2857,17 +2860,17 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 if secret == SECRET_MASK:
                     # значение секрета не меняем -- обновляем только комментарий
                     result = update_secret_comment(system, account, comment, current_state)
-                    success_message = f"Comment updated for {system}:{account}"
+                    success_message = tr("secrets.comment_updated", pair=f"{system}:{account}")
                 else:
                     result = update_secret_secret_comment(system, account, comment, secret, current_state)
-                    success_message = f"Secret and comment updated for {system}:{account}"
+                    success_message = tr("secrets.secret_updated", pair=f"{system}:{account}")
             else:
                 # создание нового секрета
                 if secret == "" or secret == SECRET_MASK:
-                    ui.notify("Empty secret", type="negative")
+                    ui.notify(tr("secrets.empty"), type="negative")
                     return
                 result = create_secret(system, account, comment, secret, current_state)
-                success_message = f"Secret {system}:{account} created"
+                success_message = tr("secrets.created", pair=f"{system}:{account}")
 
             if not result[0]:
                 ui.notify(result[1], type="negative")
@@ -2891,10 +2894,10 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
             # валидация полей
             if not validate_itemname(system, current_state)[0]:
-                ui.notify("System is not valid", type="negative")
+                ui.notify(tr("secrets.invalid.system"), type="negative")
                 return
             if not validate_itemname(account, current_state)[0]:
-                ui.notify("Account is not valid", type="negative")
+                ui.notify(tr("secrets.invalid.account"), type="negative")
                 return
 
             # получаем актуальный список секретов
@@ -2910,7 +2913,7 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
             exists = any(s["system"] == system and s["account"] == account for s in actual_secrets)
             if not exists:
-                ui.notify(f"Secret {system}:{account} not found", type="negative")
+                ui.notify(tr("secrets.not_found", pair=f"{system}:{account}"), type="negative")
                 return
 
             delete_secret_result = delete_secret(system, account, current_state)
@@ -2918,29 +2921,29 @@ def draw_secrets(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 ui.notify(delete_secret_result[1], type="negative")
                 return
 
-            ui.notify(f"Secret {system}:{account} deleted", type="positive")
+            ui.notify(tr("secrets.deleted", pair=f"{system}:{account}"), type="positive")
             update_grid_secrets_list(grid_secrets_list, current_state)
             secrets_panels.set_value('Secrets')
 
         # скелет интерфейса
         with interface_container:
             with ui.tabs().classes('w-full') as tabs:
-                tab_secrets = ui.tab('Secrets')
-                tab_edit_secrets = ui.tab('Edit/create')
+                tab_secrets = ui.tab('Secrets', label=tr("secrets.tab.list"))
+                tab_edit_secrets = ui.tab('Edit/create', label=tr("secrets.tab.edit"))
             with ui.tab_panels(tabs, value=tab_secrets).classes('w-full h-full') as secrets_panels:
                 with ui.tab_panel(tab_secrets):
                     grid_secrets_list = ui.aggrid({}).classes('h-[calc(85vh-100px)]')
                     grid_secrets_list.on("selectionChanged", grid_secrets_list_click)
 
                 with ui.tab_panel(tab_edit_secrets):
-                    input_edit_secret_system  = ui.input(label='System')
-                    input_edit_secret_account = ui.input(label='Account')
-                    input_edit_secret_secret  = ui.input(label='Secret', password=True)
-                    input_edit_secret_comment = ui.input(label='Comment')
+                    input_edit_secret_system  = ui.input(label=tr("secrets.field.system"))
+                    input_edit_secret_account = ui.input(label=tr("secrets.field.account"))
+                    input_edit_secret_secret  = ui.input(label=tr("secrets.field.secret"), password=True)
+                    input_edit_secret_comment = ui.input(label=tr("secrets.field.comment"))
                     with ui.row():
-                        button_secret_new    = ui.button("New").on_click(new_button_of_secret_editor)
-                        button_secret_save   = ui.button("Save").on_click(save_button_of_secret_editor)
-                        button_secret_delete = ui.button("Delete").on_click(delete_button_of_secret_editor)
+                        button_secret_new    = ui.button(tr("secrets.btn.new")).on_click(new_button_of_secret_editor)
+                        button_secret_save   = ui.button(tr("secrets.btn.save")).on_click(save_button_of_secret_editor)
+                        button_secret_delete = ui.button(tr("secrets.btn.delete")).on_click(delete_button_of_secret_editor)
 
         update_grid_secrets_list(grid_secrets_list, current_state)
 

@@ -115,6 +115,16 @@ TRANSLATIONS = {
         "settings.api.key_label": "API key", "settings.api.enabled_msg": "Key enabled", "settings.api.disabled_msg": "Key disabled",
         "settings.api.deleted": "API key deleted", "settings.api.pick": "Select a key in the table",
         "settings.api.create": "Create key", "settings.api.toggle": "Enable/disable selected", "settings.api.delete_key": "Delete selected",
+        # Secrets
+        "secrets.no_role": "You do not have the secrets_admin role",
+        "secrets.tab.list": "Secrets", "secrets.tab.edit": "Edit/create",
+        "secrets.col.system": "System", "secrets.col.account": "Account", "secrets.col.secret": "Secret", "secrets.col.comment": "Comment",
+        "secrets.field.system": "System", "secrets.field.account": "Account", "secrets.field.secret": "Secret", "secrets.field.comment": "Comment",
+        "secrets.btn.new": "New", "secrets.btn.save": "Save", "secrets.btn.delete": "Delete",
+        "secrets.invalid.system": "System is not valid", "secrets.invalid.account": "Account is not valid", "secrets.invalid.comment": "Comment is not valid",
+        "secrets.empty": "Empty secret",
+        "secrets.comment_updated": "Comment updated for {pair}", "secrets.secret_updated": "Secret and comment updated for {pair}",
+        "secrets.created": "Secret {pair} created", "secrets.not_found": "Secret {pair} not found", "secrets.deleted": "Secret {pair} deleted",
     },
     "ru": {
         # навигация
@@ -214,6 +224,16 @@ TRANSLATIONS = {
         "settings.api.key_label": "API key", "settings.api.enabled_msg": "Ключ включён", "settings.api.disabled_msg": "Ключ выключен",
         "settings.api.deleted": "API-ключ удалён", "settings.api.pick": "Выберите ключ в таблице",
         "settings.api.create": "Создать ключ", "settings.api.toggle": "Вкл/выкл выбранный", "settings.api.delete_key": "Удалить выбранный",
+        # Secrets
+        "secrets.no_role": "У вас нет роли secrets_admin",
+        "secrets.tab.list": "Секреты", "secrets.tab.edit": "Изменить/создать",
+        "secrets.col.system": "Система", "secrets.col.account": "Учётная запись", "secrets.col.secret": "Секрет", "secrets.col.comment": "Комментарий",
+        "secrets.field.system": "Система", "secrets.field.account": "Учётная запись", "secrets.field.secret": "Секрет", "secrets.field.comment": "Комментарий",
+        "secrets.btn.new": "Новый", "secrets.btn.save": "Сохранить", "secrets.btn.delete": "Удалить",
+        "secrets.invalid.system": "Некорректная система", "secrets.invalid.account": "Некорректная учётная запись", "secrets.invalid.comment": "Некорректный комментарий",
+        "secrets.empty": "Пустой секрет",
+        "secrets.comment_updated": "Комментарий обновлён для {pair}", "secrets.secret_updated": "Секрет и комментарий обновлены для {pair}",
+        "secrets.created": "Секрет {pair} создан", "secrets.not_found": "Секрет {pair} не найден", "secrets.deleted": "Секрет {pair} удалён",
     },
 }
 
