@@ -8,7 +8,7 @@ import json
 import uuid
 import time
 from nicegui import ui, app, Client, run
-from app.logging import get_log_message, logger_log, currentFuncName
+from app.logging import get_log_message, logger_log, currentFuncName, currentTimestamp
 from typing import Dict, Any, Tuple
 from engine import commands_executor
 from app.engine import command_parser, list_source_types, describe_source_functions
