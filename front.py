@@ -332,6 +332,7 @@ def main():
             "aggrid_theme":'ag-theme-balham-dark',
             "itself_link":ITSELF_LINK,
             "keycloak_flag":keycloak_flag,
+            "accept_language": request.headers.get("accept-language", ""),
         }
         #ui.page_title(f'{current_state["app_name"]}')
         #main_page(keycloak_openid, current_state)

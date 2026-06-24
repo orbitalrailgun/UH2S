@@ -12,6 +12,7 @@ from app.logging import get_log_message, logger_log, currentFuncName, currentTim
 from typing import Dict, Any, Tuple
 from engine import commands_executor
 from app.engine import command_parser, list_source_types, describe_source_functions
+from app.i18n import translate, resolve_language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE
 from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE, REGEX_USERNAME_RULE
 # via grok
 # Theme definitions
@@ -830,6 +831,9 @@ def main_page(keycloak_openid, current_state):
     # Внешний вид (тема/шрифты/размеры) — персональные настройки из settings, scope user:<username>.
     # Переключатель темы теперь в разделе Settings; здесь только загрузка и применение сохранённого.
     appearance_scope = settings_user_scope(current_state.get("username", "unknown"))
+    # язык интерфейса: сохранённый (settings) -> язык браузера -> английский по умолчанию
+    saved_language = get_setting(appearance_scope, "language", "", current_state)[3] or ""
+    current_state["lang"] = resolve_language(saved_language, current_state.get("accept_language", ""))
     saved_appearance = get_setting(appearance_scope, "appearance", {}, current_state)[3] or {}
     appearance_state = {**APPEARANCE_DEFAULTS, "theme": theme, **saved_appearance}
     # режим Quasar dark (читаемость полей/меню/чекбоксов/таб-панелей) — реальный элемент dark_mode
@@ -871,16 +875,18 @@ def main_page(keycloak_openid, current_state):
 
     ui.timer(15.0, session_guard)
 
+    _ = lambda key, **kw: translate(key, current_state.get("lang", DEFAULT_LANGUAGE), **kw)
+
     with ui.header(elevated=True) as top_panel:
         with ui.row().classes('items-center'):
             menu_items = [
-                ("Settings", "Настройки", 'pets', "Settings"),
-                ("Secrets", "Хранилище секретов", 'key', "Secrets"),
-                ("Objects", "Сохранённые объекты", 'source', "Objects"),
-                ("AI", "LLM чат получения и обработки данных", 'psychology', "AI"),
-                ("Harvester", "Исполнение скриптов", 'rocket_launch', "Harvester"),
-                ("History", "История запусков", 'history', "History"),
-                ("Logout", "Выход", 'logout', "__logout__"),
+                (_("nav.settings"), _("nav.settings.tip"), 'pets', "Settings"),
+                (_("nav.secrets"), _("nav.secrets.tip"), 'key', "Secrets"),
+                (_("nav.objects"), _("nav.objects.tip"), 'source', "Objects"),
+                (_("nav.ai"), _("nav.ai.tip"), 'psychology', "AI"),
+                (_("nav.harvester"), _("nav.harvester.tip"), 'rocket_launch', "Harvester"),
+                (_("nav.history"), _("nav.history.tip"), 'history', "History"),
+                (_("nav.logout"), _("nav.logout.tip"), 'logout', "__logout__"),
             ]
             for item, tooltip, icon, target in menu_items:
                 menu_item = ui.button(item, icon=icon).tooltip(tooltip)
@@ -945,13 +951,30 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
         interface_container.clear()
         username = current_state.get("username", "unknown")
         scope = settings_user_scope(username)
+        lang = current_state.get("lang", DEFAULT_LANGUAGE)
+        _ = lambda key, **kw: translate(key, lang, **kw)
         saved = get_setting(scope, "appearance", {}, current_state)[3] or {}
         appearance = {**APPEARANCE_DEFAULTS, "theme": app.storage.user.get('theme', 'dark'), **saved}
 
         with interface_container:
             with ui.element('div').classes('w-full').style('max-height: 88vh; overflow-y: auto;'):
                 with ui.column().classes('w-full gap-4 p-2'):
-                    ui.label("Внешний вид").style(
+                    # ──────────── Язык интерфейса ────────────
+                    ui.label(_("settings.language.title")).style(
+                        "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                    with ui.row().classes('items-end gap-2'):
+                        language_select = ui.select(SUPPORTED_LANGUAGES, value=lang, label=_("settings.language.label")).classes('w-64')
+
+                        def save_language():
+                            set_setting(scope, "language", language_select.value or DEFAULT_LANGUAGE, current_state)
+                            ui.notify(_("settings.language.saved"), type="positive")
+                            ui.navigate.to('/')  # перезагрузка применяет язык ко всему интерфейсу
+
+                        ui.button(_("settings.language.apply"), icon='translate', on_click=save_language).classes('hover-glow')
+                    ui.markdown(_("settings.language.hint")).classes('text-xs opacity-60')
+
+                    ui.separator()
+                    ui.label(_("settings.section.appearance")).style(
                         "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
                     ui.markdown("Персональные настройки оформления. Применяются сразу и сохраняются за вашей учётной записью.")
 
@@ -1098,7 +1121,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                     # ───────────────────────── Учётная запись (self-service) ─────────────────────────
                     ui.separator()
-                    ui.label("Учётная запись").style(
+                    ui.label(_("settings.section.account")).style(
                         "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
                     ui.markdown(f"Пользователь: **{username}**").classes('text-sm')
 
@@ -1187,7 +1210,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     current_roles = user_meta_result[3].get("roles", []) if user_meta_result[0] else []
                     if any(role in current_roles for role in ("fullmaster", "useradmin")):
                         ui.separator()
-                        ui.label("Управление пользователями (админ)").style(
+                        ui.label(_("settings.section.users")).style(
                             "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
                         ui.markdown("Фильтрация по колонкам (username, роли, метаданные). Сброс пароля и блокировка немедленно завершают все сессии пользователя.").classes('text-xs opacity-60')
 
@@ -1375,7 +1398,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     # ──────────── AI-агент: настройки и журнал (роли fullmaster / aiadmin) ────────────
                     if any(role in current_roles for role in ("fullmaster", "aiadmin")):
                         ui.separator()
-                        ui.label("AI-агент: настройки и журнал (админ)").style(
+                        ui.label(_("settings.section.ai")).style(
                             "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
 
                         ui.label("Лимиты").style("color: var(--accent-color);")
@@ -1461,7 +1484,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     # ──────────── Разрешённые сети (IP-whitelist) — роли fullmaster / netadmin ────────────
                     if any(role in current_roles for role in ("fullmaster", "netadmin")):
                         ui.separator()
-                        ui.label("Разрешённые сети (доступ по IP)").style(
+                        ui.label(_("settings.section.networks")).style(
                             "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
                         ui.markdown("Вход разрешён только с адресов из разрешающих (allow) сетей. ⚠️ Не удаляйте сеть, "
                                     "из которой работаете сами, — иначе будете разлогинены при следующей проверке.").classes('text-xs text-orange-400')
@@ -1551,7 +1574,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     # ──────────── API-ключи (роли fullmaster / apiadmin) ────────────
                     if any(role in current_roles for role in ("fullmaster", "apiadmin")):
                         ui.separator()
-                        ui.label("API-ключи").style(
+                        ui.label(_("settings.section.apikeys")).style(
                             "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
                         ui.markdown("Ключи для `POST /api/script`. Запросы выполняются в контексте указанного владельца "
                                     "(его роли). Токен показывается один раз при создании — сохраните его.").classes('text-xs opacity-60')
@@ -1675,7 +1698,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
     except BaseException as e:
         try:
             with interface_container:
-                ui.label(f"Ошибка раздела Settings: {str(e)}").classes('text-red-400')
+                ui.label(translate("settings.error", current_state.get("lang", DEFAULT_LANGUAGE), error=str(e))).classes('text-red-400')
         except BaseException:
             pass
         return False, str(e), currentFuncName(), None
