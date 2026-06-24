@@ -242,11 +242,11 @@ def execute_script_api(script_text, current_state):
         parse_errors = [(i, c) for i, c in enumerate(parsed) if not c.get("parsed", True)]
         if parse_errors:
             details = "; ".join(f"#{i + 1} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for i, c in parse_errors)
-            return False, f"parse errors: {details}", None
+            return False, f"parse errors: {details}", currentFuncName(), None
 
         executor_result = commands_executor(parsed, current_state)
         if not executor_result[0]:
-            return False, executor_result[1], None
+            return False, executor_result[1], currentFuncName(), None
         variables, result_map = executor_result[3]
 
         def _resolve_table(name):
@@ -316,11 +316,11 @@ def execute_script_api(script_text, current_state):
                 content, filename, media_type = records_to_download(tables_data, fmt, base_name)
                 files.append((filename, content, media_type))
 
-        return True, "Ok", {"text": "\n\n".join(p for p in text_parts if p is not None), "files": files}
+        return True, "Ok", currentFuncName(), {"text": "\n\n".join(p for p in text_parts if p is not None), "files": files}
 
     except BaseException as e:
         logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
-        return False, str(e), None
+        return False, str(e), currentFuncName(), None
 
 
 STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌", "rejected": "⛔", "warning": "⚠️"}
