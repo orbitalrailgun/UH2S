@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -12,7 +12,7 @@ from app.logging import get_log_message, logger_log, currentFuncName
 from typing import Dict, Any, Tuple
 from engine import commands_executor
 from app.engine import command_parser, list_source_types, describe_source_functions
-from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE
+from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE, REGEX_USERNAME_RULE
 # via grok
 # Theme definitions
 
@@ -1014,12 +1014,13 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                     ui.label("Смена пароля").style("color: var(--accent-color);")
                     ui.markdown("Новый пароль: минимум 17 символов, строчные и прописные буквы, цифра и спецсимвол.").classes('text-xs opacity-60')
+                    ui.markdown("⚠️ После смены пароля вы будете разлогинены на всех своих сессиях — потребуется войти заново.").classes('text-xs text-orange-400')
                     with ui.column().classes('gap-2 w-full max-w-md'):
                         old_password_input = ui.input(label="Текущий пароль", password=True, password_toggle_button=True).classes('w-full')
                         new_password_input = ui.input(label="Новый пароль", password=True, password_toggle_button=True).classes('w-full')
                         confirm_password_input = ui.input(label="Повтор нового пароля", password=True, password_toggle_button=True).classes('w-full')
 
-                    def change_password():
+                    async def change_password():
                         old_pw = old_password_input.value or ""
                         new_pw = new_password_input.value or ""
                         confirm_pw = confirm_password_input.value or ""
@@ -1043,6 +1044,14 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         import bcrypt
                         if not bcrypt.checkpw(old_pw.encode("utf-8"), stored_hash):
                             ui.notify("Текущий пароль неверный", type="negative")
+                            return
+                        # подтверждение разлогина
+                        with ui.dialog() as confirm_dialog, ui.card():
+                            ui.label("Сменить пароль? Вы будете разлогинены на всех своих сессиях.")
+                            with ui.row().classes('justify-end w-full'):
+                                ui.button("Отмена", on_click=lambda: confirm_dialog.submit(False)).props('outline')
+                                ui.button("Сменить и выйти", on_click=lambda: confirm_dialog.submit(True)).classes('hover-glow')
+                        if not await confirm_dialog:
                             return
                         new_hash = bcrypt.hashpw(new_pw.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
                         set_result = set_user_password(username, new_hash, current_state)
@@ -1083,6 +1092,121 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         ui.notify("Метаданные сохранены", type="positive")
 
                     ui.button("Сохранить метаданные", icon='save', on_click=save_metadata).classes('hover-glow')
+
+                    # ───────────────────── Управление пользователями (только fullmaster) ─────────────────────
+                    current_roles = user_meta_result[3].get("roles", []) if user_meta_result[0] else []
+                    if "fullmaster" in current_roles:
+                        ui.separator()
+                        ui.label("Управление пользователями (админ)").style(
+                            "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                        ui.markdown("Сброс пароля и блокировка немедленно завершают все сессии этого пользователя.").classes('text-xs opacity-60')
+
+                        admin_container = ui.column().classes('w-full gap-2')
+
+                        def render_user_admin():
+                            admin_container.clear()
+                            list_result = list_users(current_state)
+                            with admin_container:
+                                if not list_result[0]:
+                                    ui.label(f"Ошибка списка пользователей: {list_result[1]}").classes('text-red-400')
+                                    return
+                                for user_row in list_result[3]:
+                                    with ui.card().classes('w-full'):
+                                        with ui.row().classes('items-center justify-between w-full'):
+                                            ui.label(user_row['name']).style('font-weight:700')
+                                            ui.label("активна" if user_row['enabled'] else "заблокирована").classes('text-xs').style(
+                                                f"color: {'#22C55E' if user_row['enabled'] else '#EF4444'}")
+                                        roles_input = ui.input(label="Роли (JSON-массив)",
+                                                               value=json.dumps(user_row['roles'], ensure_ascii=False)).classes('w-full')
+                                        reset_pw_input = ui.input(label="Новый пароль (сброс)", password=True,
+                                                                  password_toggle_button=True).classes('w-full max-w-md')
+                                        with ui.row().classes('gap-2 flex-wrap'):
+                                            def make_toggle_enabled(name=user_row['name'], enabled=user_row['enabled']):
+                                                def _toggle():
+                                                    if name == username and enabled:
+                                                        ui.notify("Нельзя заблокировать собственную учётную запись", type="negative")
+                                                        return
+                                                    result = set_user_enabled(name, not enabled, current_state)
+                                                    if not result[0]:
+                                                        ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                                        return
+                                                    ui.notify((f"Разблокирован: {name}" if not enabled
+                                                               else f"Заблокирован: {name} (сессии завершены)"), type="positive")
+                                                    render_user_admin()
+                                                return _toggle
+                                            ui.button("Разблокировать" if not user_row['enabled'] else "Заблокировать",
+                                                      icon='lock_open' if not user_row['enabled'] else 'block',
+                                                      on_click=make_toggle_enabled()).props('outline')
+
+                                            def make_save_roles(name=user_row['name'], inp=roles_input):
+                                                def _save():
+                                                    if not json_validate(inp.value or ""):
+                                                        ui.notify("Роли должны быть JSON-массивом", type="negative")
+                                                        return
+                                                    parsed = json.loads(inp.value)
+                                                    if not isinstance(parsed, list):
+                                                        ui.notify("Роли должны быть JSON-массивом (список строк)", type="negative")
+                                                        return
+                                                    result = set_user_roles(name, parsed, current_state)
+                                                    if not result[0]:
+                                                        ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                                        return
+                                                    ui.notify(f"Роли обновлены: {name}", type="positive")
+                                                return _save
+                                            ui.button("Сохранить роли", icon='save', on_click=make_save_roles())
+
+                                            def make_reset_pw(name=user_row['name'], inp=reset_pw_input):
+                                                def _reset():
+                                                    if not check_regex_rule(inp.value or "", REGEX_PASSWORD_RULE):
+                                                        ui.notify("Пароль не соответствует требованиям сложности", type="negative")
+                                                        return
+                                                    import bcrypt
+                                                    new_hash = bcrypt.hashpw((inp.value).encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
+                                                    result = set_user_password(name, new_hash, current_state)
+                                                    if not result[0]:
+                                                        ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                                        return
+                                                    inp.value = ""
+                                                    ui.notify(f"Пароль сброшен для {name} (сессии завершены)", type="positive")
+                                                return _reset
+                                            ui.button("Сбросить пароль", icon='password', on_click=make_reset_pw()).props('outline')
+
+                        with ui.expansion("Создать пользователя", icon='person_add').classes('w-full'):
+                            new_user_name = ui.input(label="Имя пользователя").classes('w-full max-w-md')
+                            new_user_pw = ui.input(label="Пароль", password=True, password_toggle_button=True).classes('w-full max-w-md')
+                            new_user_roles = ui.input(label="Роли (JSON-массив)", value='[]').classes('w-full max-w-md')
+
+                            def create_new_user():
+                                name = (new_user_name.value or "").strip()
+                                if not check_regex_rule(name, REGEX_USERNAME_RULE):
+                                    ui.notify("Имя: минимум 3 символа, латиница/цифры/._-", type="negative")
+                                    return
+                                if not check_regex_rule(new_user_pw.value or "", REGEX_PASSWORD_RULE):
+                                    ui.notify("Пароль не соответствует требованиям сложности", type="negative")
+                                    return
+                                if not json_validate(new_user_roles.value or ""):
+                                    ui.notify("Роли должны быть JSON-массивом", type="negative")
+                                    return
+                                roles = json.loads(new_user_roles.value)
+                                if not isinstance(roles, list):
+                                    ui.notify("Роли должны быть JSON-массивом", type="negative")
+                                    return
+                                import bcrypt
+                                new_hash = bcrypt.hashpw((new_user_pw.value).encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
+                                result = create_user(name, new_hash, roles, {}, current_state)
+                                if not result[0]:
+                                    ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                    return
+                                new_user_name.value = ""
+                                new_user_pw.value = ""
+                                new_user_roles.value = "[]"
+                                ui.notify(f"Пользователь создан: {name}", type="positive")
+                                render_user_admin()
+
+                            ui.button("Создать", icon='person_add', on_click=create_new_user).classes('hover-glow')
+
+                        ui.button("Обновить список", icon='refresh', on_click=render_user_admin).props('outline')
+                        render_user_admin()
 
         return True, "Ok", currentFuncName(), None
 

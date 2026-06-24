@@ -761,6 +761,94 @@ def update_user_metadata(username, json_object, current_state):
         return False, str(e), currentFuncName(), None
 
 
+def list_users(current_state):
+    """Список пользователей (без хэша пароля): enabled/name/roles(parsed)/json(parsed). Для админ-панели."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+
+        cursor = connection.cursor()
+        cursor.execute("SELECT enabled, name, roles, json FROM users ORDER BY name;")
+        rows = cursor.fetchall()
+        cursor.close()
+        connection.close()
+
+        users = []
+        for enabled, name, roles, meta in (rows or []):
+            try:
+                roles_parsed = json.loads(roles) if roles else []
+            except BaseException:
+                roles_parsed = []
+            try:
+                meta_parsed = json.loads(meta) if meta else {}
+            except BaseException:
+                meta_parsed = {}
+            users.append({"enabled": bool(enabled), "name": name, "roles": roles_parsed, "json": meta_parsed})
+        return True, "Ok", currentFuncName(), users
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def create_user(username, password_hash, roles, json_object, current_state):
+    """Создать пользователя (enabled=true). Возвращает ошибку, если пользователь уже существует."""
+    try:
+        exists = get_user_by_username(username, current_state)
+        if exists[0]:
+            return False, f"пользователь '{username}' уже существует", currentFuncName(), None
+
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(
+            f"INSERT INTO users (enabled, name, pass, roles, json) VALUES (true, {placeholder}, {placeholder}, {placeholder}, {placeholder});",
+            (username, password_hash, json.dumps(roles, ensure_ascii=False), json.dumps(json_object, ensure_ascii=False)),
+        )
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def set_user_roles(username, roles, current_state):
+    """Обновить роли пользователя (UPDATE users.roles, параметризованно)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"UPDATE users SET roles = {placeholder} WHERE name = {placeholder};",
+                       (json.dumps(roles, ensure_ascii=False), username))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
 def search_actual_objects(query, current_state, limit=50):
     """Поиск по содержимому актуальных версий объектов (LIKE по json). Возвращает
     name/type/roles(parsed)/json(raw) — фильтрация по ролям делается на уровне вызова."""
