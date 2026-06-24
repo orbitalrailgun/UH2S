@@ -254,7 +254,8 @@ def main():
             "master_key": MASTER_KEY,
             "itself_link":ITSELF_LINK,
             "keycloak_flag":keycloak_flag,
-            "keycloak_openid":keycloak_openid
+            "keycloak_openid":keycloak_openid,
+            "accept_language": request.headers.get("accept-language", ""),
         }
         #ui.page_title(f'{current_state["app_name"]}')
         await login_page(current_state)

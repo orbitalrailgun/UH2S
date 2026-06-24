@@ -639,25 +639,33 @@ async def login_page(current_state: Dict[str, Any]):
     """)
 
     theme = app.storage.user.get('theme', 'dark')
+    lang = resolve_language(app.storage.user.get('lang', ''), current_state.get('accept_language', ''))
+    tr = lambda key, **kw: translate(key, lang, **kw)
     update_theme(theme)
+    # корректная тема: режим Quasar dark перекрашивает поля ввода/переключатель/меню
+    login_dark_mode = ui.dark_mode(value=(theme == 'dark'))
 
     async def toggle_theme():
         nonlocal theme
         theme = 'light' if theme == 'dark' else 'dark'
         app.storage.user.update({'theme': theme})
         update_theme(theme)
-        ui.notify(f'Switched to {theme} theme', type='info')
+        login_dark_mode.value = (theme == 'dark')
+
+    def on_login_language_change():
+        app.storage.user.update({'lang': language_select.value or DEFAULT_LANGUAGE})
+        ui.run_javascript("window.location.reload()")
 
     with ui.element('div').classes('main-container') as main_container:
         with ui.card().classes('login-form') as login_card:
-            title_label = ui.label('NEON GENESIS UNIVERSAL HARVESTER').classes('title text-center text-2xl mb-4')
-            username_input = ui.input(label='USERNAME', placeholder='Enter username').classes('w-full mb-2')
-            username_input.tooltip("Enter your login here")
-            password_input = ui.input(label='PASSWORD', password=True, placeholder='Enter password').classes('w-full mb-4')
-            
+            title_label = ui.label('Universal Harvester 2 Scripted').classes('title text-center text-2xl mb-4').style('text-transform: none')
+            username_input = ui.input(label=tr("login.username"), placeholder=tr("login.username_ph")).classes('w-full mb-2')
+            username_input.tooltip(tr("login.username_tip"))
+            password_input = ui.input(label=tr("login.password"), password=True, placeholder=tr("login.password_ph")).classes('w-full mb-4')
+
             async def handle_login():
                 if not username_input.value or not password_input.value:
-                    ui.notify("Please fill in both username and password", type='negative')
+                    ui.notify(tr("login.fill"), type='negative')
                     return
                 login_result = try_login(username_input.value, password_input.value, current_state)
                 await sleep()
@@ -672,18 +680,19 @@ async def login_page(current_state: Dict[str, Any]):
                     })
                     user_status_label.set_text(f"USER: {login_data['username']}")
                     user_session_label.set_text(f"USER SESSION: {login_data['session_id']}")
-                    ui.notify("Login successful!", type='positive')
+                    ui.notify(tr("login.success"), type='positive')
                     ui.navigate.to('/')
                 else:
-                    ui.notify("Login failed", type='negative')
+                    ui.notify(tr("login.failed"), type='negative')
 
-            login_button = ui.button('LOGIN', on_click=handle_login).classes('w-full hover-glow mb-2').style(f'background: {THEMES[theme]["accent"]}')
+            login_button = ui.button(tr("login.login"), on_click=handle_login).classes('w-full hover-glow mb-2').style('background: var(--accent-color)')
+            # опциональная кнопка входа через Keycloak (только если включён keycloak)
             if current_state.get("keycloak_flag", False):
                 try:
                     auth_url = current_state["keycloak_openid"].auth_url(redirect_uri=f"{current_state['itself_link']}login/callback")
-                    ui.button('LOGIN VIA KEYCLOAK', on_click=lambda: ui.navigate.to(auth_url)).classes('w-full hover-glow').style(f'background: {THEMES[theme]["accent"]}')
+                    ui.button(tr("login.keycloak"), icon='login', on_click=lambda: ui.navigate.to(auth_url)).classes('w-full hover-glow').style('background: var(--accent-color)')
                 except Exception as e:
-                    ui.label(f"Keycloak error: {str(e)}").classes('text-red-500 text-sm')
+                    ui.label(tr("login.keycloak_error", error=str(e))).classes('text-red-500 text-sm')
 
         with ui.element('div').classes('sidebar border rounded-lg p-4') as sidebar:
             user_status_label = ui.label('USER: NOT AUTHORIZED').classes('text-sm mb-2 pulse')
@@ -693,7 +702,10 @@ async def login_page(current_state: Dict[str, Any]):
             user_session_label = ui.label('USER SESSION: NONE').classes('text-sm mb-2')
 
         with ui.element('div').classes('theme-toggle'):
-            ui.switch('Light Theme', value=theme == 'light', on_change=toggle_theme).classes('hover-glow')
+            with ui.row().classes('items-center gap-2'):
+                language_select = ui.select(SUPPORTED_LANGUAGES, value=lang, label=tr("login.language")).props('dense').classes('w-32')
+                language_select.on_value_change(on_login_language_change)
+                ui.switch(tr("login.theme"), value=theme == 'light', on_change=toggle_theme).classes('hover-glow')
 
 def main_page(keycloak_openid, current_state):
     logger_log(syslog.LOG_DEBUG, get_log_message("Main page opened", currentFuncName(), current_state))

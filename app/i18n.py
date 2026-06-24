@@ -168,6 +168,13 @@ TRANSLATIONS = {
         "history.source.agent": "🤖 agent", "history.source.manual": "manual",
         "history.status.ok": "✅ ok", "history.status.fail": "❌ fail",
         "history.detail": "**Status:** {status} · {owner} · {ts}{dur}", "history.dur_suffix": " · {sec:.3f} s",
+        # Login
+        "login.username": "Username", "login.password": "Password",
+        "login.username_ph": "Enter username", "login.password_ph": "Enter password",
+        "login.username_tip": "Enter your login here", "login.login": "Login", "login.keycloak": "Login via Keycloak",
+        "login.fill": "Please fill in both username and password", "login.success": "Login successful!",
+        "login.failed": "Login failed", "login.keycloak_error": "Keycloak error: {error}",
+        "login.theme": "Light theme", "login.language": "Language",
     },
     "ru": {
         # навигация
@@ -320,6 +327,13 @@ TRANSLATIONS = {
         "history.source.agent": "🤖 агент", "history.source.manual": "ручной",
         "history.status.ok": "✅ ок", "history.status.fail": "❌ сбой",
         "history.detail": "**Статус:** {status} · {owner} · {ts}{dur}", "history.dur_suffix": " · {sec:.3f} с",
+        # Login
+        "login.username": "Имя пользователя", "login.password": "Пароль",
+        "login.username_ph": "Введите имя пользователя", "login.password_ph": "Введите пароль",
+        "login.username_tip": "Введите свой логин", "login.login": "Войти", "login.keycloak": "Войти через Keycloak",
+        "login.fill": "Заполните имя пользователя и пароль", "login.success": "Вход выполнен!",
+        "login.failed": "Ошибка входа", "login.keycloak_error": "Ошибка Keycloak: {error}",
+        "login.theme": "Светлая тема", "login.language": "Язык",
     },
 }
 
