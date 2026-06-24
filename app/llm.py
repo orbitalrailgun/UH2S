@@ -1,6 +1,6 @@
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
-from app.db import get_secret
+from app.db import get_secret, create_ai_log_entry
 
 # Объект типа llm (раздел Objects):
 # {
@@ -125,6 +125,12 @@ def _log_llm_request(current_state, level, model, provider, url, prompt_tokens, 
     log["total_tokens"] = (prompt_tokens or 0) + (completion_tokens or 0)
     log["duration_ms"] = duration_ms
     logger_log(level, log)
+    # запись в журнал ai_log (для раздела Settings → AI). Не роняем запрос при ошибке журналирования.
+    try:
+        create_ai_log_entry(current_state.get("username", "unknown"), model, provider,
+                            prompt_tokens, completion_tokens, duration_ms, level != syslog.LOG_ERR, current_state)
+    except BaseException:
+        pass
 
 
 def llm_chat(llm_json, messages, current_state):

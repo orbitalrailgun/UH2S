@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -1282,6 +1282,92 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                         refresh_users_grid()
 
+                    # ──────────── AI-агент: настройки и журнал (роли fullmaster / aiadmin) ────────────
+                    if any(role in current_roles for role in ("fullmaster", "aiadmin")):
+                        ui.separator()
+                        ui.label("AI-агент: настройки и журнал (админ)").style(
+                            "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+
+                        ui.label("Лимиты").style("color: var(--accent-color);")
+                        max_iter_value = get_setting("global", "agent_max_iterations", 10, current_state)[3] or 10
+                        with ui.row().classes('items-end gap-2'):
+                            agent_iter_input = ui.number(label="Макс. действий агента за сессию",
+                                                         value=int(max_iter_value), min=1, max=100, step=1).classes('w-72')
+
+                            def save_ai_limits():
+                                try:
+                                    val = int(agent_iter_input.value or 10)
+                                except BaseException:
+                                    val = 10
+                                val = max(1, min(val, 100))
+                                result = set_setting("global", "agent_max_iterations", val, current_state)
+                                if not result[0]:
+                                    ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                    return
+                                ui.notify("Лимиты AI сохранены", type="positive")
+
+                            ui.button("Сохранить лимиты", icon='save', on_click=save_ai_limits).classes('hover-glow')
+
+                        ui.separator()
+                        ui.label("Журнал AI — потребление токенов").style("color: var(--accent-color);")
+                        ui.markdown("Сводка по пользователям и детализация запросов (фильтры по колонкам: пользователь, модель, время).").classes('text-xs opacity-60')
+                        ai_summary_grid = ui.aggrid({}).classes('w-full').style('height: 22vh')
+                        ui.label("Детализация запросов").classes('text-xs opacity-60')
+                        ai_log_grid = ui.aggrid({}).classes('w-full').style('height: 35vh')
+
+                        def refresh_ai_log():
+                            log_result = get_ai_log(current_state, 2000)
+                            entries = log_result[3] if log_result[0] else []
+                            if not log_result[0]:
+                                ui.notify(f"Ошибка журнала AI: {log_result[1]}", type="negative")
+
+                            # сводка по пользователям
+                            summary = {}
+                            for entry in entries:
+                                bucket = summary.setdefault(entry["username"], {
+                                    "username": entry["username"], "requests": 0,
+                                    "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+                                bucket["requests"] += 1
+                                bucket["prompt_tokens"] += entry.get("prompt_tokens") or 0
+                                bucket["completion_tokens"] += entry.get("completion_tokens") or 0
+                                bucket["total_tokens"] += entry.get("total_tokens") or 0
+                            summary_rows = sorted(summary.values(), key=lambda x: x["total_tokens"], reverse=True)
+                            ai_summary_grid.options["columnDefs"] = [
+                                {"headerName": "Пользователь", "field": "username", "filter": True, "sortable": True, "resizable": True, "minWidth": 160},
+                                {"headerName": "Запросов", "field": "requests", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
+                                {"headerName": "Вход (токены)", "field": "prompt_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
+                                {"headerName": "Выход (токены)", "field": "completion_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
+                                {"headerName": "Всего (токены)", "field": "total_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
+                            ]
+                            ai_summary_grid.options["rowData"] = summary_rows
+                            ai_summary_grid.options["domLayout"] = "normal"
+                            ai_summary_grid.options["enableBrowserTooltips"] = True
+                            ai_summary_grid.update()
+
+                            # детализация
+                            ai_log_grid.options["columnDefs"] = [
+                                {"headerName": "Время", "field": "timestamp", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
+                                {"headerName": "Пользователь", "field": "username", "filter": True, "sortable": True, "resizable": True, "minWidth": 140},
+                                {"headerName": "Модель", "field": "model", "filter": True, "sortable": True, "resizable": True, "minWidth": 160, "tooltipField": "model"},
+                                {"headerName": "Провайдер", "field": "provider", "filter": True, "sortable": True, "resizable": True, "minWidth": 120},
+                                {"headerName": "Вход", "field": "prompt_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                                {"headerName": "Выход", "field": "completion_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                                {"headerName": "Всего", "field": "total_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                                {"headerName": "мс", "field": "duration_ms", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                                {"headerName": "ok", "field": "ok", "filter": True, "sortable": True, "resizable": True, "minWidth": 70},
+                            ]
+                            ai_log_grid.options["rowData"] = entries
+                            ai_log_grid.options["defaultColDef"] = {"filter": True, "sortable": True, "resizable": True, "minWidth": 90}
+                            ai_log_grid.options["pagination"] = True
+                            ai_log_grid.options["paginationPageSize"] = 20
+                            ai_log_grid.options["enableCellTextSelection"] = True
+                            ai_log_grid.options["enableBrowserTooltips"] = True
+                            ai_log_grid.options["domLayout"] = "normal"
+                            ai_log_grid.update()
+
+                        ui.button("Обновить журнал", icon='refresh', on_click=refresh_ai_log).props('outline')
+                        refresh_ai_log()
+
         return True, "Ok", currentFuncName(), None
 
     except BaseException as e:
@@ -2261,7 +2347,12 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                         status.set_text("AI думает…")
                     try:
                         context_window = llm_context_window(selected["json"])
-                        max_iterations = 10   # лимит цикла «ответ -> действие -> ответ»
+                        # лимит цикла «ответ -> действие -> ответ» — глобальная настройка (Settings → AI)
+                        try:
+                            max_iterations = int(get_setting("global", "agent_max_iterations", 10, current_state)[3] or 10)
+                        except BaseException:
+                            max_iterations = 10
+                        max_iterations = max(1, min(max_iterations, 100))
                         for iteration in range(max_iterations):
                             system_prompt = build_agent_system_prompt()
                             messages = llm_build_messages(system_prompt, conversation, context_window)

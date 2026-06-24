@@ -133,6 +133,7 @@ def db_init(current_state):
         cursor.execute("CREATE TABLE IF NOT EXISTS executions (id TEXT, owner TEXT, timestamp TEXT, status INTEGER, json TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS storage (id TEXT, owner TEXT, execution TEXT, json TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS settings (scope TEXT, key TEXT, value TEXT);")
+        cursor.execute("CREATE TABLE IF NOT EXISTS ai_log (timestamp TEXT, username TEXT, model TEXT, provider TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER, duration_ms INTEGER, ok INTEGER);")
         connection.commit()
         cursor.execute("INSERT INTO access_networks(cidr, allow, comment) SELECT '127.0.0.0/8', true, 'localhost' WHERE NOT EXISTS(SELECT * FROM access_networks);")
         cursor.execute("INSERT INTO users(enabled, name, pass, roles, json) SELECT true, 'harvester', '$2a$12$csKo6ccYS3Kjc3e2JAu4VucbzO9vTBlvdjxCoTOVAYSnli2EXll3q', '[\"fullmaster\"]', '{}' WHERE NOT EXISTS(SELECT * FROM users) AND NOT EXISTS(SELECT * FROM storage) AND NOT EXISTS(SELECT * FROM objects) AND NOT EXISTS(SELECT * FROM executions);")
@@ -841,6 +842,64 @@ def set_user_roles(username, roles, current_state):
         cursor.close()
         connection.close()
         return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def create_ai_log_entry(username, model, provider, prompt_tokens, completion_tokens, duration_ms, ok, current_state):
+    """Записать запрос к LLM в журнал ai_log (параметризованно). Время ставится сервером."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        prompt_tokens = int(prompt_tokens or 0)
+        completion_tokens = int(completion_tokens or 0)
+        total_tokens = prompt_tokens + completion_tokens
+        cursor = connection.cursor()
+        cursor.execute(
+            f"INSERT INTO ai_log (timestamp, username, model, provider, prompt_tokens, completion_tokens, total_tokens, duration_ms, ok) "
+            f"VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder});",
+            (currentTimestamp(), username, model, provider, prompt_tokens, completion_tokens, total_tokens, int(duration_ms or 0), 1 if ok else 0),
+        )
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def get_ai_log(current_state, limit=2000):
+    """Журнал AI-запросов (последние limit), новые сверху."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+
+        cursor = connection.cursor()
+        cursor.execute(
+            f"SELECT timestamp, username, model, provider, prompt_tokens, completion_tokens, total_tokens, duration_ms, ok "
+            f"FROM ai_log ORDER BY timestamp DESC LIMIT {int(limit)};"
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+        connection.close()
+
+        columns = ["timestamp", "username", "model", "provider", "prompt_tokens", "completion_tokens", "total_tokens", "duration_ms", "ok"]
+        entries = [dict(zip(columns, row)) for row in (rows or [])]
+        return True, "Ok", currentFuncName(), entries
 
     except BaseException as e:
         if 'connection' in locals():
