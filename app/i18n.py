@@ -125,6 +125,21 @@ TRANSLATIONS = {
         "secrets.empty": "Empty secret",
         "secrets.comment_updated": "Comment updated for {pair}", "secrets.secret_updated": "Secret and comment updated for {pair}",
         "secrets.created": "Secret {pair} created", "secrets.not_found": "Secret {pair} not found", "secrets.deleted": "Secret {pair} deleted",
+        # Objects
+        "objects.no_role": "You do not have the objects_admin role",
+        "objects.tab.list": "Objects list", "objects.tab.info": "Object info",
+        "objects.tab.editor": "Object editor", "objects.tab.creator": "Object creator",
+        "objects.col.name": "Name", "objects.col.type": "Type", "objects.col.version": "Version",
+        "objects.col.timestamp": "Timestamp", "objects.col.owner": "Owner", "objects.col.roles": "Roles",
+        "objects.field.name": "Name", "objects.field.roles": "Roles",
+        "objects.btn.save": "Save", "objects.btn.delete": "Delete", "objects.btn.create": "Create",
+        "objects.roles_invalid": "Roles is not a valid JSON list", "objects.json_invalid": "JSON is not valid",
+        "objects.json_not_dict": "JSON is not a valid object (dict)", "objects.no_changes": "There are no changes",
+        "objects.version_saved": "New version of {name} saved", "objects.empty_name": "Empty name",
+        "objects.wrong_type": "Wrong object type", "objects.empty_roles": "Empty roles",
+        "objects.empty_roles_list": "Empty roles list", "objects.name_used": "Name is used for another object",
+        "objects.name_test_error": "Error testing the new object name", "objects.create_error": "Error creating the object",
+        "objects.done": "Done",
     },
     "ru": {
         # навигация
@@ -234,6 +249,21 @@ TRANSLATIONS = {
         "secrets.empty": "Пустой секрет",
         "secrets.comment_updated": "Комментарий обновлён для {pair}", "secrets.secret_updated": "Секрет и комментарий обновлены для {pair}",
         "secrets.created": "Секрет {pair} создан", "secrets.not_found": "Секрет {pair} не найден", "secrets.deleted": "Секрет {pair} удалён",
+        # Objects
+        "objects.no_role": "У вас нет роли objects_admin",
+        "objects.tab.list": "Список объектов", "objects.tab.info": "Информация об объекте",
+        "objects.tab.editor": "Редактор объекта", "objects.tab.creator": "Создание объекта",
+        "objects.col.name": "Имя", "objects.col.type": "Тип", "objects.col.version": "Версия",
+        "objects.col.timestamp": "Время", "objects.col.owner": "Владелец", "objects.col.roles": "Роли",
+        "objects.field.name": "Имя", "objects.field.roles": "Роли",
+        "objects.btn.save": "Сохранить", "objects.btn.delete": "Удалить", "objects.btn.create": "Создать",
+        "objects.roles_invalid": "Роли — некорректный JSON-список", "objects.json_invalid": "Некорректный JSON",
+        "objects.json_not_dict": "JSON не является объектом (dict)", "objects.no_changes": "Изменений нет",
+        "objects.version_saved": "Новая версия {name} сохранена", "objects.empty_name": "Пустое имя",
+        "objects.wrong_type": "Неверный тип объекта", "objects.empty_roles": "Пустые роли",
+        "objects.empty_roles_list": "Пустой список ролей", "objects.name_used": "Имя занято другим объектом",
+        "objects.name_test_error": "Ошибка проверки имени объекта", "objects.create_error": "Ошибка создания объекта",
+        "objects.done": "Готово",
     },
 }
 

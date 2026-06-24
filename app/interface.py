@@ -1708,6 +1708,9 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
         interface_container.clear()
 
+        lang = current_state.get("lang", DEFAULT_LANGUAGE)
+        tr = lambda key, **kw: translate(key, lang, **kw)
+
         current_user = current_state.get("username", "unknown")
 
         get_user_by_username_result = get_user_by_username(current_user, current_state)
@@ -1726,7 +1729,7 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
         
         if not has_object_admin:
             with interface_container:
-                ui.label('You do not have object_admin role')
+                ui.label(tr("objects.no_role"))
                 return False, f"There is not object_admin role for username {current_user}", currentFuncName(), None
 
         # Обновление таблицы объектов
@@ -1753,12 +1756,12 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
             # обновить объект
             grid.options['columnDefs'] = [
-                    {"headerName": "Name", "field": "name", "filter": True, "sortable": True, "minWidth": 150},
-                    {"headerName": "Type", "field": "type", "filter": True, "sortable": True, "minWidth": 150},
-                    {"headerName": "Version", "field": "version", "filter": True, "sortable": True, "minWidth": 60},
-                    {"headerName": "Timestamp", "field": "timestamp", "filter": True, "sortable": True, "minWidth": 200},
-                    {"headerName": "Owner", "field": "owner", "filter": True, "sortable": True, "minWidth": 120},
-                    {"headerName": "Roles", "field": "roles", "filter": True, "sortable": True, "minWidth": 120},
+                    {"headerName": tr("objects.col.name"), "field": "name", "filter": True, "sortable": True, "minWidth": 150},
+                    {"headerName": tr("objects.col.type"), "field": "type", "filter": True, "sortable": True, "minWidth": 150},
+                    {"headerName": tr("objects.col.version"), "field": "version", "filter": True, "sortable": True, "minWidth": 60},
+                    {"headerName": tr("objects.col.timestamp"), "field": "timestamp", "filter": True, "sortable": True, "minWidth": 200},
+                    {"headerName": tr("objects.col.owner"), "field": "owner", "filter": True, "sortable": True, "minWidth": 120},
+                    {"headerName": tr("objects.col.roles"), "field": "roles", "filter": True, "sortable": True, "minWidth": 120},
                 ]
             grid.options['rowData'] = grid_data
             grid.options['defaultColDef'] = {
@@ -1798,12 +1801,12 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
             # обновить объект
             grid.options['columnDefs'] = [
-                    {"headerName": "Name", "field": "name", "filter": True, "sortable": True, "minWidth": 150},
-                    {"headerName": "Type", "field": "type", "filter": True, "sortable": True, "minWidth": 150},
-                    {"headerName": "Version", "field": "version", "filter": True, "sortable": True, "minWidth": 60},
-                    {"headerName": "Timestamp", "field": "timestamp", "filter": True, "sortable": True, "minWidth": 200},
-                    {"headerName": "Owner", "field": "owner", "filter": True, "sortable": True, "minWidth": 120},
-                    {"headerName": "Roles", "field": "roles", "filter": True, "sortable": True, "minWidth": 120},
+                    {"headerName": tr("objects.col.name"), "field": "name", "filter": True, "sortable": True, "minWidth": 150},
+                    {"headerName": tr("objects.col.type"), "field": "type", "filter": True, "sortable": True, "minWidth": 150},
+                    {"headerName": tr("objects.col.version"), "field": "version", "filter": True, "sortable": True, "minWidth": 60},
+                    {"headerName": tr("objects.col.timestamp"), "field": "timestamp", "filter": True, "sortable": True, "minWidth": 200},
+                    {"headerName": tr("objects.col.owner"), "field": "owner", "filter": True, "sortable": True, "minWidth": 120},
+                    {"headerName": tr("objects.col.roles"), "field": "roles", "filter": True, "sortable": True, "minWidth": 120},
                 ]
             grid.options['rowData'] = grid_data
             grid.options['defaultColDef'] = {
@@ -1864,26 +1867,26 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
             selected_object_version = get_object_by_name_and_version_result[3]
             # проверяем, что в roles валидный список
             if not json_validate(input_edit_object_roles.value):
-                ui.notify("Roles is not a valid json list", type="negative")
+                ui.notify(tr("objects.roles_invalid"), type="negative")
                 return
             # проверяем, что в codemirror валидный json
             if not json_validate(codemirror_edit_object_version.value):
-                ui.notify("JSON is not a valid json", type="negative")
+                ui.notify(tr("objects.json_invalid"), type="negative")
                 return
             # проверяем, что в codemirror именно dict
             if not isinstance(json.loads(codemirror_edit_object_version.value), dict):
-                ui.notify("JSON is not a valid dict", type="negative")
+                ui.notify(tr("objects.json_not_dict"), type="negative")
                 return
             # проверяем, есть ли изменения
             if selected_object_version["type"] == select_edit_object_type.value and selected_object_version["roles"] == json.loads(input_edit_object_roles.value) and json.dumps(selected_object_version["json"], indent=4, ensure_ascii=False) == codemirror_edit_object_version.value:
                 # полное совпадение, изменений нет
-                ui.notify("There are not changes", type="negative")
+                ui.notify(tr("objects.no_changes"), type="negative")
             else:
                 create_new_object_version_result = create_new_object_version(selected_object_version["name"], select_edit_object_type.value, json.loads(input_edit_object_roles.value), json.loads(codemirror_edit_object_version.value), current_state)
                 if not create_new_object_version_result[0]:
                     ui.notify(f"{create_new_object_version_result[1]}", type="negative")
                     return
-                ui.notify(f"New version of {selected_row["name"]} saved", type="positive")
+                ui.notify(tr("objects.version_saved", name=selected_row["name"]), type="positive")
                 update_grid_object_versions(selected_row["name"], grid_object_versions, current_state)
                 object_panels.set_value('Object info')
             # если есть, то создаём новую версию объекта
@@ -1892,7 +1895,7 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
         def create_button_object():
             #сначала проверяем, заполнено ли имя
             if input_new_object_name.value == "":
-                ui.notify("Empty name", type="negative")
+                ui.notify(tr("objects.empty_name"), type="negative")
                 return
             # проверка имени на корректность
             validate_itemname_result = validate_itemname(input_new_object_name.value, current_state)
@@ -1901,57 +1904,57 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 return
             # выбор типа
             if select_new_object_type.value not in ["script", "source", "notifier", "llm"]:
-                ui.notify("Wrong object type", type="negative")
+                ui.notify(tr("objects.wrong_type"), type="negative")
                 return
             # а заполнены ли роли?
             if input_new_object_roles.value == "":
-                ui.notify("Empty roles", type="negative")
+                ui.notify(tr("objects.empty_roles"), type="negative")
                 return
             # проверяем, что в roles валидный список
             if not json_validate(input_new_object_roles.value):
-                ui.notify("Roles is not a valid json list", type="negative")
+                ui.notify(tr("objects.roles_invalid"), type="negative")
                 return
             # проверяем, что это точно список
             if not isinstance(json.loads(input_new_object_roles.value), list):
-                ui.notify("Roles is not a valid json list", type="negative")
+                ui.notify(tr("objects.roles_invalid"), type="negative")
                 return
             # проверяем, что есть хотя бы одна роль
             if not len(json.loads(input_new_object_roles.value)) > 0:
-                ui.notify("Empty roles list", type="negative")
+                ui.notify(tr("objects.empty_roles_list"), type="negative")
                 return
             # проверяем, что в codemirror валидный json
             if not json_validate(codemirror_create_new_object.value):
-                ui.notify("JSON is not a valid json", type="negative")
+                ui.notify(tr("objects.json_invalid"), type="negative")
                 return
             # проверяем, что в codemirror именно dict
             if not isinstance(json.loads(codemirror_create_new_object.value), dict):
-                ui.notify("JSON is not a valid dict", type="negative")
+                ui.notify(tr("objects.json_not_dict"), type="negative")
                 return
             
             # проверяем, есть ли объект с таким именем
             get_all_object_versions_result = get_all_object_versions(input_new_object_name.value, current_state)
             if get_all_object_versions_result[0] == True:
-                ui.notify(f"Name is used for other object", type="negative")
+                ui.notify(tr("objects.name_used"), type="negative")
                 return
             else:
                 if get_all_object_versions_result[1] != "object not found":
-                    ui.notify(f"Error with testing new object name", type="negative")
+                    ui.notify(tr("objects.name_test_error"), type="negative")
                     return
                 else:
                     # имя точно уникальное, записываем в базу новый объект
                     create_new_object_result = create_new_object(input_new_object_name.value, select_new_object_type.value, json.loads(input_new_object_roles.value), json.loads(codemirror_create_new_object.value), current_state)
                     if not create_new_object_result[0]:
-                        ui.notify(f"Error with creating new object", type="negative")
+                        ui.notify(tr("objects.create_error"), type="negative")
                         return
-                    ui.notify(f"Done", type="positive")
+                    ui.notify(tr("objects.done"), type="positive")
                     update_grid_objects_list(grid_objects_list, current_state)
             
         with interface_container:
             with ui.tabs().classes('w-full') as tabs:
-                tab_objects_list = ui.tab('Objects list')
-                tab_one_object = ui.tab('Object info')
-                tab_object_editor = ui.tab('Object editor')
-                tab_object_creator = ui.tab('Object creator')
+                tab_objects_list = ui.tab('Objects list', label=tr("objects.tab.list"))
+                tab_one_object = ui.tab('Object info', label=tr("objects.tab.info"))
+                tab_object_editor = ui.tab('Object editor', label=tr("objects.tab.editor"))
+                tab_object_creator = ui.tab('Object creator', label=tr("objects.tab.creator"))
             with ui.tab_panels(tabs, value=tab_objects_list).classes('w-full h-full') as object_panels:
                 with ui.tab_panel(tab_objects_list):
                     grid_objects_list = ui.aggrid({}).classes('h-[calc(85vh-100px)]')
@@ -1965,23 +1968,23 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
 
                 with ui.tab_panel(tab_object_editor):
                     with ui.row():
-                        label_edit_object_name = ui.label("Name")
+                        label_edit_object_name = ui.label(tr("objects.field.name"))
                         select_edit_object_type = ui.select(["script", "source", "notifier", "llm"], value="script")
-                        input_edit_object_roles = ui.input(label='Roles')
-                        button_save_new_object_version = ui.button("Save")
+                        input_edit_object_roles = ui.input(label=tr("objects.field.roles"))
+                        button_save_new_object_version = ui.button(tr("objects.btn.save"))
                         button_save_new_object_version.on_click(save_button_of_object_editor)
-                        button_delete_object = ui.button("Delete")
+                        button_delete_object = ui.button(tr("objects.btn.delete"))
                         #button_delete_object.on_click(save_button_of_object_editor)
                     codemirror_edit_object_version = make_codemirror(current_state)
                     
 
                 with ui.tab_panel(tab_object_creator):
                     with ui.row():
-                        input_new_object_name = ui.input(label='Name')
+                        input_new_object_name = ui.input(label=tr("objects.field.name"))
                         select_new_object_type = ui.select(["script", "source", "notifier", "llm"], value="script")
-                        input_new_object_roles = ui.input(label='Roles')
+                        input_new_object_roles = ui.input(label=tr("objects.field.roles"))
                         input_new_object_roles.value = '["default"]'
-                        button_create_new_object = ui.button("Create")
+                        button_create_new_object = ui.button(tr("objects.btn.create"))
                         button_create_new_object.on_click(create_button_object)
                     codemirror_create_new_object = make_codemirror(current_state)
 
