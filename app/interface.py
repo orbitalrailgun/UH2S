@@ -351,13 +351,21 @@ APPEARANCE_DEFAULTS = {
 }
 
 
-def apply_appearance(appearance):
+def apply_appearance(appearance, current_state=None):
     """Применить внешний вид на клиенте: тема + оверрайды цветов (update_theme) и шрифты/размеры через CSS-переменные.
-    Действует «живо» на весь UI и текстовые блоки; таблицы (AG Grid) — через override-правило в CSS."""
+    Действует «живо» на весь UI и текстовые блоки; таблицы (AG Grid) — через override-правило в CSS.
+    Режим Quasar dark (поля/меню/чекбоксы/таб-панели) переключается через current_state['ui_dark_mode']."""
     appearance = {**APPEARANCE_DEFAULTS, **(appearance or {})}
     theme = appearance["theme"]
     color_overrides = (appearance.get("colors") or {}).get(theme, {})
     update_theme(theme, color_overrides)
+    if current_state is not None:
+        dark_mode = current_state.get("ui_dark_mode")
+        if dark_mode is not None:
+            try:
+                dark_mode.value = (theme == "dark")
+            except BaseException:
+                pass
     try:
         font_size = int(appearance.get("font_size") or APPEARANCE_DEFAULTS["font_size"])
     except BaseException:
@@ -368,15 +376,12 @@ def apply_appearance(appearance):
         table_font_size = APPEARANCE_DEFAULTS["table_font_size"]
     font = appearance.get("font") or APPEARANCE_DEFAULTS["font"]
     table_font = appearance.get("table_font") or APPEARANCE_DEFAULTS["table_font"]
-    dark_js = "true" if theme == "dark" else "false"
     ui.run_javascript(
         "const r = document.documentElement.style;"
         f"r.setProperty('--app-font', `{font}`);"
         f"r.setProperty('--app-font-size', '{font_size}px');"
         f"r.setProperty('--app-table-font', `{table_font}`);"
         f"r.setProperty('--app-table-font-size', '{table_font_size}px');"
-        # режим Quasar dark: перекрашивает поля ввода, меню, лейблы и пр. под тёмную тему
-        f"document.body.classList.toggle('body--dark', {dark_js});"
     )
 
 
@@ -448,6 +453,17 @@ async def login_page(current_state: Dict[str, Any]):
             --ag-row-hover-color: var(--panel-bg) !important;
             --ag-input-focus-border-color: var(--accent-color) !important;
             background: var(--card-bg) !important;
+            color: var(--text-color) !important;
+        }
+        /* прямое форсирование цветов AG Grid (на случай, если --ag-* не применяются) */
+        .ag-row, .ag-cell, .ag-cell-value, .ag-row-odd, .ag-row-even,
+        .ag-paging-panel, .ag-status-bar, .ag-floating-filter, .ag-side-bar, .ag-body-viewport {
+            background-color: var(--card-bg) !important;
+            color: var(--text-color) !important;
+        }
+        .ag-header, .ag-header-row, .ag-header-cell, .ag-header-group-cell,
+        .ag-pinned-left-header, .ag-pinned-right-header {
+            background-color: var(--panel-bg) !important;
             color: var(--text-color) !important;
         }
         /* Карточки/панели разделов следуют теме (по умолчанию q-card белая) */
@@ -627,6 +643,17 @@ def main_page(keycloak_openid, current_state):
             background: var(--card-bg) !important;
             color: var(--text-color) !important;
         }
+        /* прямое форсирование цветов AG Grid (на случай, если --ag-* не применяются) */
+        .ag-row, .ag-cell, .ag-cell-value, .ag-row-odd, .ag-row-even,
+        .ag-paging-panel, .ag-status-bar, .ag-floating-filter, .ag-side-bar, .ag-body-viewport {
+            background-color: var(--card-bg) !important;
+            color: var(--text-color) !important;
+        }
+        .ag-header, .ag-header-row, .ag-header-cell, .ag-header-group-cell,
+        .ag-pinned-left-header, .ag-pinned-right-header {
+            background-color: var(--panel-bg) !important;
+            color: var(--text-color) !important;
+        }
         /* Карточки/панели разделов следуют теме (по умолчанию q-card белая) */
         .q-card {
             background: var(--card-bg) !important;
@@ -703,10 +730,12 @@ def main_page(keycloak_openid, current_state):
     appearance_scope = settings_user_scope(current_state.get("username", "unknown"))
     saved_appearance = get_setting(appearance_scope, "appearance", {}, current_state)[3] or {}
     appearance_state = {**APPEARANCE_DEFAULTS, "theme": theme, **saved_appearance}
-    apply_appearance(appearance_state)
+    # режим Quasar dark (читаемость полей/меню/чекбоксов/таб-панелей) — реальный элемент dark_mode
+    current_state["ui_dark_mode"] = ui.dark_mode(value=(appearance_state["theme"] == "dark"))
     # тема редактора кода: реестр редакторов и активная тема ДО построения панелей
     current_state["ui_codemirrors"] = []
     current_state["codemirror_theme"] = appearance_state.get("codemirror_theme") or APPEARANCE_DEFAULTS["codemirror_theme"]
+    apply_appearance(appearance_state, current_state)
 
     def logout() -> None:
         app.storage.user.clear()
@@ -878,7 +907,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         if suspend["v"]:
                             return
                         sync_colors()
-                        apply_appearance(collect())
+                        apply_appearance(collect(), current_state)
                         apply_codemirror_theme(current_state, codemirror_theme_select.value or APPEARANCE_DEFAULTS["codemirror_theme"])
 
                     def on_theme_change():
@@ -898,7 +927,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             ui.notify(f"Не удалось сохранить: {set_setting_result[1]}", type="negative")
                             return
                         app.storage.user.update({'theme': new_appearance["theme"]})  # синхронизация с login-страницей
-                        apply_appearance(new_appearance)
+                        apply_appearance(new_appearance, current_state)
                         apply_codemirror_theme(current_state, new_appearance["codemirror_theme"])
                         ui.notify("Внешний вид сохранён", type="positive")
 
