@@ -686,7 +686,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
         appearance = {**APPEARANCE_DEFAULTS, "theme": app.storage.user.get('theme', 'dark'), **saved}
 
         with interface_container:
-            with ui.scroll_area().classes('w-full h-full'):
+            with ui.element('div').classes('w-full').style('max-height: 88vh; overflow-y: auto;'):
                 with ui.column().classes('w-full gap-4 p-2'):
                     ui.label("Внешний вид").style(
                         "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
@@ -761,6 +761,11 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
         return True, "Ok", currentFuncName(), None
 
     except BaseException as e:
+        try:
+            with interface_container:
+                ui.label(f"Ошибка раздела Settings: {str(e)}").classes('text-red-400')
+        except BaseException:
+            pass
         return False, str(e), currentFuncName(), None
 
 def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
