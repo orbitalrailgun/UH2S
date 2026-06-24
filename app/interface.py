@@ -976,35 +976,35 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     ui.separator()
                     ui.label(tr("settings.section.appearance")).style(
                         "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
-                    ui.markdown("Персональные настройки оформления. Применяются сразу и сохраняются за вашей учётной записью.")
+                    ui.markdown(tr("settings.appearance.hint"))
 
                     theme_select = ui.select(
-                        {"dark": "Тёмная", "light": "Светлая"}, value=appearance["theme"], label="Тема"
+                        {"dark": tr("settings.theme.dark"), "light": tr("settings.theme.light")}, value=appearance["theme"], label=tr("settings.theme.label")
                     ).classes('w-64')
 
                     ui.separator()
-                    ui.label("Интерфейс").style("color: var(--accent-color);")
+                    ui.label(tr("settings.appearance.interface")).style("color: var(--accent-color);")
                     with ui.row().classes('items-end gap-4 w-full'):
                         font_select = ui.select(
-                            FONT_OPTIONS, value=appearance["font"], label="Шрифт интерфейса", with_input=True
+                            FONT_OPTIONS, value=appearance["font"], label=tr("settings.font.interface"), with_input=True
                         ).classes('grow')
                         font_size_input = ui.number(
-                            label="Размер, px", value=appearance["font_size"], min=8, max=32, step=1
+                            label=tr("settings.font.size"), value=appearance["font_size"], min=8, max=32, step=1
                         ).classes('w-32')
 
                     ui.separator()
-                    ui.label("Таблицы и текстовые блоки").style("color: var(--accent-color);")
+                    ui.label(tr("settings.appearance.tables")).style("color: var(--accent-color);")
                     with ui.row().classes('items-end gap-4 w-full'):
                         table_font_select = ui.select(
-                            FONT_OPTIONS, value=appearance["table_font"], label="Шрифт таблиц", with_input=True
+                            FONT_OPTIONS, value=appearance["table_font"], label=tr("settings.font.tables"), with_input=True
                         ).classes('grow')
                         table_font_size_input = ui.number(
-                            label="Размер, px", value=appearance["table_font_size"], min=8, max=24, step=1
+                            label=tr("settings.font.size"), value=appearance["table_font_size"], min=8, max=24, step=1
                         ).classes('w-32')
 
                     ui.separator()
-                    ui.label("Редактор кода (CodeMirror)").style("color: var(--accent-color);")
-                    ui.markdown("Тема редактора задаётся отдельно для тёмной и светлой темы.").classes('text-xs opacity-60')
+                    ui.label(tr("settings.appearance.codemirror")).style("color: var(--accent-color);")
+                    ui.markdown(tr("settings.codemirror.hint")).classes('text-xs opacity-60')
                     # тема редактора по теме приложения: {"dark":..., "light":...} (поддержка старого строкового формата)
                     _cm_raw = appearance.get("codemirror_theme")
                     if isinstance(_cm_raw, dict):
@@ -1015,12 +1015,12 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     else:
                         cm_state = dict(APPEARANCE_DEFAULTS["codemirror_theme"])
                     codemirror_theme_select = ui.select(
-                        CODEMIRROR_THEMES, value=cm_state.get(appearance["theme"]), label="Тема редактора"
+                        CODEMIRROR_THEMES, value=cm_state.get(appearance["theme"]), label=tr("settings.codemirror.label")
                     ).classes('w-64')
 
                     ui.separator()
-                    ui.label("Цвета интерфейса").style("color: var(--accent-color);")
-                    ui.markdown("Цвета задаются отдельно для тёмной и светлой темы — редактируется текущая выбранная тема.").classes('text-xs opacity-60')
+                    ui.label(tr("settings.appearance.colors")).style("color: var(--accent-color);")
+                    ui.markdown(tr("settings.colors.hint")).classes('text-xs opacity-60')
 
                     # оверрайды цветов по теме: {"dark": {role: "#hex"}, "light": {...}} — живо обновляются пикерами
                     colors_state = {t: dict(v) for t, v in (appearance.get("colors") or {}).items()}
@@ -1033,7 +1033,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     with ui.row().classes('items-end gap-3 w-full flex-wrap'):
                         _eff = effective_colors(appearance["theme"])
                         for role, role_label in COLOR_ROLES:
-                            color_pickers[role] = ui.color_input(label=role_label, value=_eff[role]).classes('w-40')
+                            color_pickers[role] = ui.color_input(label=tr(f"settings.color.{role}"), value=_eff[role]).classes('w-40')
 
                     def sync_colors():
                         # сохранить значения пикеров как оверрайды текущей темы
@@ -1084,12 +1084,12 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         new_appearance = collect()
                         set_setting_result = set_setting(scope, "appearance", new_appearance, current_state)
                         if not set_setting_result[0]:
-                            ui.notify(f"Не удалось сохранить: {set_setting_result[1]}", type="negative")
+                            ui.notify(tr("settings.appearance.save_fail", error=set_setting_result[1]), type="negative")
                             return
                         app.storage.user.update({'theme': new_appearance["theme"]})  # синхронизация с login-страницей
                         apply_appearance(new_appearance, current_state)
                         apply_codemirror_theme(current_state, cm_state[new_appearance["theme"]])
-                        ui.notify("Внешний вид сохранён", type="positive")
+                        ui.notify(tr("settings.appearance.saved"), type="positive")
 
                     def reset_defaults():
                         suspend["v"] = True
@@ -1116,74 +1116,74 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         color_pickers[role].on('update:model-value', lambda: preview())
 
                     with ui.row().classes('gap-2 mt-2'):
-                        ui.button("Сохранить", icon='save', on_click=save).classes('hover-glow')
-                        ui.button("Сбросить", icon='restart_alt', on_click=reset_defaults).props('outline')
+                        ui.button(tr("settings.btn.save"), icon='save', on_click=save).classes('hover-glow')
+                        ui.button(tr("settings.btn.reset"), icon='restart_alt', on_click=reset_defaults).props('outline')
 
                     # ───────────────────────── Учётная запись (self-service) ─────────────────────────
                     ui.separator()
                     ui.label(tr("settings.section.account")).style(
                         "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
-                    ui.markdown(f"Пользователь: **{username}**").classes('text-sm')
+                    ui.markdown(tr("settings.account.user", name=username)).classes('text-sm')
 
-                    ui.label("Смена пароля").style("color: var(--accent-color);")
-                    ui.markdown("Новый пароль: минимум 17 символов, строчные и прописные буквы, цифра и спецсимвол.").classes('text-xs opacity-60')
-                    ui.markdown("⚠️ После смены пароля вы будете разлогинены на всех своих сессиях — потребуется войти заново.").classes('text-xs text-orange-400')
+                    ui.label(tr("settings.account.changepw")).style("color: var(--accent-color);")
+                    ui.markdown(tr("settings.account.pwrule")).classes('text-xs opacity-60')
+                    ui.markdown(tr("settings.account.pwwarn")).classes('text-xs text-orange-400')
                     with ui.column().classes('gap-2 w-full max-w-md'):
-                        old_password_input = ui.input(label="Текущий пароль", password=True, password_toggle_button=True).classes('w-full')
-                        new_password_input = ui.input(label="Новый пароль", password=True, password_toggle_button=True).classes('w-full')
-                        confirm_password_input = ui.input(label="Повтор нового пароля", password=True, password_toggle_button=True).classes('w-full')
+                        old_password_input = ui.input(label=tr("settings.account.oldpw"), password=True, password_toggle_button=True).classes('w-full')
+                        new_password_input = ui.input(label=tr("settings.account.newpw"), password=True, password_toggle_button=True).classes('w-full')
+                        confirm_password_input = ui.input(label=tr("settings.account.confirmpw"), password=True, password_toggle_button=True).classes('w-full')
 
                     async def change_password():
                         old_pw = old_password_input.value or ""
                         new_pw = new_password_input.value or ""
                         confirm_pw = confirm_password_input.value or ""
                         if not old_pw or not new_pw:
-                            ui.notify("Заполните текущий и новый пароль", type="negative")
+                            ui.notify(tr("settings.account.fill"), type="negative")
                             return
                         if new_pw != confirm_pw:
-                            ui.notify("Новый пароль и повтор не совпадают", type="negative")
+                            ui.notify(tr("settings.account.mismatch"), type="negative")
                             return
                         if not check_regex_rule(new_pw, REGEX_PASSWORD_RULE):
-                            ui.notify("Новый пароль не соответствует требованиям сложности", type="negative")
+                            ui.notify(tr("settings.pw.weak"), type="negative")
                             return
                         # проверяем текущий пароль через bcrypt
                         user_result = get_user_by_username(username, current_state)
                         if not user_result[0]:
-                            ui.notify(f"Не удалось получить пользователя: {user_result[1]}", type="negative")
+                            ui.notify(tr("settings.account.userfail", error=user_result[1]), type="negative")
                             return
                         stored_hash = user_result[3]["pass"]
                         if isinstance(stored_hash, str):
                             stored_hash = stored_hash.encode("utf-8")
                         import bcrypt
                         if not bcrypt.checkpw(old_pw.encode("utf-8"), stored_hash):
-                            ui.notify("Текущий пароль неверный", type="negative")
+                            ui.notify(tr("settings.account.wrongpw"), type="negative")
                             return
                         # подтверждение разлогина
                         with ui.dialog() as confirm_dialog, ui.card():
-                            ui.label("Сменить пароль? Вы будете разлогинены на всех своих сессиях.")
+                            ui.label(tr("settings.account.confirm"))
                             with ui.row().classes('justify-end w-full'):
-                                ui.button("Отмена", on_click=lambda: confirm_dialog.submit(False)).props('outline')
-                                ui.button("Сменить и выйти", on_click=lambda: confirm_dialog.submit(True)).classes('hover-glow')
+                                ui.button(tr("settings.btn.cancel"), on_click=lambda: confirm_dialog.submit(False)).props('outline')
+                                ui.button(tr("settings.account.confirm_yes"), on_click=lambda: confirm_dialog.submit(True)).classes('hover-glow')
                         if not await confirm_dialog:
                             return
                         new_hash = bcrypt.hashpw(new_pw.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
                         set_result = set_user_password(username, new_hash, current_state)
                         if not set_result[0]:
-                            ui.notify(f"Не удалось сменить пароль: {set_result[1]}", type="negative")
+                            ui.notify(tr("settings.account.changefail", error=set_result[1]), type="negative")
                             return
                         old_password_input.value = ""
                         new_password_input.value = ""
                         confirm_password_input.value = ""
                         # смена пароля отзывает все сессии (set_user_password бампит epoch) — выходим немедленно
-                        ui.notify("Пароль изменён. Выполняется выход…", type="positive")
+                        ui.notify(tr("settings.account.changed"), type="positive")
                         app.storage.user.clear()
                         ui.navigate.to('/login')
 
-                    ui.button("Сменить пароль", icon='password', on_click=change_password).classes('hover-glow')
+                    ui.button(tr("settings.account.changebtn"), icon='password', on_click=change_password).classes('hover-glow')
 
                     ui.separator()
-                    ui.label("Мои метаданные (JSON)").style("color: var(--accent-color);")
-                    ui.markdown("Произвольные данные вашей учётной записи (например, настройки уведомлений для NOTIFY).").classes('text-xs opacity-60')
+                    ui.label(tr("settings.account.meta")).style("color: var(--accent-color);")
+                    ui.markdown(tr("settings.account.meta_hint")).classes('text-xs opacity-60')
                     user_meta_result = get_user_by_username(username, current_state)
                     current_meta = user_meta_result[3].get("json", {}) if user_meta_result[0] else {}
                     metadata_editor = make_codemirror(current_state).classes('w-full').style('max-height: 30vh')
@@ -1192,19 +1192,19 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                     def save_metadata():
                         text = metadata_editor.value or ""
                         if not json_validate(text):
-                            ui.notify("Метаданные должны быть корректным JSON", type="negative")
+                            ui.notify(tr("settings.meta.invalid_json"), type="negative")
                             return
                         parsed = json.loads(text)
                         if not isinstance(parsed, dict):
-                            ui.notify("Метаданные должны быть JSON-объектом ({...})", type="negative")
+                            ui.notify(tr("settings.meta.not_object"), type="negative")
                             return
                         update_result = update_user_metadata(username, parsed, current_state)
                         if not update_result[0]:
-                            ui.notify(f"Не удалось сохранить метаданные: {update_result[1]}", type="negative")
+                            ui.notify(tr("settings.meta.save_fail", error=update_result[1]), type="negative")
                             return
-                        ui.notify("Метаданные сохранены", type="positive")
+                        ui.notify(tr("settings.meta.saved"), type="positive")
 
-                    ui.button("Сохранить метаданные", icon='save', on_click=save_metadata).classes('hover-glow')
+                    ui.button(tr("settings.meta.savebtn"), icon='save', on_click=save_metadata).classes('hover-glow')
 
                     # ──────────── Управление пользователями (роли fullmaster / useradmin) ────────────
                     current_roles = user_meta_result[3].get("roles", []) if user_meta_result[0] else []
@@ -1212,15 +1212,15 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         ui.separator()
                         ui.label(tr("settings.section.users")).style(
                             "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
-                        ui.markdown("Фильтрация по колонкам (username, роли, метаданные). Сброс пароля и блокировка немедленно завершают все сессии пользователя.").classes('text-xs opacity-60')
+                        ui.markdown(tr("settings.users.hint")).classes('text-xs opacity-60')
 
                         grid_users = ui.aggrid({}).classes('w-full').style('height: 40vh')
 
-                        ui.label("Действия по выбранному пользователю").style("color: var(--accent-color);")
-                        selected_user_label = ui.label("Пользователь не выбран").classes('text-sm').style('font-weight:700')
-                        admin_roles_input = ui.input(label="Роли (JSON-массив)", value="[]").classes('w-full max-w-md')
-                        admin_reset_pw_input = ui.input(label="Новый пароль (сброс)", password=True, password_toggle_button=True).classes('w-full max-w-md')
-                        ui.label("Метаданные пользователя (JSON)").classes('text-xs opacity-60')
+                        ui.label(tr("settings.users.actions")).style("color: var(--accent-color);")
+                        selected_user_label = ui.label(tr("settings.users.none")).classes('text-sm').style('font-weight:700')
+                        admin_roles_input = ui.input(label=tr("settings.users.roles"), value="[]").classes('w-full max-w-md')
+                        admin_reset_pw_input = ui.input(label=tr("settings.users.resetpw"), password=True, password_toggle_button=True).classes('w-full max-w-md')
+                        ui.label(tr("settings.users.meta")).classes('text-xs opacity-60')
                         admin_meta_editor = make_codemirror(current_state).classes('w-full').style('max-height: 25vh')
                         admin_selected = {"name": None, "enabled": None}
 
@@ -1231,17 +1231,18 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                 for u in list_result[3]:
                                     rows.append({
                                         "username": u["name"],
-                                        "enabled": ("да" if u["enabled"] else "нет"),
+                                        "enabled": (tr("settings.common.yes") if u["enabled"] else tr("settings.common.no")),
                                         "roles": json.dumps(u["roles"], ensure_ascii=False),
                                         "metadata": json.dumps(u["json"], ensure_ascii=False),
+                                        "_enabled": u["enabled"],
                                     })
                             else:
-                                ui.notify(f"Ошибка списка пользователей: {list_result[1]}", type="negative")
+                                ui.notify(tr("settings.users.list_fail", error=list_result[1]), type="negative")
                             grid_users.options["columnDefs"] = [
-                                {"headerName": "Username", "field": "username", "filter": True, "sortable": True, "resizable": True, "minWidth": 160, "tooltipField": "username"},
-                                {"headerName": "Активна", "field": "enabled", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
-                                {"headerName": "Роли", "field": "roles", "filter": True, "sortable": True, "resizable": True, "minWidth": 200, "tooltipField": "roles"},
-                                {"headerName": "Метаданные", "field": "metadata", "filter": True, "sortable": True, "resizable": True, "minWidth": 240, "tooltipField": "metadata"},
+                                {"headerName": tr("settings.users.col.username"), "field": "username", "filter": True, "sortable": True, "resizable": True, "minWidth": 160, "tooltipField": "username"},
+                                {"headerName": tr("settings.users.col.enabled"), "field": "enabled", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
+                                {"headerName": tr("settings.users.col.roles"), "field": "roles", "filter": True, "sortable": True, "resizable": True, "minWidth": 200, "tooltipField": "roles"},
+                                {"headerName": tr("settings.users.col.metadata"), "field": "metadata", "filter": True, "sortable": True, "resizable": True, "minWidth": 240, "tooltipField": "metadata"},
                             ]
                             grid_users.options["rowData"] = rows
                             grid_users.options["rowSelection"] = "single"
@@ -1255,19 +1256,19 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                         def _refresh_selected_label():
                             if not admin_selected["name"]:
-                                selected_user_label.set_text("Пользователь не выбран")
-                                block_user_button.set_text("Заблокировать")
+                                selected_user_label.set_text(tr("settings.users.none"))
+                                block_user_button.set_text(tr("settings.users.block"))
                                 return
                             selected_user_label.set_text(
-                                f"Пользователь: {admin_selected['name']} ({'активна' if admin_selected['enabled'] else 'заблокирована'})")
-                            block_user_button.set_text("Разблокировать" if not admin_selected["enabled"] else "Заблокировать")
+                                tr("settings.users.selected", name=admin_selected['name'], status=(tr("settings.users.active") if admin_selected['enabled'] else tr("settings.users.blocked"))))
+                            block_user_button.set_text(tr("settings.users.unblock") if not admin_selected["enabled"] else tr("settings.users.block"))
 
                         async def on_user_selected():
                             row = (await grid_users.get_selected_row()) or {}
                             if not row:
                                 return
                             admin_selected["name"] = row.get("username")
-                            admin_selected["enabled"] = (row.get("enabled") == "да")
+                            admin_selected["enabled"] = bool(row.get("_enabled"))
                             admin_roles_input.value = row.get("roles") or "[]"
                             admin_reset_pw_input.value = ""
                             try:
@@ -1279,17 +1280,17 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         def toggle_user_enabled():
                             name = admin_selected["name"]
                             if not name:
-                                ui.notify("Выберите пользователя в таблице", type="warning")
+                                ui.notify(tr("settings.users.pick"), type="warning")
                                 return
                             if name == username and admin_selected["enabled"]:
-                                ui.notify("Нельзя заблокировать собственную учётную запись", type="negative")
+                                ui.notify(tr("settings.users.noselfblock"), type="negative")
                                 return
                             result = set_user_enabled(name, not admin_selected["enabled"], current_state)
                             if not result[0]:
-                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                 return
-                            ui.notify((f"Разблокирован: {name}" if not admin_selected["enabled"]
-                                       else f"Заблокирован: {name} (сессии завершены)"), type="positive")
+                            ui.notify((tr("settings.users.unblocked", name=name) if not admin_selected["enabled"]
+                                       else tr("settings.users.blocked_done", name=name)), type="positive")
                             admin_selected["enabled"] = not admin_selected["enabled"]
                             _refresh_selected_label()
                             refresh_users_grid()
@@ -1297,101 +1298,101 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         def save_user_roles():
                             name = admin_selected["name"]
                             if not name:
-                                ui.notify("Выберите пользователя в таблице", type="warning")
+                                ui.notify(tr("settings.users.pick"), type="warning")
                                 return
                             if not json_validate(admin_roles_input.value or ""):
-                                ui.notify("Роли должны быть JSON-массивом", type="negative")
+                                ui.notify(tr("settings.roles.array"), type="negative")
                                 return
                             parsed = json.loads(admin_roles_input.value)
                             if not isinstance(parsed, list):
-                                ui.notify("Роли должны быть JSON-массивом (список строк)", type="negative")
+                                ui.notify(tr("settings.roles.array_strings"), type="negative")
                                 return
                             result = set_user_roles(name, parsed, current_state)
                             if not result[0]:
-                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                 return
-                            ui.notify(f"Роли обновлены: {name}", type="positive")
+                            ui.notify(tr("settings.users.roles_saved", name=name), type="positive")
                             refresh_users_grid()
 
                         def reset_user_password():
                             name = admin_selected["name"]
                             if not name:
-                                ui.notify("Выберите пользователя в таблице", type="warning")
+                                ui.notify(tr("settings.users.pick"), type="warning")
                                 return
                             if not check_regex_rule(admin_reset_pw_input.value or "", REGEX_PASSWORD_RULE):
-                                ui.notify("Пароль не соответствует требованиям сложности", type="negative")
+                                ui.notify(tr("settings.pw.weak"), type="negative")
                                 return
                             import bcrypt
                             new_hash = bcrypt.hashpw((admin_reset_pw_input.value).encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
                             result = set_user_password(name, new_hash, current_state)
                             if not result[0]:
-                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                 return
                             admin_reset_pw_input.value = ""
-                            ui.notify(f"Пароль сброшен для {name} (сессии завершены)", type="positive")
+                            ui.notify(tr("settings.users.pw_reset", name=name), type="positive")
 
                         def save_user_metadata():
                             name = admin_selected["name"]
                             if not name:
-                                ui.notify("Выберите пользователя в таблице", type="warning")
+                                ui.notify(tr("settings.users.pick"), type="warning")
                                 return
                             text = admin_meta_editor.value or ""
                             if not json_validate(text):
-                                ui.notify("Метаданные должны быть корректным JSON", type="negative")
+                                ui.notify(tr("settings.meta.invalid_json"), type="negative")
                                 return
                             parsed = json.loads(text)
                             if not isinstance(parsed, dict):
-                                ui.notify("Метаданные должны быть JSON-объектом ({...})", type="negative")
+                                ui.notify(tr("settings.meta.not_object"), type="negative")
                                 return
                             result = update_user_metadata(name, parsed, current_state)
                             if not result[0]:
-                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                 return
-                            ui.notify(f"Метаданные сохранены: {name}", type="positive")
+                            ui.notify(tr("settings.users.meta_saved", name=name), type="positive")
                             refresh_users_grid()
 
                         with ui.row().classes('gap-2 flex-wrap'):
-                            block_user_button = ui.button("Заблокировать", icon='block', on_click=toggle_user_enabled).props('outline')
-                            ui.button("Сохранить роли", icon='save', on_click=save_user_roles)
-                            ui.button("Сохранить метаданные", icon='save', on_click=save_user_metadata)
-                            ui.button("Сбросить пароль", icon='password', on_click=reset_user_password).props('outline')
-                            ui.button("Обновить список", icon='refresh', on_click=refresh_users_grid).props('flat')
+                            block_user_button = ui.button(tr("settings.users.block"), icon='block', on_click=toggle_user_enabled).props('outline')
+                            ui.button(tr("settings.users.save_roles"), icon='save', on_click=save_user_roles)
+                            ui.button(tr("settings.meta.savebtn"), icon='save', on_click=save_user_metadata)
+                            ui.button(tr("settings.users.reset_pw_btn"), icon='password', on_click=reset_user_password).props('outline')
+                            ui.button(tr("settings.btn.refresh"), icon='refresh', on_click=refresh_users_grid).props('flat')
 
                         grid_users.on("selectionChanged", on_user_selected)
 
-                        with ui.expansion("Создать пользователя", icon='person_add').classes('w-full'):
-                            new_user_name = ui.input(label="Имя пользователя").classes('w-full max-w-md')
-                            new_user_pw = ui.input(label="Пароль", password=True, password_toggle_button=True).classes('w-full max-w-md')
-                            new_user_roles = ui.input(label="Роли (JSON-массив)", value='[]').classes('w-full max-w-md')
+                        with ui.expansion(tr("settings.users.create"), icon='person_add').classes('w-full'):
+                            new_user_name = ui.input(label=tr("settings.users.username")).classes('w-full max-w-md')
+                            new_user_pw = ui.input(label=tr("settings.users.password"), password=True, password_toggle_button=True).classes('w-full max-w-md')
+                            new_user_roles = ui.input(label=tr("settings.users.roles"), value='[]').classes('w-full max-w-md')
 
                             def create_new_user():
                                 name = (new_user_name.value or "").strip()
                                 if not check_regex_rule(name, REGEX_USERNAME_RULE):
-                                    ui.notify("Имя: минимум 3 символа, латиница/цифры/._-", type="negative")
+                                    ui.notify(tr("settings.users.name_rule"), type="negative")
                                     return
                                 if not check_regex_rule(new_user_pw.value or "", REGEX_PASSWORD_RULE):
-                                    ui.notify("Пароль не соответствует требованиям сложности", type="negative")
+                                    ui.notify(tr("settings.pw.weak"), type="negative")
                                     return
                                 if not json_validate(new_user_roles.value or ""):
-                                    ui.notify("Роли должны быть JSON-массивом", type="negative")
+                                    ui.notify(tr("settings.roles.array"), type="negative")
                                     return
                                 roles = json.loads(new_user_roles.value)
                                 if not isinstance(roles, list):
-                                    ui.notify("Роли должны быть JSON-массивом", type="negative")
+                                    ui.notify(tr("settings.roles.array"), type="negative")
                                     return
                                 import bcrypt
                                 new_hash = bcrypt.hashpw((new_user_pw.value).encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
                                 result = create_user(name, new_hash, roles, {}, current_state)
                                 if not result[0]:
-                                    ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                    ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                     return
                                 new_user_name.value = ""
                                 new_user_pw.value = ""
                                 new_user_roles.value = "[]"
-                                ui.notify(f"Пользователь создан: {name}", type="positive")
+                                ui.notify(tr("settings.users.created", name=name), type="positive")
                                 refresh_users_grid()
 
-                            ui.button("Создать", icon='person_add', on_click=create_new_user).classes('hover-glow')
+                            ui.button(tr("settings.btn.create"), icon='person_add', on_click=create_new_user).classes('hover-glow')
 
                         refresh_users_grid()
 
@@ -1401,10 +1402,10 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         ui.label(tr("settings.section.ai")).style(
                             "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
 
-                        ui.label("Лимиты").style("color: var(--accent-color);")
+                        ui.label(tr("settings.ai.limits")).style("color: var(--accent-color);")
                         max_iter_value = get_setting("global", "agent_max_iterations", 10, current_state)[3] or 10
                         with ui.row().classes('items-end gap-2'):
-                            agent_iter_input = ui.number(label="Макс. действий агента за сессию",
+                            agent_iter_input = ui.number(label=tr("settings.ai.maxiter"),
                                                          value=int(max_iter_value), min=1, max=100, step=1).classes('w-72')
 
                             def save_ai_limits():
@@ -1415,24 +1416,24 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                 val = max(1, min(val, 100))
                                 result = set_setting("global", "agent_max_iterations", val, current_state)
                                 if not result[0]:
-                                    ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                    ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                     return
-                                ui.notify("Лимиты AI сохранены", type="positive")
+                                ui.notify(tr("settings.ai.limits_saved"), type="positive")
 
-                            ui.button("Сохранить лимиты", icon='save', on_click=save_ai_limits).classes('hover-glow')
+                            ui.button(tr("settings.ai.save_limits"), icon='save', on_click=save_ai_limits).classes('hover-glow')
 
                         ui.separator()
-                        ui.label("Журнал AI — потребление токенов").style("color: var(--accent-color);")
-                        ui.markdown("Сводка по пользователям и детализация запросов (фильтры по колонкам: пользователь, модель, время).").classes('text-xs opacity-60')
+                        ui.label(tr("settings.ai.log")).style("color: var(--accent-color);")
+                        ui.markdown(tr("settings.ai.log_hint")).classes('text-xs opacity-60')
                         ai_summary_grid = ui.aggrid({}).classes('w-full').style('height: 22vh')
-                        ui.label("Детализация запросов").classes('text-xs opacity-60')
+                        ui.label(tr("settings.ai.detail")).classes('text-xs opacity-60')
                         ai_log_grid = ui.aggrid({}).classes('w-full').style('height: 35vh')
 
                         def refresh_ai_log():
                             log_result = get_ai_log(current_state, 2000)
                             entries = log_result[3] if log_result[0] else []
                             if not log_result[0]:
-                                ui.notify(f"Ошибка журнала AI: {log_result[1]}", type="negative")
+                                ui.notify(tr("settings.ai.log_fail", error=log_result[1]), type="negative")
 
                             # сводка по пользователям
                             summary = {}
@@ -1446,11 +1447,11 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                 bucket["total_tokens"] += entry.get("total_tokens") or 0
                             summary_rows = sorted(summary.values(), key=lambda x: x["total_tokens"], reverse=True)
                             ai_summary_grid.options["columnDefs"] = [
-                                {"headerName": "Пользователь", "field": "username", "filter": True, "sortable": True, "resizable": True, "minWidth": 160},
-                                {"headerName": "Запросов", "field": "requests", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
-                                {"headerName": "Вход (токены)", "field": "prompt_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
-                                {"headerName": "Выход (токены)", "field": "completion_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
-                                {"headerName": "Всего (токены)", "field": "total_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
+                                {"headerName": tr("settings.ai.col.user"), "field": "username", "filter": True, "sortable": True, "resizable": True, "minWidth": 160},
+                                {"headerName": tr("settings.ai.col.requests"), "field": "requests", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
+                                {"headerName": tr("settings.ai.col.in"), "field": "prompt_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
+                                {"headerName": tr("settings.ai.col.out"), "field": "completion_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
+                                {"headerName": tr("settings.ai.col.total"), "field": "total_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
                             ]
                             ai_summary_grid.options["rowData"] = summary_rows
                             ai_summary_grid.options["domLayout"] = "normal"
@@ -1459,15 +1460,15 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                             # детализация
                             ai_log_grid.options["columnDefs"] = [
-                                {"headerName": "Время", "field": "timestamp", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
-                                {"headerName": "Пользователь", "field": "username", "filter": True, "sortable": True, "resizable": True, "minWidth": 140},
-                                {"headerName": "Модель", "field": "model", "filter": True, "sortable": True, "resizable": True, "minWidth": 160, "tooltipField": "model"},
-                                {"headerName": "Провайдер", "field": "provider", "filter": True, "sortable": True, "resizable": True, "minWidth": 120},
-                                {"headerName": "Вход", "field": "prompt_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
-                                {"headerName": "Выход", "field": "completion_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
-                                {"headerName": "Всего", "field": "total_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
-                                {"headerName": "мс", "field": "duration_ms", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
-                                {"headerName": "ok", "field": "ok", "filter": True, "sortable": True, "resizable": True, "minWidth": 70},
+                                {"headerName": tr("settings.ai.dcol.time"), "field": "timestamp", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
+                                {"headerName": tr("settings.ai.col.user"), "field": "username", "filter": True, "sortable": True, "resizable": True, "minWidth": 140},
+                                {"headerName": tr("settings.ai.dcol.model"), "field": "model", "filter": True, "sortable": True, "resizable": True, "minWidth": 160, "tooltipField": "model"},
+                                {"headerName": tr("settings.ai.dcol.provider"), "field": "provider", "filter": True, "sortable": True, "resizable": True, "minWidth": 120},
+                                {"headerName": tr("settings.ai.dcol.in"), "field": "prompt_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                                {"headerName": tr("settings.ai.dcol.out"), "field": "completion_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                                {"headerName": tr("settings.ai.dcol.total"), "field": "total_tokens", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                                {"headerName": tr("settings.ai.dcol.ms"), "field": "duration_ms", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                                {"headerName": tr("settings.ai.dcol.ok"), "field": "ok", "filter": True, "sortable": True, "resizable": True, "minWidth": 70},
                             ]
                             ai_log_grid.options["rowData"] = entries
                             ai_log_grid.options["defaultColDef"] = {"filter": True, "sortable": True, "resizable": True, "minWidth": 90}
@@ -1478,7 +1479,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             ai_log_grid.options["domLayout"] = "normal"
                             ai_log_grid.update()
 
-                        ui.button("Обновить журнал", icon='refresh', on_click=refresh_ai_log).props('outline')
+                        ui.button(tr("settings.ai.refresh_log"), icon='refresh', on_click=refresh_ai_log).props('outline')
                         refresh_ai_log()
 
                     # ──────────── Разрешённые сети (IP-whitelist) — роли fullmaster / netadmin ────────────
@@ -1486,8 +1487,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         ui.separator()
                         ui.label(tr("settings.section.networks")).style(
                             "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
-                        ui.markdown("Вход разрешён только с адресов из разрешающих (allow) сетей. ⚠️ Не удаляйте сеть, "
-                                    "из которой работаете сами, — иначе будете разлогинены при следующей проверке.").classes('text-xs text-orange-400')
+                        ui.markdown(tr("settings.net.hint")).classes('text-xs text-orange-400')
 
                         net_grid = ui.aggrid({}).classes('w-full').style('height: 30vh')
                         net_selected = {"cidr": None, "comment": None}
@@ -1502,13 +1502,13 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                 for network in net_result[3]:
                                     rows.append({
                                         "cidr": network.get("cidr", ""),
-                                        "allow": ("да" if _allow_truthy(network.get("allow")) else "нет"),
+                                        "allow": (tr("settings.common.yes") if _allow_truthy(network.get("allow")) else tr("settings.common.no")),
                                         "comment": network.get("comment", ""),
                                     })
                             net_grid.options["columnDefs"] = [
-                                {"headerName": "CIDR", "field": "cidr", "filter": True, "sortable": True, "resizable": True, "minWidth": 180, "tooltipField": "cidr"},
-                                {"headerName": "Разрешает", "field": "allow", "filter": True, "sortable": True, "resizable": True, "minWidth": 120},
-                                {"headerName": "Комментарий", "field": "comment", "filter": True, "sortable": True, "resizable": True, "minWidth": 220, "tooltipField": "comment"},
+                                {"headerName": tr("settings.net.col.cidr"), "field": "cidr", "filter": True, "sortable": True, "resizable": True, "minWidth": 180, "tooltipField": "cidr"},
+                                {"headerName": tr("settings.net.col.allow"), "field": "allow", "filter": True, "sortable": True, "resizable": True, "minWidth": 120},
+                                {"headerName": tr("settings.col.comment"), "field": "comment", "filter": True, "sortable": True, "resizable": True, "minWidth": 220, "tooltipField": "comment"},
                             ]
                             net_grid.options["rowData"] = rows
                             net_grid.options["rowSelection"] = "single"
@@ -1526,9 +1526,9 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         net_grid.on("selectionChanged", on_net_selected)
 
                         with ui.row().classes('items-end gap-2 w-full flex-wrap'):
-                            new_net_cidr = ui.input(label="CIDR (напр. 10.0.0.0/8)").classes('w-64')
-                            new_net_comment = ui.input(label="Комментарий").classes('grow')
-                            new_net_allow = ui.checkbox("Разрешает", value=True)
+                            new_net_cidr = ui.input(label=tr("settings.net.cidr_label")).classes('w-64')
+                            new_net_comment = ui.input(label=tr("settings.common.comment")).classes('grow')
+                            new_net_allow = ui.checkbox(tr("settings.net.allow"), value=True)
 
                         def add_network():
                             cidr = (new_net_cidr.value or "").strip()
@@ -1537,37 +1537,37 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             try:
                                 ipaddress.ip_network(cidr, strict=False)
                             except BaseException:
-                                ui.notify("Некорректный CIDR (пример: 192.168.0.0/24 или 10.1.2.3/32)", type="negative")
+                                ui.notify(tr("settings.net.bad_cidr"), type="negative")
                                 return
                             if not validate_comment(comment, current_state)[0]:
-                                ui.notify("Недопустимый комментарий", type="negative")
+                                ui.notify(tr("settings.net.bad_comment"), type="negative")
                                 return
                             result = create_access_network(cidr, new_net_allow.value, comment, current_state)
                             if not result[0]:
-                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                 return
                             new_net_cidr.value = ""
                             new_net_comment.value = ""
-                            ui.notify(f"Сеть добавлена: {cidr}", type="positive")
+                            ui.notify(tr("settings.net.added", cidr=cidr), type="positive")
                             refresh_net_grid()
 
                         def delete_network():
                             if not net_selected["cidr"]:
-                                ui.notify("Выберите сеть в таблице", type="warning")
+                                ui.notify(tr("settings.net.pick"), type="warning")
                                 return
                             result = delete_access_network(net_selected["cidr"], net_selected["comment"] or "", current_state)
                             if not result[0]:
-                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                 return
-                            ui.notify(f"Сеть удалена: {net_selected['cidr']}", type="positive")
+                            ui.notify(tr("settings.net.deleted", cidr=net_selected['cidr']), type="positive")
                             net_selected["cidr"] = None
                             net_selected["comment"] = None
                             refresh_net_grid()
 
                         with ui.row().classes('gap-2 flex-wrap'):
-                            ui.button("Добавить сеть", icon='add', on_click=add_network).classes('hover-glow')
-                            ui.button("Удалить выбранную", icon='delete', on_click=delete_network).props('outline')
-                            ui.button("Обновить список", icon='refresh', on_click=refresh_net_grid).props('flat')
+                            ui.button(tr("settings.net.add"), icon='add', on_click=add_network).classes('hover-glow')
+                            ui.button(tr("settings.net.delete"), icon='delete', on_click=delete_network).props('outline')
+                            ui.button(tr("settings.btn.refresh"), icon='refresh', on_click=refresh_net_grid).props('flat')
 
                         refresh_net_grid()
 
@@ -1576,8 +1576,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         ui.separator()
                         ui.label(tr("settings.section.apikeys")).style(
                             "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
-                        ui.markdown("Ключи для `POST /api/script`. Запросы выполняются в контексте указанного владельца "
-                                    "(его роли). Токен показывается один раз при создании — сохраните его.").classes('text-xs opacity-60')
+                        ui.markdown(tr("settings.api.hint")).classes('text-xs opacity-60')
 
                         keys_grid = ui.aggrid({}).classes('w-full').style('height: 28vh')
                         key_selected = {"key_hash": None, "enabled": None}
@@ -1597,22 +1596,22 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                     rows.append({
                                         "owner": key.get("owner", ""),
                                         "comment": key.get("comment", ""),
-                                        "status": ("истёк" if expired else ("активен" if enabled else "выключен")),
+                                        "status": (tr("settings.api.expired") if expired else (tr("settings.api.active") if enabled else tr("settings.api.disabled"))),
                                         "created_at": key.get("created_at", "") or "",
                                         "created_by": key.get("created_by", "") or "",
-                                        "expires_at": expires_at or "бессрочно",
+                                        "expires_at": expires_at or tr("settings.api.never"),
                                         "hash_prefix": (key.get("key_hash", "") or "")[:12] + "…",
                                         "key_hash": key.get("key_hash", ""),
                                         "_enabled": enabled,
                                     })
                             keys_grid.options["columnDefs"] = [
-                                {"headerName": "Владелец", "field": "owner", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
-                                {"headerName": "Комментарий", "field": "comment", "filter": True, "sortable": True, "resizable": True, "minWidth": 180, "tooltipField": "comment"},
-                                {"headerName": "Статус", "field": "status", "filter": True, "sortable": True, "resizable": True, "minWidth": 100},
-                                {"headerName": "Создан", "field": "created_at", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
-                                {"headerName": "Кем создан", "field": "created_by", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
-                                {"headerName": "Истекает", "field": "expires_at", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
-                                {"headerName": "Хэш (префикс)", "field": "hash_prefix", "filter": True, "sortable": True, "resizable": True, "minWidth": 140},
+                                {"headerName": tr("settings.api.col.owner"), "field": "owner", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
+                                {"headerName": tr("settings.col.comment"), "field": "comment", "filter": True, "sortable": True, "resizable": True, "minWidth": 180, "tooltipField": "comment"},
+                                {"headerName": tr("settings.api.col.status"), "field": "status", "filter": True, "sortable": True, "resizable": True, "minWidth": 100},
+                                {"headerName": tr("settings.api.col.created"), "field": "created_at", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
+                                {"headerName": tr("settings.api.col.createdby"), "field": "created_by", "filter": True, "sortable": True, "resizable": True, "minWidth": 130},
+                                {"headerName": tr("settings.api.col.expires"), "field": "expires_at", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
+                                {"headerName": tr("settings.api.col.hash"), "field": "hash_prefix", "filter": True, "sortable": True, "resizable": True, "minWidth": 140},
                             ]
                             keys_grid.options["rowData"] = rows
                             keys_grid.options["rowSelection"] = "single"
@@ -1630,24 +1629,24 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         keys_grid.on("selectionChanged", on_key_selected)
 
                         with ui.row().classes('items-end gap-2 w-full flex-wrap'):
-                            new_key_owner = ui.input(label="Владелец (username)").classes('w-56')
-                            new_key_comment = ui.input(label="Комментарий").classes('grow')
-                            new_key_ttl = ui.number(label="Срок жизни (дней, пусто = бессрочно)", min=0, step=1).classes('w-64')
+                            new_key_owner = ui.input(label=tr("settings.api.owner_label")).classes('w-56')
+                            new_key_comment = ui.input(label=tr("settings.common.comment")).classes('grow')
+                            new_key_ttl = ui.number(label=tr("settings.api.ttl"), min=0, step=1).classes('w-64')
 
                         def create_api_key_action():
                             owner = (new_key_owner.value or "").strip()
                             if not owner:
-                                ui.notify("Укажите владельца (username)", type="negative")
+                                ui.notify(tr("settings.api.need_owner"), type="negative")
                                 return
                             owner_user = get_user_by_username(owner, current_state)
                             if not owner_user[0]:
-                                ui.notify(f"Пользователь '{owner}' не найден", type="negative")
+                                ui.notify(tr("settings.api.owner_notfound", owner=owner), type="negative")
                                 return
                             comment = (new_key_comment.value or "").strip()
                             ttl_days = new_key_ttl.value or 0
                             result = create_api_key(owner, comment, username, ttl_days, current_state)
                             if not result[0]:
-                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                 return
                             token = result[3]
                             new_key_owner.value = ""
@@ -1655,41 +1654,41 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             new_key_ttl.value = None
                             refresh_keys_grid()
                             with ui.dialog() as token_dialog, ui.card().classes('w-[36rem] max-w-full'):
-                                ui.label("API-ключ создан — сохраните его сейчас").style('font-weight:700; color: var(--title-color);')
-                                ui.markdown("Токен показывается **один раз**. В БД хранится только его хэш.").classes('text-xs opacity-60')
+                                ui.label(tr("settings.api.created_title")).style('font-weight:700; color: var(--title-color);')
+                                ui.markdown(tr("settings.api.created_hint")).classes('text-xs opacity-60')
                                 ui.input(label="API key", value=token).props('readonly').classes('w-full')
-                                ui.button("Закрыть", on_click=token_dialog.close).classes('hover-glow')
+                                ui.button(tr("settings.btn.close"), on_click=token_dialog.close).classes('hover-glow')
                             token_dialog.open()
 
                         def toggle_key_enabled():
                             if not key_selected["key_hash"]:
-                                ui.notify("Выберите ключ в таблице", type="warning")
+                                ui.notify(tr("settings.api.pick"), type="warning")
                                 return
                             result = set_api_key_enabled(key_selected["key_hash"], not key_selected["enabled"], current_state)
                             if not result[0]:
-                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                 return
-                            ui.notify(("Ключ включён" if not key_selected["enabled"] else "Ключ выключен"), type="positive")
+                            ui.notify((tr("settings.api.enabled_msg") if not key_selected["enabled"] else tr("settings.api.disabled_msg")), type="positive")
                             key_selected["enabled"] = not key_selected["enabled"]
                             refresh_keys_grid()
 
                         def delete_api_key_action():
                             if not key_selected["key_hash"]:
-                                ui.notify("Выберите ключ в таблице", type="warning")
+                                ui.notify(tr("settings.api.pick"), type="warning")
                                 return
                             result = delete_api_key(key_selected["key_hash"], current_state)
                             if not result[0]:
-                                ui.notify(f"Ошибка: {result[1]}", type="negative")
+                                ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                 return
                             key_selected["key_hash"] = None
-                            ui.notify("API-ключ удалён", type="positive")
+                            ui.notify(tr("settings.api.deleted"), type="positive")
                             refresh_keys_grid()
 
                         with ui.row().classes('gap-2 flex-wrap'):
-                            ui.button("Создать ключ", icon='vpn_key', on_click=create_api_key_action).classes('hover-glow')
-                            ui.button("Вкл/выкл выбранный", icon='power_settings_new', on_click=toggle_key_enabled).props('outline')
-                            ui.button("Удалить выбранный", icon='delete', on_click=delete_api_key_action).props('outline')
-                            ui.button("Обновить список", icon='refresh', on_click=refresh_keys_grid).props('flat')
+                            ui.button(tr("settings.api.create"), icon='vpn_key', on_click=create_api_key_action).classes('hover-glow')
+                            ui.button(tr("settings.api.toggle"), icon='power_settings_new', on_click=toggle_key_enabled).props('outline')
+                            ui.button(tr("settings.api.delete_key"), icon='delete', on_click=delete_api_key_action).props('outline')
+                            ui.button(tr("settings.btn.refresh"), icon='refresh', on_click=refresh_keys_grid).props('flat')
 
                         refresh_keys_grid()
 
