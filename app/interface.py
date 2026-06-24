@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -309,6 +309,50 @@ def update_theme(theme: str):
         style.textContent = `{css}`;
     """)
 
+
+# Варианты шрифтов для раздела Settings (значение = CSS font-family).
+FONT_OPTIONS = [
+    "'Orbitron', 'Roboto', sans-serif",
+    "'Roboto', sans-serif",
+    "system-ui, -apple-system, 'Segoe UI', sans-serif",
+    "Georgia, 'Times New Roman', serif",
+    "'Courier New', ui-monospace, monospace",
+]
+
+# Значения по умолчанию для «Внешнего вида» (persist в settings, scope user:<username>).
+APPEARANCE_DEFAULTS = {
+    "theme": "dark",
+    "font": FONT_OPTIONS[0],
+    "font_size": 14,
+    "table_font": FONT_OPTIONS[1],
+    "table_font_size": 13,
+}
+
+
+def apply_appearance(appearance):
+    """Применить внешний вид на клиенте: тема (через update_theme) + шрифты/размеры через CSS-переменные.
+    Действует «живо» на весь UI и текстовые блоки; таблицы (AG Grid) — через override-правило в CSS."""
+    appearance = {**APPEARANCE_DEFAULTS, **(appearance or {})}
+    update_theme(appearance["theme"])
+    try:
+        font_size = int(appearance.get("font_size") or APPEARANCE_DEFAULTS["font_size"])
+    except BaseException:
+        font_size = APPEARANCE_DEFAULTS["font_size"]
+    try:
+        table_font_size = int(appearance.get("table_font_size") or APPEARANCE_DEFAULTS["table_font_size"])
+    except BaseException:
+        table_font_size = APPEARANCE_DEFAULTS["table_font_size"]
+    font = appearance.get("font") or APPEARANCE_DEFAULTS["font"]
+    table_font = appearance.get("table_font") or APPEARANCE_DEFAULTS["table_font"]
+    ui.run_javascript(
+        "const r = document.documentElement.style;"
+        f"r.setProperty('--app-font', `{font}`);"
+        f"r.setProperty('--app-font-size', '{font_size}px');"
+        f"r.setProperty('--app-table-font', `{table_font}`);"
+        f"r.setProperty('--app-table-font-size', '{table_font_size}px');"
+    )
+
+
 async def login_page(current_state: Dict[str, Any]):
     ui.add_css("""
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@400;700&display=swap');
@@ -326,8 +370,14 @@ async def login_page(current_state: Dict[str, Any]):
             padding: 0;
             background: var(--bg-color);
             overflow: hidden;
-            font-family: 'Orbitron', 'Roboto', sans-serif;
+            font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);
+            font-size: var(--app-font-size, 14px);
             letter-spacing: 1px;
+        }
+        /* Шрифт/размер таблиц (AG Grid) — override темы через CSS-переменные */
+        .ag-root-wrapper, .ag-theme-balham, .ag-theme-balham-dark, .ag-theme-alpine, .ag-theme-alpine-dark {
+            --ag-font-family: var(--app-table-font, var(--app-font, inherit)) !important;
+            --ag-font-size: var(--app-table-font-size, 13px) !important;
         }
         .main-container {
             width: 100vw;
@@ -465,8 +515,14 @@ def main_page(keycloak_openid, current_state):
             padding: 0;
             background: var(--bg-color);
             overflow: hidden;
-            font-family: 'Orbitron', 'Roboto', sans-serif;
+            font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);
+            font-size: var(--app-font-size, 14px);
             letter-spacing: 1px;
+        }
+        /* Шрифт/размер таблиц (AG Grid) — override темы через CSS-переменные */
+        .ag-root-wrapper, .ag-theme-balham, .ag-theme-balham-dark, .ag-theme-alpine, .ag-theme-alpine-dark {
+            --ag-font-family: var(--app-table-font, var(--app-font, inherit)) !important;
+            --ag-font-size: var(--app-table-font-size, 13px) !important;
         }
         .main-container {
             width: 100vw;
@@ -530,14 +586,12 @@ def main_page(keycloak_openid, current_state):
     """)
 
     theme = app.storage.user.get('theme', 'dark')
-    update_theme(theme)
-
-    async def toggle_theme():
-        nonlocal theme
-        theme = 'light' if theme == 'dark' else 'dark'
-        app.storage.user.update({'theme': theme})
-        update_theme(theme)
-        ui.notify(f'Switched to {theme} theme', type='info')
+    # Внешний вид (тема/шрифты/размеры) — персональные настройки из settings, scope user:<username>.
+    # Переключатель темы теперь в разделе Settings; здесь только загрузка и применение сохранённого.
+    appearance_scope = settings_user_scope(current_state.get("username", "unknown"))
+    saved_appearance = get_setting(appearance_scope, "appearance", {}, current_state)[3] or {}
+    appearance_state = {**APPEARANCE_DEFAULTS, "theme": theme, **saved_appearance}
+    apply_appearance(appearance_state)
 
     def logout() -> None:
         app.storage.user.clear()
@@ -571,7 +625,6 @@ def main_page(keycloak_openid, current_state):
                     menu_item.on('click', logout)
                 else:
                     menu_item.on('click', lambda t=target: show_panel(t))
-            ui.switch('Light Theme', value=theme == 'light', on_change=toggle_theme).classes('hover-glow')
 
             # индикаторы выполнения: отдельно Harvester и AI — работают НЕЗАВИСИМО,
             # запуск скрипта не гасит индикатор работающего AI и наоборот
@@ -614,14 +667,101 @@ def main_page(keycloak_openid, current_state):
             else:
                 panel.classes(add='uh-panel-offscreen')
 
-    with panel_settings:
-        ui.label("Settings — не реализовано")
+    draw_settings(panel_settings, current_state)
     draw_secrets(panel_secrets, current_state)
     draw_objects(panel_objects, current_state)
     draw_ai(panel_ai, current_state)
     draw_harvester(panel_harvester, current_state)
     draw_history(panel_history, current_state)
     show_panel("Harvester")
+
+def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
+    """Раздел Settings. Этап 1 — «Внешний вид»: тема, шрифты и размеры интерфейса/таблиц.
+    Персональные настройки хранятся в settings (scope user:<username>) и применяются живо через CSS-переменные."""
+    try:
+        interface_container.clear()
+        username = current_state.get("username", "unknown")
+        scope = settings_user_scope(username)
+        saved = get_setting(scope, "appearance", {}, current_state)[3] or {}
+        appearance = {**APPEARANCE_DEFAULTS, "theme": app.storage.user.get('theme', 'dark'), **saved}
+
+        with interface_container:
+            with ui.scroll_area().classes('w-full h-full'):
+                with ui.column().classes('w-full gap-4 p-2'):
+                    ui.label("Внешний вид").style(
+                        "font-family: 'Orbitron', 'Roboto', sans-serif; font-size: 1.25rem; color: var(--title-color);")
+                    ui.markdown("Персональные настройки оформления. Применяются сразу и сохраняются за вашей учётной записью.")
+
+                    theme_select = ui.select(
+                        {"dark": "Тёмная", "light": "Светлая"}, value=appearance["theme"], label="Тема"
+                    ).classes('w-64')
+
+                    ui.separator()
+                    ui.label("Интерфейс").style("color: var(--accent-color);")
+                    with ui.row().classes('items-end gap-4 w-full'):
+                        font_select = ui.select(
+                            FONT_OPTIONS, value=appearance["font"], label="Шрифт интерфейса", with_input=True
+                        ).classes('grow')
+                        font_size_input = ui.number(
+                            label="Размер, px", value=appearance["font_size"], min=8, max=32, step=1
+                        ).classes('w-32')
+
+                    ui.separator()
+                    ui.label("Таблицы и текстовые блоки").style("color: var(--accent-color);")
+                    with ui.row().classes('items-end gap-4 w-full'):
+                        table_font_select = ui.select(
+                            FONT_OPTIONS, value=appearance["table_font"], label="Шрифт таблиц", with_input=True
+                        ).classes('grow')
+                        table_font_size_input = ui.number(
+                            label="Размер, px", value=appearance["table_font_size"], min=8, max=24, step=1
+                        ).classes('w-32')
+
+                    def collect():
+                        return {
+                            "theme": theme_select.value or "dark",
+                            "font": (font_select.value or APPEARANCE_DEFAULTS["font"]).strip(),
+                            "font_size": int(font_size_input.value or APPEARANCE_DEFAULTS["font_size"]),
+                            "table_font": (table_font_select.value or APPEARANCE_DEFAULTS["table_font"]).strip(),
+                            "table_font_size": int(table_font_size_input.value or APPEARANCE_DEFAULTS["table_font_size"]),
+                        }
+
+                    def preview():
+                        # применить без сохранения (для подбора)
+                        apply_appearance(collect())
+
+                    def save():
+                        new_appearance = collect()
+                        set_setting_result = set_setting(scope, "appearance", new_appearance, current_state)
+                        if not set_setting_result[0]:
+                            ui.notify(f"Не удалось сохранить: {set_setting_result[1]}", type="negative")
+                            return
+                        app.storage.user.update({'theme': new_appearance["theme"]})  # синхронизация с login-страницей
+                        apply_appearance(new_appearance)
+                        ui.notify("Внешний вид сохранён", type="positive")
+
+                    def reset_defaults():
+                        nonlocal appearance
+                        theme_select.value = APPEARANCE_DEFAULTS["theme"]
+                        font_select.value = APPEARANCE_DEFAULTS["font"]
+                        font_size_input.value = APPEARANCE_DEFAULTS["font_size"]
+                        table_font_select.value = APPEARANCE_DEFAULTS["table_font"]
+                        table_font_size_input.value = APPEARANCE_DEFAULTS["table_font_size"]
+                        preview()
+
+                    # живой предпросмотр при изменении любого контрола
+                    for control in (theme_select, font_select, font_size_input, table_font_select, table_font_size_input):
+                        control.on('update:model-value', lambda: preview())
+
+                    with ui.row().classes('gap-2 mt-2'):
+                        ui.button("Сохранить", icon='save', on_click=save).classes('hover-glow')
+                        ui.button("Сбросить", icon='restart_alt', on_click=reset_defaults).props('outline')
+
+                    ui.markdown("_Тема CodeMirror (редактор кода) будет добавлена в следующей итерации._").classes('text-xs opacity-60')
+
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        return False, str(e), currentFuncName(), None
 
 def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
     try:
