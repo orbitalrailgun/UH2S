@@ -2,6 +2,16 @@ import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 import app.sources.additional.elastic2python as elastic2python
 
+
+def _make_retry_logger(current_state, func_name):
+    """Callback для retry_call: пишет факт каждого повтора запроса в лог (WARNING)."""
+    def on_retry(attempt, err, delay):
+        status = getattr(err, "status", None)
+        detail = f"status {status}" if status else f"{type(err).__name__}: {err}"
+        logger_log(syslog.LOG_WARNING, get_log_message(
+            f"elastic request retry attempt {attempt} after {delay:.2f}s ({detail})", func_name, current_state))
+    return on_retry
+
 # execution_function
 def execute_elastic_query(parameters, source_object, data_map, current_state):
     try:  
@@ -32,7 +42,8 @@ def execute_elastic_query(parameters, source_object, data_map, current_state):
             debug = False,
             max_retries=source.get("max_retries", 2),
             retry_backoff=source.get("retry_backoff_seconds", 0.5),
-            retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])))
+            retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
+            on_retry=_make_retry_logger(current_state, currentFuncName()))
         if data_taxi_requests_result[0] == False:
             error_message = f"data_taxi_requests_result is false: {data_taxi_requests_result[1]}"
             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
@@ -64,7 +75,8 @@ def execute_elastic_aggs(parameters, source_object, data_map, current_state):
             size = 0,
             max_retries=source.get("max_retries", 2),
             retry_backoff=source.get("retry_backoff_seconds", 0.5),
-            retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])))
+            retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
+            on_retry=_make_retry_logger(current_state, currentFuncName()))
 
         if data_taxi_aggs_requests_result[0] == False:
             error_message = f"data_taxi_aggs_requests_result is false: {data_taxi_aggs_requests_result[1]}"

@@ -311,7 +311,7 @@ def data_taxi_aggs(elastic_client, index, query, aggs, debug = False, size = 0):
         return False, f"elastic2python aggs fail:{str(e)}", "data_taxi_aggs", []
 
 def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, sort, fields, size, search_after_shift, limit, debug = False,
-                       max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504)):
+                       max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None):
     import requests
     import pandas
     from app.sources.additional.retry import retry_call, RetryableError
@@ -342,7 +342,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
     try:
         first_body = {"query": query, "size": size, "sort": sort, "fields": fields, "_source": False}
         response = retry_call(lambda: post(first_body), attempts=max_retries + 1,
-                              backoff=retry_backoff, retryable_exceptions=retryable)
+                              backoff=retry_backoff, retryable_exceptions=retryable, on_retry=on_retry)
         if response.status_code not in [200, 201]:
             error_message = f"fail response code {response.status_code}: {response.text}"
             return False, error_message, "data_taxi_requests", None
@@ -366,7 +366,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
                     page_body = {"query": query, "size": size, "sort": sort, "fields": fields,
                                  "search_after": search_after, "_source": False}
                     response = retry_call(lambda: post(page_body), attempts=max_retries + 1,
-                                          backoff=retry_backoff, retryable_exceptions=retryable)
+                                          backoff=retry_backoff, retryable_exceptions=retryable, on_retry=on_retry)
                     if response.status_code not in [200, 201]:
                         error_message = f"fail response code {response.status_code}: {response.text}"
                         return False, error_message, "data_taxi_requests", None
@@ -393,7 +393,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
         return False, f"elastic2python query requests fail:{str(e)}", "data_taxi_requests", []
 
 def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, query, aggs, debug = False, size = 0,
-                            max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504)):
+                            max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None):
     import requests
     from app.sources.additional.retry import retry_call, RetryableError
     if debug:
@@ -414,7 +414,7 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
         return resp
 
     try:
-        response = retry_call(post, attempts=max_retries + 1, backoff=retry_backoff, retryable_exceptions=retryable)
+        response = retry_call(post, attempts=max_retries + 1, backoff=retry_backoff, retryable_exceptions=retryable, on_retry=on_retry)
         if debug:
             print("lib", response)
         if response.status_code not in [200, 201]:
