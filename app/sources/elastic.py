@@ -14,20 +14,20 @@ def execute_elasctic_query_via_client(parameters, source_object, data_map, curre
             client = Elasticsearch(
                 [f"{source['host']}:{source['port']}"],
                 api_key=source["key"]["value"], 
-                verify_certs=source["verify_certs"], 
-                request_timeout=source["request_timeout"], 
-                max_retries=source["max_retries"], 
-                retry_on_timeout=source["retry_on_timeout"],
+                verify_certs=source.get("verify_certs", False), 
+                request_timeout=source.get("request_timeout", 300), 
+                max_retries=source.get("max_retries", 2), 
+                retry_on_timeout=source.get("retry_on_timeout", True),
                 ssl_show_warn = source["ssl_show_warn"]
             )
         elif source["auth_type"] == "http_auth":
             client = Elasticsearch(
                 [f"{source['host']}:{source['port']}"],
                 http_auth=(source["key"]["account"], source["key"]["value"]),
-                verify_certs=source["verify_certs"], 
-                request_timeout=source["request_timeout"], 
-                max_retries=source["max_retries"], 
-                retry_on_timeout=source["retry_on_timeout"],
+                verify_certs=source.get("verify_certs", False), 
+                request_timeout=source.get("request_timeout", 300), 
+                max_retries=source.get("max_retries", 2), 
+                retry_on_timeout=source.get("retry_on_timeout", True),
                 ssl_show_warn = source["ssl_show_warn"]
             )
         else:
@@ -82,20 +82,20 @@ def execute_elasctic_aggs_via_client(parameters, source_object, data_map, curren
             client = Elasticsearch(
                 [f"{source['host']}:{source['port']}"],
                 api_key=source["key"]["value"], 
-                verify_certs=source["verify_certs"], 
-                request_timeout=source["request_timeout"], 
-                max_retries=source["max_retries"], 
-                retry_on_timeout=source["retry_on_timeout"],
+                verify_certs=source.get("verify_certs", False), 
+                request_timeout=source.get("request_timeout", 300), 
+                max_retries=source.get("max_retries", 2), 
+                retry_on_timeout=source.get("retry_on_timeout", True),
                 ssl_show_warn = source["ssl_show_warn"]
             )
         elif source["auth_type"] == "http_auth":
             client = Elasticsearch(
                 [f"{source['host']}:{source['port']}"],
                 http_auth=(source["key"]["account"], source["key"]["value"]),
-                verify_certs=source["verify_certs"], 
-                request_timeout=source["request_timeout"], 
-                max_retries=source["max_retries"], 
-                retry_on_timeout=source["retry_on_timeout"],
+                verify_certs=source.get("verify_certs", False), 
+                request_timeout=source.get("request_timeout", 300), 
+                max_retries=source.get("max_retries", 2), 
+                retry_on_timeout=source.get("retry_on_timeout", True),
                 ssl_show_warn = source["ssl_show_warn"]
             )
         else:
@@ -148,20 +148,20 @@ def execute_function_linux_pid_hierarchy_elastic(parameters, source_object, data
             client = Elasticsearch(
                 [f"{source['host']}:{source['port']}"],
                 api_key=source["key"]["value"], 
-                verify_certs=source["verify_certs"], 
-                request_timeout=source["request_timeout"], 
-                max_retries=source["max_retries"], 
-                retry_on_timeout=source["retry_on_timeout"],
+                verify_certs=source.get("verify_certs", False), 
+                request_timeout=source.get("request_timeout", 300), 
+                max_retries=source.get("max_retries", 2), 
+                retry_on_timeout=source.get("retry_on_timeout", True),
                 ssl_show_warn = source["ssl_show_warn"]
             )
         elif source["auth_type"] == "http_auth":
             client = Elasticsearch(
                 [f"{source['host']}:{source['port']}"],
                 http_auth=(source["key"]["account"], source["key"]["value"]),
-                verify_certs=source["verify_certs"], 
-                request_timeout=source["request_timeout"], 
-                max_retries=source["max_retries"], 
-                retry_on_timeout=source["retry_on_timeout"],
+                verify_certs=source.get("verify_certs", False), 
+                request_timeout=source.get("request_timeout", 300), 
+                max_retries=source.get("max_retries", 2), 
+                retry_on_timeout=source.get("retry_on_timeout", True),
                 ssl_show_warn = source["ssl_show_warn"]
             )
         else:
@@ -329,20 +329,20 @@ def execute_function_linux_pid_siblings_elastic(parameters, source_object, data_
             client = Elasticsearch(
                 [f"{source['host']}:{source['port']}"],
                 api_key=source["key"]["value"], 
-                verify_certs=source["verify_certs"], 
-                request_timeout=source["request_timeout"], 
-                max_retries=source["max_retries"], 
-                retry_on_timeout=source["retry_on_timeout"],
+                verify_certs=source.get("verify_certs", False), 
+                request_timeout=source.get("request_timeout", 300), 
+                max_retries=source.get("max_retries", 2), 
+                retry_on_timeout=source.get("retry_on_timeout", True),
                 ssl_show_warn = source["ssl_show_warn"]
             )
         elif source["auth_type"] == "http_auth":
             client = Elasticsearch(
                 [f"{source['host']}:{source['port']}"],
                 http_auth=(source["key"]["account"], source["key"]["value"]),
-                verify_certs=source["verify_certs"], 
-                request_timeout=source["request_timeout"], 
-                max_retries=source["max_retries"], 
-                retry_on_timeout=source["retry_on_timeout"],
+                verify_certs=source.get("verify_certs", False), 
+                request_timeout=source.get("request_timeout", 300), 
+                max_retries=source.get("max_retries", 2), 
+                retry_on_timeout=source.get("retry_on_timeout", True),
                 ssl_show_warn = source["ssl_show_warn"]
             )
         else:

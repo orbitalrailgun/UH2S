@@ -546,6 +546,39 @@ class TestSourcesCatalog(unittest.TestCase):
         self.assertIn("error", describe_source_functions_struct("does_not_exist"))
 
 
+class TestRetry(unittest.TestCase):
+    def test_retry_on_exception(self):
+        from app.sources.additional.retry import retry_call, RetryableError
+        calls = {"n": 0}
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise RetryableError("boom", status=503)
+            return "ok"
+        self.assertEqual(retry_call(flaky, attempts=5, backoff=0, jitter=0, sleep=lambda s: None), "ok")
+        self.assertEqual(calls["n"], 3)
+
+    def test_retry_on_result_predicate(self):
+        from app.sources.additional.retry import retry_call
+        calls = {"n": 0}
+        def grow():
+            calls["n"] += 1
+            return calls["n"]
+        result = retry_call(grow, attempts=5, backoff=0, jitter=0, sleep=lambda s: None,
+                            should_retry_result=lambda x: x < 3)
+        self.assertEqual(result, 3)
+
+    def test_non_retryable_raised_immediately(self):
+        from app.sources.additional.retry import retry_call
+        calls = {"n": 0}
+        def boom():
+            calls["n"] += 1
+            raise ValueError("nope")
+        with self.assertRaises(ValueError):
+            retry_call(boom, attempts=4, backoff=0, jitter=0, sleep=lambda s: None)
+        self.assertEqual(calls["n"], 1)  # не повторяли
+
+
 class TestBackslashContinuation(unittest.TestCase):
     def _state(self):
         return {"app_name": "test", "app_version": "0", "username": "tester"}

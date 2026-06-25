@@ -119,7 +119,7 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
         "unrequired":{
             "verify_certs":False,
             "request_timeout":300,
-            "max_retries":2,
+            "max_retries":2,            # нативные ретраи клиента elasticsearch
             "retry_on_timeout":True,
             "ssl_show_warn":False
         }
@@ -191,7 +191,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
         },
         "unrequired":{
             "verify_certs":False,
-            "request_timeout":300
+            "request_timeout":300,
+            "max_retries":2,                       # повторов при сетевой ошибке/таймауте/коде из retry_on_status
+            "retry_backoff_seconds":0.5,           # базовая задержка (экспоненциальная, с джиттером)
+            "retry_on_status":[429,502,503,504]    # HTTP-коды для повтора (4xx не повторяются)
         }
     },
     "opensearch":{
@@ -234,8 +237,9 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "verify_certs":False,
             "ssl_assert_hostname":False,
             "ssl_show_warn":False,
-            "timeout":300, 
-            "max_retries":2 
+            "timeout":300,
+            "max_retries":2,
+            "retry_on_timeout":True
         }
     },
     "netbox":{

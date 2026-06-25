@@ -310,9 +310,11 @@ def data_taxi_aggs(elastic_client, index, query, aggs, debug = False, size = 0):
     except BaseException as e:
         return False, f"elastic2python aggs fail:{str(e)}", "data_taxi_aggs", []
 
-def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, sort, fields, size, search_after_shift, limit, debug = False):
+def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, sort, fields, size, search_after_shift, limit, debug = False,
+                       max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504)):
     import requests
     import pandas
+    from app.sources.additional.retry import retry_call, RetryableError
     output_data = []
     debug_flag = debug
     if debug_flag:
@@ -320,25 +322,27 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
 
     if limit == 0:
         return True, f"zero limit", "data_taxi_requests", []
+
+    headers = {
+        'user-agent': user_agent,
+        'content-type': 'application/json',
+        "kbn-xsrf": "reporting",
+        "Authorization": f"ApiKey {api_key}",
+    }
+    # повторяем на сетевых ошибках/таймауте и транзиентных кодах (429/5xx); на 4xx — без повтора
+    retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+
+    def post(body):
+        resp = requests.post(url, json=body, headers=headers, verify=verify_certs, timeout=timeout)
+        if resp.status_code in retry_statuses:
+            raise RetryableError(f"status {resp.status_code}", resp.status_code)
+        return resp
+
     # сначала делаем первый запрос, получаем первый кусок данных
     try:
-        response = requests.post(
-                url, # индекс туда должен вставляться на этапе инъектирования параметров
-                json={
-                    "query":query,
-                    "size":size,
-                    "sort":sort,
-                    "fields":fields,
-                    "_source":False
-                },
-                headers={
-                    'user-agent': user_agent, 
-                    'content-type': 'application/json',
-                    "kbn-xsrf": "reporting", 
-                    "Authorization": f"ApiKey {api_key}"
-                },
-                verify=verify_certs, timeout=timeout
-            )
+        first_body = {"query": query, "size": size, "sort": sort, "fields": fields, "_source": False}
+        response = retry_call(lambda: post(first_body), attempts=max_retries + 1,
+                              backoff=retry_backoff, retryable_exceptions=retryable)
         if response.status_code not in [200, 201]:
             error_message = f"fail response code {response.status_code}: {response.text}"
             return False, error_message, "data_taxi_requests", None
@@ -351,34 +355,18 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
     try:
         if len(output_data) >= limit and limit > 0:
             return True, f"OK with limit", "data_taxi_requests", output_data[:limit]
-        
+
         if len(output_data) == size:
-            #sort_fields = [list(x.keys())[0] for x in sort] # по каким полям сортировка? парсим конструкцию sort
             taxi_step = 1
             while(True):
                 if debug_flag:
                     print("Получаем данные итерационно, шаг", taxi_step)
-                #search_after = [output_data[search_after_shift][sort_fields[0]]]
                 search_after = current_sort[search_after_shift]["sort"]
                 try:
-                    response = requests.post(
-                        url, # индекс туда должен вставляться на этапе инъектирования параметров
-                        json={
-                            "query":query,
-                            "size":size,
-                            "sort":sort,
-                            "fields":fields,
-                            "search_after":search_after,
-                            "_source":False
-                        },
-                        headers={
-                            'user-agent': user_agent, 
-                            'content-type': 'application/json', 
-                            "kbn-xsrf": "reporting",
-                            "Authorization": f"ApiKey {api_key}"
-                        },
-                        verify=verify_certs, timeout=timeout
-                    )
+                    page_body = {"query": query, "size": size, "sort": sort, "fields": fields,
+                                 "search_after": search_after, "_source": False}
+                    response = retry_call(lambda: post(page_body), attempts=max_retries + 1,
+                                          backoff=retry_backoff, retryable_exceptions=retryable)
                     if response.status_code not in [200, 201]:
                         error_message = f"fail response code {response.status_code}: {response.text}"
                         return False, error_message, "data_taxi_requests", None
@@ -394,44 +382,45 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
 
                 if len(output_data) >= limit and limit > 0:
                     return True, f"OK with limit", "data_taxi_requests", output_data[:limit]
-                
+
                 if len(new_data) != size:
                     break
-                taxi_step = taxi_step + 1    
-        
+                taxi_step = taxi_step + 1
+
         result_data = pandas.DataFrame(output_data).drop_duplicates("_id").to_dict('records')
         return True, f"OK", "data_taxi_requests", result_data
     except BaseException as e:
         return False, f"elastic2python query requests fail:{str(e)}", "data_taxi_requests", []
 
-def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, query, aggs, debug = False, size = 0):
+def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, query, aggs, debug = False, size = 0,
+                            max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504)):
     import requests
+    from app.sources.additional.retry import retry_call, RetryableError
     if debug:
         print("Делаем запрос агрегации")
-    # сначала делаем первый запрос, получаем первый кусок данных
-    try:
-        response = requests.post(
-                url, # индекс туда должен вставляться на этапе инъектирования параметров
-                json={
-                    "query":query,
-                    "size":size,
-                    "aggs":aggs
-                },
-                headers={
-                    'user-agent': user_agent, 
-                    'content-type': 'application/json', 
-                    "kbn-xsrf": "reporting",
-                    "Authorization": f"ApiKey {api_key}"
-                },
-                verify=verify_certs, timeout=timeout
-            )
-        if debug:
-            print("lib",response)
+    headers = {
+        'user-agent': user_agent,
+        'content-type': 'application/json',
+        "kbn-xsrf": "reporting",
+        "Authorization": f"ApiKey {api_key}",
+    }
+    retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 
+    def post():
+        resp = requests.post(url, json={"query": query, "size": size, "aggs": aggs},
+                             headers=headers, verify=verify_certs, timeout=timeout)
+        if resp.status_code in retry_statuses:
+            raise RetryableError(f"status {resp.status_code}", resp.status_code)
+        return resp
+
+    try:
+        response = retry_call(post, attempts=max_retries + 1, backoff=retry_backoff, retryable_exceptions=retryable)
+        if debug:
+            print("lib", response)
         if response.status_code not in [200, 201]:
             error_message = f"fail response code {response.status_code}: {response.text}"
             return False, error_message, "data_taxi_aggs_requests", None
-        
+
         output_data = get_data_aggs(dict(response.json()), aggs)
         return True, "OK", "data_taxi_aggs_requests", output_data
     except BaseException as e:

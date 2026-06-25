@@ -13,14 +13,15 @@ def execute_opensearch_query(parameters, source_object, data_map, current_state)
         if source["auth_type"] == "http_auth":
             client = OpenSearch(
                 hosts = [{'host': source["host"], 'port': source["port"]}],
-                http_compress = source["http_compress"], # enables gzip compression for request bodies
+                http_compress = source.get("http_compress", True), # enables gzip compression for request bodies
                 http_auth = (source["key"]["account"], source["key"]["value"]),
-                use_ssl = source["use_ssl"],
-                verify_certs = source["verify_certs"],
-                ssl_assert_hostname = source["ssl_assert_hostname"],
-                ssl_show_warn = source["ssl_show_warn"],
-                timeout=source["timeout"], 
-                max_retries=source["max_retries"]
+                use_ssl = source.get("use_ssl", True),
+                verify_certs = source.get("verify_certs", False),
+                ssl_assert_hostname = source.get("ssl_assert_hostname", False),
+                ssl_show_warn = source.get("ssl_show_warn", False),
+                timeout=source.get("timeout", 300),
+                max_retries=source.get("max_retries", 2),
+                retry_on_timeout=source.get("retry_on_timeout", True)
             )
         else:
             error_message = f"unknown source auth_type {source["auth_type"]}"
@@ -71,14 +72,15 @@ def execute_opensearch_aggs(parameters, source_object, data_map, current_state):
         if source["auth_type"] == "http_auth":
             client = OpenSearch(
                 hosts = [{'host': source["host"], 'port': source["port"]}],
-                http_compress = source["http_compress"], # enables gzip compression for request bodies
+                http_compress = source.get("http_compress", True), # enables gzip compression for request bodies
                 http_auth = (source["key"]["account"], source["key"]["value"]),
-                use_ssl = source["use_ssl"],
-                verify_certs = source["verify_certs"],
-                ssl_assert_hostname = source["ssl_assert_hostname"],
-                ssl_show_warn = source["ssl_show_warn"],
-                timeout=source["timeout"], 
-                max_retries=source["max_retries"]
+                use_ssl = source.get("use_ssl", True),
+                verify_certs = source.get("verify_certs", False),
+                ssl_assert_hostname = source.get("ssl_assert_hostname", False),
+                ssl_show_warn = source.get("ssl_show_warn", False),
+                timeout=source.get("timeout", 300),
+                max_retries=source.get("max_retries", 2),
+                retry_on_timeout=source.get("retry_on_timeout", True)
             )
         else:
             error_message = f"unknown source auth_type {source["auth_type"]}"
