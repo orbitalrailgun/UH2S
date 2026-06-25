@@ -530,9 +530,20 @@ class TestSourcesCatalog(unittest.TestCase):
     def test_describe_source_functions(self):
         from app.engine import describe_source_functions
         text = describe_source_functions("jira_sm")
-        self.assertIn("search_issues | обязательные: ['jql']", text)
+        # формат: "<function> | обязательные: <name>:<type>=<example>, ..."
+        self.assertIn("search_issues | обязательные: jql:string=", text)
         self.assertIn("конфиг source-объекта", text)
         self.assertIn("не найден", describe_source_functions("does_not_exist"))
+
+    def test_describe_source_functions_struct(self):
+        from app.engine import describe_source_functions_struct
+        spec = describe_source_functions_struct("sqlite3_im")
+        self.assertEqual(spec["source_type"], "sqlite3_im")
+        query_fn = next(f for f in spec["functions"] if f["function"] == "query")
+        # параметр queries: тип list + пример из карты
+        self.assertEqual(query_fn["required"]["queries"]["type"], "list")
+        self.assertIsInstance(query_fn["required"]["queries"]["example"], list)
+        self.assertIn("error", describe_source_functions_struct("does_not_exist"))
 
 
 class TestLlmContext(unittest.TestCase):

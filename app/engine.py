@@ -946,19 +946,44 @@ def describe_source_functions(source_type):
     spec = ENGINE_SOURCES_AND_FUNCTIONS_MAP.get(source_type)
     if not spec:
         return f"источник '{source_type}' не найден. Доступные типы: {list_source_types()}"
+    def fmt(params_dict):
+        # name:type=example для каждого параметра (тип/пример берём из карты источников)
+        items = [f"{name}:{_infer_param_type(example)}={json.dumps(example, ensure_ascii=False)}"
+                 for name, example in (params_dict or {}).items()]
+        return ", ".join(items) if items else "—"
+
     lines = [f"источник {source_type}:"]
-    src_required = list((spec.get("required") or {}).keys())
-    src_optional = list((spec.get("unrequired") or {}).keys())
-    lines.append(f"  конфиг source-объекта — обязательно: {src_required or '—'}; опц.: {src_optional or '—'}")
+    lines.append(f"  конфиг source-объекта — обязательно: {fmt(spec.get('required'))}; опц.: {fmt(spec.get('unrequired'))}")
     functions = spec.get("functions", {}) or {}
     for function_name in functions:
         function_spec = functions[function_name] or {}
         if "query" not in (function_spec.get("functions") or {}):
             continue
-        required = list((function_spec.get("required") or {}).keys())
-        optional = list((function_spec.get("unrequired") or {}).keys())
-        lines.append(f"  - {function_name} | обязательные: {required or '—'} | опц.: {optional or '—'}")
+        lines.append(f"  - {function_name} | обязательные: {fmt(function_spec.get('required'))} | опц.: {fmt(function_spec.get('unrequired'))}")
     return "\n".join(lines)
+
+
+def _infer_param_type(value):
+    """Тип параметра по его примеру/дефолту из карты источников."""
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, list):
+        return "list"
+    if isinstance(value, dict):
+        return "dict"
+    return "string"
+
+
+def _params_with_examples(params_dict):
+    """{name: example} -> {name: {type, example}} (тип выводится из примера/дефолта)."""
+    out = {}
+    for name, example in (params_dict or {}).items():
+        out[name] = {"type": _infer_param_type(example), "example": example}
+    return out
 
 
 def list_source_types_struct():
@@ -983,13 +1008,14 @@ def describe_source_functions_struct(source_type):
             continue
         functions.append({
             "function": function_name,
-            "required": list((function_spec.get("required") or {}).keys()),
-            "optional": list((function_spec.get("unrequired") or {}).keys()),
+            # параметры с выведенным типом и примером/дефолтом из карты источников
+            "required": _params_with_examples(function_spec.get("required")),
+            "optional": _params_with_examples(function_spec.get("unrequired")),
         })
     return {
         "source_type": source_type,
-        "source_object_config_required": list((spec.get("required") or {}).keys()),
-        "source_object_config_optional": list((spec.get("unrequired") or {}).keys()),
+        "source_object_config_required": _params_with_examples(spec.get("required")),
+        "source_object_config_optional": _params_with_examples(spec.get("unrequired")),
         "functions": functions,
     }
 

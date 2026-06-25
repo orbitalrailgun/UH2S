@@ -47,7 +47,10 @@ Harvester distinguishes three things — keep them straight:
   `thehive`, `sqlite3`. This is what you actually call.
 - **source_type** — the *connector kind* behind it (`source_object.json["type"]`), e.g.
   `netbox`, `sqlite3_im`. It determines which functions exist.
-- **functions** — operations of a source_type (e.g. `query`, `search`, `get_alerts`).
+- **functions** — operations of a source_type (e.g. `query`, `search`, `get_alerts`). Each
+  function parameter is reported as `{type, example}` (inferred type + a concrete example),
+  so an agent can build calls without guessing — e.g. `sqlite3.query.queries` →
+  `{type: "list", example: ["SQL query 1", "SELECT * FROM anytable;"]}`.
 
 In a DSL script you fetch data by the source **object name**:
 `GET <source_object_name>:<function>(params...) AS table`.
@@ -63,7 +66,7 @@ proposing a new source object) — it is **not** the list of things you can quer
 |------|------|----------------|
 | `run_script` | `api_key`, `script` | `{ok, print:[{type:text\|table\|value,…}], tables:{name:rows}, variables:{…}, artifacts:[…]}` |
 | `list_sources` | `api_key` | `{supported_source_types:[…], note}` — connector TYPES (diagnostic), not queryable directly |
-| `get_source_functions` | `api_key`, `source_type` | `{source_type, source_object_config_required, source_object_config_optional, functions:[{function, required, optional}]}` |
+| `get_source_functions` | `api_key`, `source_type` | `{source_type, source_object_config_required, source_object_config_optional, functions:[{function, required, optional}]}` — each param is `{name: {type, example}}` (type and a concrete example taken from the connector spec) |
 | `list_objects` | `api_key`, `type_filter?` | `{objects:[{name, type, source_type?/params?/return?}], note}` |
 | `search_objects` | `api_key`, `query` | `{results:[{name, type, source_type?, match}]}` |
 | `get_object` | `api_key`, `name` | `{name, type, roles, json, source_type?/params?/return?}` |
