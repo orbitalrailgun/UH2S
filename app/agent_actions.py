@@ -11,7 +11,7 @@
 
 import json
 
-from app.engine import command_parser
+from app.engine import command_parser, describe_source_functions_struct
 from app.db import get_all_actual_objects, get_actual_object_by_name, search_actual_objects
 
 
@@ -30,14 +30,20 @@ def script_params_list(current_state, script_json):
 
 
 def _enrich_object(current_state, name, type_):
-    """Доп. поля по объекту: для source — source_type; для script — params/return."""
+    """Доп. поля по объекту: для source — source_type + functions (с параметрами);
+    для script — params (DEF) + return."""
     extra = {}
     if type_ in ("source", "script"):
         full = get_actual_object_by_name(name, f"('{type_}')", current_state)
         if full[0]:
             obj_json = full[3].get("json", {}) or {}
             if type_ == "source":
-                extra["source_type"] = obj_json.get("type")
+                source_type = obj_json.get("type")
+                extra["source_type"] = source_type
+                # сразу отдаём функции source-объекта с их параметрами (аналог params у скриптов)
+                spec = describe_source_functions_struct(source_type) if source_type else {}
+                if isinstance(spec, dict) and "functions" in spec:
+                    extra["functions"] = spec["functions"]
             elif type_ == "script":
                 extra["params"] = script_params_list(current_state, obj_json)
                 extra["return"] = obj_json.get("return")
@@ -101,7 +107,11 @@ def get_object(current_state, name):
     obj_json = obj.get("json", {}) or {}
     out = {"name": name, "type": obj.get("type"), "roles": obj.get("roles"), "json": obj_json}
     if obj.get("type") == "source":
-        out["source_type"] = obj_json.get("type")
+        source_type = obj_json.get("type")
+        out["source_type"] = source_type
+        spec = describe_source_functions_struct(source_type) if source_type else {}
+        if isinstance(spec, dict) and "functions" in spec:
+            out["functions"] = spec["functions"]
     elif obj.get("type") == "script":
         out["params"] = script_params_list(current_state, obj_json)
         out["return"] = obj_json.get("return")
