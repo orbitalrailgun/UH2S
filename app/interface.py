@@ -585,11 +585,12 @@ async def login_page(current_state: Dict[str, Any]):
             background: var(--panel-bg) !important;
             color: var(--text-color) !important;
         }
-        /* Шапка и заполненные кнопки следуют палитре (по умолчанию — цвет Quasar primary) */
-        .q-header {
+        /* Шапка и заполненные кнопки следуют палитре (по умолчанию — цвет Quasar primary).
+           Селекторы с двумя классами перебивают утилиту Quasar .bg-primary (та же important, но ниже специфичность). */
+        .q-header, .q-header.bg-primary {
             background: var(--header-color) !important;
         }
-        .q-btn--standard {
+        .q-btn.bg-primary, .q-btn--standard.bg-primary, .q-btn--standard {
             background: var(--button-color) !important;
         }
         .main-container {
@@ -795,11 +796,12 @@ def main_page(keycloak_openid, current_state):
             background: var(--panel-bg) !important;
             color: var(--text-color) !important;
         }
-        /* Шапка и заполненные кнопки следуют палитре (по умолчанию — цвет Quasar primary) */
-        .q-header {
+        /* Шапка и заполненные кнопки следуют палитре (по умолчанию — цвет Quasar primary).
+           Селекторы с двумя классами перебивают утилиту Quasar .bg-primary (та же important, но ниже специфичность). */
+        .q-header, .q-header.bg-primary {
             background: var(--header-color) !important;
         }
-        .q-btn--standard {
+        .q-btn.bg-primary, .q-btn--standard.bg-primary, .q-btn--standard {
             background: var(--button-color) !important;
         }
         .main-container {
