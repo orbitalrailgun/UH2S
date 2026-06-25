@@ -12,6 +12,16 @@ def _make_retry_logger(current_state, func_name):
             f"elastic request retry attempt {attempt} after {delay:.2f}s ({detail})", func_name, current_state))
     return on_retry
 
+
+def _make_debug_logger(current_state, func_name):
+    """Callback для пустого результата: логирует matched (hits.total), подсказку и фрагмент ответа elastic,
+    чтобы понять «почему 0» — фильтр ничего не нашёл или потеряны fields при _source:false."""
+    def debug_log(meta):
+        logger_log(syslog.LOG_WARNING, get_log_message(
+            f"elastic returned 0 rows: matched={meta.get('matched')} ({meta.get('hint')}); "
+            f"response sample: {meta.get('response_sample')}", func_name, current_state))
+    return debug_log
+
 # execution_function
 def execute_elastic_query(parameters, source_object, data_map, current_state):
     try:  
@@ -43,7 +53,8 @@ def execute_elastic_query(parameters, source_object, data_map, current_state):
             max_retries=source.get("max_retries", 2),
             retry_backoff=source.get("retry_backoff_seconds", 0.5),
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
-            on_retry=_make_retry_logger(current_state, currentFuncName()))
+            on_retry=_make_retry_logger(current_state, currentFuncName()),
+            debug_log=_make_debug_logger(current_state, currentFuncName()))
         if data_taxi_requests_result[0] == False:
             error_message = f"data_taxi_requests_result is false: {data_taxi_requests_result[1]}"
             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))

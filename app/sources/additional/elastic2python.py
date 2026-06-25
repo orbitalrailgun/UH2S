@@ -310,12 +310,24 @@ def data_taxi_aggs(elastic_client, index, query, aggs, debug = False, size = 0):
     except BaseException as e:
         return False, f"elastic2python aggs fail:{str(e)}", "data_taxi_aggs", []
 
+def _hits_total(resp_json):
+    """hits.total.value из ответа elastic (поддержка int и {value,relation})."""
+    try:
+        total = (resp_json or {}).get("hits", {}).get("total")
+        if isinstance(total, dict):
+            return total.get("value")
+        return total
+    except BaseException:
+        return None
+
+
 def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, sort, fields, size, search_after_shift, limit, debug = False,
-                       max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None):
+                       max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None, debug_log=None):
     import requests
     import pandas
     from app.sources.additional.retry import retry_call, RetryableError
     output_data = []
+    matched_total = None  # hits.total (сколько совпало по фильтру) — для диагностики «почему 0»
     debug_flag = debug
     if debug_flag:
         print("Получаем первичные данные")
@@ -326,6 +338,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
     headers = {
         'user-agent': user_agent,
         'content-type': 'application/json',
+        "x-elastic-internal-origin": "kibana",
         "kbn-xsrf": "reporting",
         "Authorization": f"ApiKey {api_key}",
     }
@@ -346,8 +359,10 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
         if response.status_code not in [200, 201]:
             error_message = f"fail response code {response.status_code}: {response.text}"
             return False, error_message, "data_taxi_requests", None
-        output_data = get_data(dict(response.json()))
-        current_sort = get_sort(dict(response.json()))
+        first_json = dict(response.json())
+        matched_total = _hits_total(first_json)
+        output_data = get_data(first_json)
+        current_sort = get_sort(first_json)
     except BaseException as e:
         return False, f"elastic2python first query fail:{str(e)}", "data_taxi_requests", []
     # проверяем первый полученный кусок данных, если данных столько, сколько указано в size
@@ -387,8 +402,24 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
                     break
                 taxi_step = taxi_step + 1
 
-        result_data = pandas.DataFrame(output_data).drop_duplicates("_id").to_dict('records')
-        return True, f"OK", "data_taxi_requests", result_data
+        if output_data:
+            result_data = pandas.DataFrame(output_data).drop_duplicates("_id").to_dict('records')
+        else:
+            result_data = []
+
+        # диагностика «почему 0»: matched (hits.total) vs rows (извлечено).
+        # matched==0 -> фильтр ничего не нашёл; matched>0, rows==0 -> данные есть,
+        # но поля из `fields` отсутствуют в документах (при _source:false) — проверьте fields.
+        if not result_data and debug_log:
+            try:
+                debug_log({"matched": matched_total, "rows": 0,
+                           "hint": ("filter matched nothing" if not matched_total
+                                    else "matched but no values for requested `fields` (check fields/_source)"),
+                           "response_sample": json.dumps(first_json, ensure_ascii=False)[:1500]})
+            except BaseException:
+                pass
+
+        return True, f"OK (matched {matched_total}, rows {len(result_data)})", "data_taxi_requests", result_data
     except BaseException as e:
         return False, f"elastic2python query requests fail:{str(e)}", "data_taxi_requests", []
 
@@ -401,6 +432,7 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
     headers = {
         'user-agent': user_agent,
         'content-type': 'application/json',
+        "x-elastic-internal-origin": "kibana",
         "kbn-xsrf": "reporting",
         "Authorization": f"ApiKey {api_key}",
     }
