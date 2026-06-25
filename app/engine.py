@@ -56,10 +56,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "generic_query":{
                 "required":{
                     "index":"example: events-*",
-                    "query":"",
-                    "fields":"",
-                    "sort":"",
-                    "size":"",
+                    "query":{"query_string": {"query": "status:open"}},
+                    "fields":["@timestamp", "message"],
+                    "sort":["@timestamp:desc"],
+                    "size":1000,
                     "search_after_shift":-10
                 },
                 "functions":{
@@ -70,10 +70,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "aggs_query":{
                 "required":{
                     "index":"example: events-*",
-                    "query":"",
-                    "aggs":"",
-                    # "sort":"",
-                    # "size":"",
+                    "query":{"query_string": {"query": "status:open"}},
+                    "aggs":{"by_status": {"terms": {"field": "status.keyword"}}},
+                    # "sort":["@timestamp:desc"],
+                    # "size":1000,
                     # "search_after_shift":-10
                 },
                 "functions":{
@@ -84,10 +84,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "pid_hierarchy":{
                 "required":{
                     "index":"example: events-*",
-                    "query":"",
-                    "fields":"",
-                    "sort":"",
-                    "size":"",
+                    "query":{"query_string": {"query": "status:open"}},
+                    "fields":["@timestamp", "message"],
+                    "sort":["@timestamp:desc"],
+                    "size":1000,
                     "search_after_shift":-10
                 },
                 "functions":{
@@ -98,10 +98,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "pid_siblings":{
                 "required":{
                     "index":"example: events-*",
-                    "query":"",
-                    "fields":"",
-                    "sort":"",
-                    "size":"",
+                    "query":{"query_string": {"query": "status:open"}},
+                    "fields":["@timestamp", "message"],
+                    "sort":["@timestamp:desc"],
+                    "size":1000,
                     "search_after_shift":-10
                 },
                 "functions":{
@@ -129,9 +129,9 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "query":{
                 "required":{
                     "url":"https://elastic.ru/api/console/proxy?path=/%(index)s/_search?batched_reduce_size=64&method=POST",
-                    "query":{},
-                    "fields":[],
-                    "sort":[],
+                    "query":{"query_string": {"query": "status:open"}},
+                    "fields":["@timestamp", "message"],
+                    "sort":["@timestamp:desc"],
                     #"size":1000, # опционально
                     "limit":-1,
                     #"search_after_shift":-10 # опционально
@@ -149,8 +149,8 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "aggs_query":{
                 "required":{
                     "url":"https://elastic.ru/api/console/proxy?path=/%(index)s/_search?batched_reduce_size=64&method=POST",
-                    "query":{},
-                    "aggs":{},
+                    "query":{"query_string": {"query": "status:open"}},
+                    "aggs":{"by_status": {"terms": {"field": "status.keyword"}}},
                 },
                 "functions":{
                     "query": execute_elasctic_aggs_via_requests,
@@ -160,10 +160,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "pid_hierarchy":{
                 "required":{
                     "url":"https://elastic.ru/api/console/proxy?path=/%(index)s/_search?batched_reduce_size=64&method=POST",
-                    "query":"",
-                    "fields":"",
-                    "sort":"",
-                    "size":"",
+                    "query":{"query_string": {"query": "status:open"}},
+                    "fields":["@timestamp", "message"],
+                    "sort":["@timestamp:desc"],
+                    "size":1000,
                     "search_after_shift":-10
                 },
                 "functions":{
@@ -174,10 +174,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "pid_siblings":{
                 "required":{
                     "url":"https://elastic.ru/api/console/proxy?path=/%(index)s/_search?batched_reduce_size=64&method=POST",
-                    "query":"",
-                    "fields":"",
-                    "sort":"",
-                    "size":"",
+                    "query":{"query_string": {"query": "status:open"}},
+                    "fields":["@timestamp", "message"],
+                    "sort":["@timestamp:desc"],
+                    "size":1000,
                     "search_after_shift":-10
                 },
                 "functions":{
@@ -199,10 +199,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "generic_query":{
                 "required":{
                     "index":"example: events-*",
-                    "query":"",
-                    "fields":"",
-                    "sort":"",
-                    "size":"",
+                    "query":{"query_string": {"query": "status:open"}},
+                    "fields":["@timestamp", "message"],
+                    "sort":["@timestamp:desc"],
+                    "size":1000,
                     "search_after_shift":-10
                 },
                 "functions":{
@@ -213,8 +213,8 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "aggs_query":{
                 "required":{
                     "index":"example: events-*",
-                    "query":"",
-                    "aggs":"",
+                    "query":{"query_string": {"query": "status:open"}},
+                    "aggs":{"by_status": {"terms": {"field": "status.keyword"}}},
                 },
                 "functions":{
                     "query": execute_opensearch_aggs,
@@ -778,9 +778,9 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                         'signal.original_time': ['min',"max","count"],
                         'process.pid': ['min',"max","count"]
                     },
-                    "frequency":"",
-                    "key":"",
-                    "format":""
+                    "frequency":"1H",
+                    "key":"@timestamp",
+                    "format":"%Y-%m-%dT%H:%M:%S.%fZ"
                 },
                 "functions":{
                     "query": execute_pandas_aggregation_with_time_grouper,
@@ -828,8 +828,8 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                 "required":{
                     "url":"https://localhost:11434/api/chat",
                     "model":"llama3.2",
-                    "format":"",
-                    "main_prompt":"",
+                    "format":"json",
+                    "main_prompt":"Analyze the following data and return findings.",
                     "data_for_analysis":["data1", "data2"]
                 },
                 "functions":{

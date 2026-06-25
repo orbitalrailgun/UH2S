@@ -64,6 +64,7 @@ proposing a new source object) — it is **not** the list of things you can quer
 
 | Tool | Args | Returns (JSON) |
 |------|------|----------------|
+| `get_dsl_reference` | `api_key` | `{dsl_reference}` — full DSL guide (commands, injection types, in-memory SQL, examples). Read first. |
 | `run_script` | `api_key`, `script` | `{ok, print:[{type:text\|table\|value,…}], tables:{name:rows}, variables:{…}, artifacts:[…]}` |
 | `list_sources` | `api_key` | `{supported_source_types:[…], note}` — connector TYPES (diagnostic), not queryable directly |
 | `get_source_functions` | `api_key`, `source_type` | `{source_type, source_object_config_required, source_object_config_optional, functions:[{function, required, optional}]}` — each param is `{name: {type, example}}` (type and a concrete example taken from the connector spec) |

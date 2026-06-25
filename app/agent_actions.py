@@ -15,6 +15,59 @@ from app.engine import command_parser, describe_source_functions_struct
 from app.db import get_all_actual_objects, get_actual_object_by_name, search_actual_objects
 
 
+DSL_REFERENCE = """\
+Universal Harvester DSL — quick reference for agents.
+
+PIPELINE
+- Commands are separated by '|' and run left-to-right; each step's result is named with `AS <name>`.
+- Comments: /* ... */.
+
+COMMANDS
+- DEF <value> AS <name>            — define a variable. Value types: 123 (int), 1.5 (float),
+                                     "text" (string), true/false (bool), [..] (list), {..} (dict/JSON object).
+- CALC(X, Y, op[, optional]) AS Z  — math: PLUS/MINUS/MULT/DEV/POW; strings: TRIM/CONCAT/SPLIT/RE_SEARCH/RE_SUBSTRING;
+                                     time: DATETIME_FORMAT/UNIXTIME_TO_DATETIME/DATETIME_TO_UNIXTIME.
+- GET <source_object>:<function>(params) AS data
+                                     — call a configured source OBJECT by its NAME; `function` belongs to its
+                                       source_type. Discover via list_objects(source) / get_source_functions.
+- GET script:<name>(params) AS data — run a saved script object; params override its DEF defaults.
+- GET APPLY:<data>(col AS x[, ...])[:unique] <source:func | script:name>(... %(x)s ...) AS d
+                                     — per-row fan-out: run the call once per row of `data`, injecting columns.
+- PRINT(name | "text")             — output a variable/table (as markdown) or literal text.
+- SHOW(table, table|matplotlib[, {params}]) — render a table or a matplotlib chart
+                                     (params e.g. {"x":"col","y":"col","kind":"line","title":"...","dpi":150}).
+- SAVE(table | [t1,t2], xlsx|csv_in_zip|json_in_zip) [AS filename] — produce a downloadable file.
+- NOTIFY <notifier_object>("text")  — send a notification via a configured notifier object.
+
+PARAMETER INJECTION (substitute variables into params): %(name)X where X is the type tag:
+  s = string as-is, x = raw (no quotes), i = int, f = float, b = bool, l = list, d = dict/JSON.
+  Tip: values containing commas/quotes should be passed via a DEF variable and injected, e.g. %(v)d.
+
+IN-MEMORY SQL over already-fetched data (source objects usually named 'sqlite3'/'duckdb'):
+  GET sqlite3:query(queries=["SELECT * FROM <prior_table>"]) AS out
+  GET duckdb:query(type="table", queries=["..."]) AS out
+  (the last query in `queries` returns the data; earlier ones are preparatory.)
+
+EXAMPLES
+- Fetch + show:
+    GET netbox:search(target="10.0.0.0/24") AS ips | SHOW(ips, table)
+- Variable injection:
+    DEF 50 AS lim | GET jira_sm:search_issues(jql="project = SD", limit=%(lim)i) AS issues | PRINT(issues)
+- In-memory SQL over fetched data, then save:
+    GET jira_sm:search_issues(jql="project = SD") AS issues
+    | GET sqlite3:query(queries=["SELECT status, count(*) c FROM issues GROUP BY status"]) AS agg
+    | SAVE(agg, xlsx) AS report
+- Per-row enrichment (APPLY):
+    GET thehive:get_alerts(filter={}, limit=20) AS alerts
+    | GET APPLY:alerts(sourceRef AS ref) netbox:search(target=%(ref)s) AS enriched
+"""
+
+
+def dsl_reference():
+    """Полный справочник по DSL (для внешних агентов через MCP)."""
+    return DSL_REFERENCE
+
+
 def role_allowed(current_state, object_roles):
     """Доступен ли объект текущему пользователю по ролям."""
     roles = current_state.get("roles", []) or []

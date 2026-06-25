@@ -93,6 +93,16 @@ def build_mcp():
         return agent_actions.run_script_structured(script, state)
 
     @mcp.tool
+    def get_dsl_reference(api_key: str) -> dict:
+        """Get the Harvester DSL reference: pipeline, commands (DEF/CALC/GET/GET script/GET APPLY/
+        PRINT/SHOW/SAVE/NOTIFY), parameter injection %(name)X types, in-memory SQL, and examples.
+        Read this before writing scripts for run_script."""
+        ok, owner, state = _auth(api_key)
+        if not ok:
+            return {"error": f"auth error: {owner}"}
+        return {"dsl_reference": agent_actions.dsl_reference()}
+
+    @mcp.tool
     def list_sources(api_key: str) -> dict:
         """List SUPPORTED connector TYPES (source_type), NOT data you can query directly.
         Use this only for diagnostics or to propose configuring a NEW source object.
