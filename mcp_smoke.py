@@ -51,6 +51,7 @@ async def main():
                     text = "\n".join(getattr(c, "text", str(c)) for c in content)
             print(text if text is not None else result)
 
+        await call("get_dsl_reference")
         await call("list_sources")
         await call("list_objects", type_filter="")
         await call("run_script", script=cli.script)
