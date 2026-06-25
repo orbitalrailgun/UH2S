@@ -2379,14 +2379,14 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 except BaseException as history_error:
                     logger_log(syslog.LOG_ERR, get_log_message(f"history record fail: {str(history_error)}", currentFuncName(), current_state))
 
+        # вся панель Harvester прокручивается ОДНИМ вертикальным скроллбаром.
+        # q-card по умолчанию overflow:hidden -> переопределяем на auto и задаём высоту по вьюпорту.
+        interface_container.style('height: calc(100vh - 110px); overflow-y: auto; overflow-x: hidden')
         with interface_container:
-            # весь блок harvester — в вертикально-прокручиваемом контейнере.
-            # Глобально у body задан overflow:hidden, поэтому скролл задаём здесь,
-            # ограничивая высоту вьюпортом (за вычетом шапки приложения).
             ui.add_css('.mermaid { text-align: center; } .mermaid svg { display: block; margin-left: auto; margin-right: auto; }')
             # перенос длинных строк в редакторе скрипта (визуальный; CSS-фолбэк к line_wrapping)
             ui.add_css('.uh-cm-wrap .cm-content, .uh-cm-wrap .cm-line { white-space: pre-wrap !important; overflow-wrap: anywhere; word-break: break-word; }')
-            with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
+            with ui.column().classes('w-full no-wrap'):
                 analysis_holder = {}
 
                 def analyze_click():
@@ -2411,12 +2411,11 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                             with ui.row().classes('gap-2'):
                                 button_script = ui.button(tr("harv.execute"), icon='rocket_launch').on_click(button_script_click)
                                 button_analyze = ui.button(tr("harv.analyze"), icon='account_tree').on_click(analyze_click)
-                        # сворачиваемый блок прогресса шагов (вариант A): список команд со статусами.
-                        # Свой вертикальный скролл — много шагов не уезжают за экран.
+                        # сворачиваемый блок прогресса шагов (вариант A): список команд со статусами
                         with ui.expansion(tr("harv.steps"), icon='list', value=True).classes('w-full'):
-                            steps_panel = ui.element('div').classes('w-full').style('max-height: 30vh; overflow-y: auto; padding: 4px 8px')
-                        # область результатов со своим вертикальным скроллом (горизонтальный — для широких таблиц)
-                        card_results = ui.element('div').classes('w-full').style('max-height: 60vh; overflow-y: auto; overflow-x: auto; padding: 8px; border: 1px solid var(--panel-bg)')
+                            steps_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
+                        # область результатов (горизонтальный скролл — для широких таблиц; вертикальный — на всю панель)
+                        card_results = ui.element('div').classes('w-full').style('overflow-x: auto; padding: 8px; border: 1px solid var(--panel-bg)')
 
                     with ui.tab_panel(tab_datavars):
                         grid_datavars = ui.aggrid({}).classes('w-full').style('height: 60vh')
