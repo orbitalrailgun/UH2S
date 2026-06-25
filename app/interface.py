@@ -520,6 +520,8 @@ def apply_appearance(appearance, current_state=None):
         "function uhApplyColors(){"
         "  document.querySelectorAll('.q-btn.bg-primary').forEach(function(e){"
         "    e.style.setProperty('background-color', window.__uhColors.button, 'important');});"
+        "  document.querySelectorAll('.q-btn--outline, .q-btn--flat').forEach(function(e){"
+        "    e.style.setProperty('color', window.__uhColors.button, 'important');});"
         "  document.querySelectorAll('.q-header').forEach(function(e){"
         "    e.style.setProperty('background-color', window.__uhColors.header, 'important');});"
         "}"
