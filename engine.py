@@ -8,6 +8,24 @@ from app.engine import command_parser, process_injections, get_source_function, 
 from app.db import get_actual_object_by_name, get_secret, get_source_threads_pool, get_user_by_username
 
 
+def _function_hint(source_type, function, current_state):
+    """Подсказка по параметрам функции источника (типы + примеры) — для понятных ошибок пользователю."""
+    try:
+        from app.engine import describe_source_functions_struct
+        spec = describe_source_functions_struct(source_type)
+        if not isinstance(spec, dict):
+            return ""
+        for f in spec.get("functions", []):
+            if f.get("function") == function:
+                req = "; ".join(f"{name}:{meta.get('type')}={json.dumps(meta.get('example'), ensure_ascii=False)}"
+                                for name, meta in (f.get("required") or {}).items()) or "—"
+                opt = ", ".join((f.get("optional") or {}).keys()) or "—"
+                return f"ожидаются параметры {source_type}:{function} — обязательные: {req}; опциональные: {opt}"
+    except BaseException:
+        pass
+    return ""
+
+
 def commands_executor(commands:list,current_state:dict,injected_variables:dict=None):
     # сначала последовательно считаем все def и calc
     # injected_variables — параметры, переданные при вызове скрипта; перекрывают его DEF
@@ -146,12 +164,16 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                 command["function_parameters"] = get_source_function_result[3][0]
                 command["function_object"] = get_source_function_result[3][1]
 
-            #check parameters
+            #check parameters — все ли обязательные параметры переданы
+            missing = [p for p in command["function_parameters"] if p not in command["parameters"]]
+            if missing:
+                hint = _function_hint(command["source_type"], command["function"], current_state)
+                provided = ", ".join(command["parameters"].keys()) or "—"
+                error_message = (f"не хватает обязательных параметров {missing} для "
+                                 f"{command['source_type']}:{command['function']}. Передано: [{provided}]. {hint}")
+                logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+                return False, error_message, currentFuncName(), commands
             for parameter in command["function_parameters"]:
-                if parameter not in command["parameters"]:
-                    error_message = f"there is not parameter {parameter} for function {command["source_type"]}:{command["function"]}"
-                    logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-                    return False, error_message, currentFuncName(), commands
                 if type(command["function_parameters"][parameter]) != type(command["parameters"][parameter]):
                     logger_log(syslog.LOG_INFO, get_log_message(f"parameter {command["function_parameters"][parameter]} type {type(command["function_parameters"][parameter])} check parameter {command["parameters"][parameter]} type {type(command["parameters"][parameter])}", currentFuncName(), current_state))
                     # дополнительная попытка переконвертации
@@ -161,7 +183,12 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                         return False, error_message, currentFuncName(), commands
                     if type(command["function_parameters"][parameter]) != type(get_variable_type_result[3][1]):
-                        error_message = f"wrong parameter type for {parameter} (put {type(command["parameters"][parameter])} ({command["parameters"][parameter]}) need {type(command["function_parameters"][parameter])})"
+                        expected = command["function_parameters"][parameter]
+                        hint = _function_hint(command["source_type"], command["function"], current_state)
+                        error_message = (f"неверный тип параметра '{parameter}' для {command['source_type']}:{command['function']}: "
+                                         f"передано {type(command['parameters'][parameter]).__name__} "
+                                         f"({command['parameters'][parameter]}); ожидается {type(expected).__name__} "
+                                         f"(пример: {json.dumps(expected, ensure_ascii=False)}). {hint}")
                         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                         return False, error_message, currentFuncName(), commands
                     command["parameters"][parameter] = get_variable_type_result[3][1]
