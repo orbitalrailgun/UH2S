@@ -40,6 +40,13 @@ def _cell_to_str(value):
     return text.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
 
+def _md_escape(text):
+    """Экранировать markdown-значимые символы в динамическом тексте (имена с _, * и пр.),
+    чтобы системные сообщения/имена объектов не интерпретировались как разметка."""
+    import re
+    return re.sub(r"([\\`*_\[\]()~>#|])", r"\\\1", str(text))
+
+
 def records_to_markdown(data, max_rows=200):
     """list[dict] -> markdown-таблица (или маркированный список для скаляров)."""
     if not isinstance(data, list) or len(data) == 0:
@@ -2122,7 +2129,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 if isinstance(value, list) and (len(value) == 0 or isinstance(value[0], dict)):
                     data = value
                 else:
-                    ui.markdown(f"**{arg}** = `{json.dumps(value, ensure_ascii=False, default=str)}`")
+                    ui.markdown(f"**{_md_escape(arg)}** = `{json.dumps(value, ensure_ascii=False, default=str)}`")
                     return True
             if data is not None:
                 ui.markdown(records_to_markdown(data), extras=['tables', 'fenced-code-blocks'])
@@ -2145,7 +2152,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             if not data:
                 reason = tr("harv.show.no_data", table=table)
                 command["_info"] = reason
-                ui.markdown(f"*SHOW: {reason}*")
+                ui.markdown(f"*SHOW: {_md_escape(reason)}*")
                 return False
 
             if show_type == "table":
@@ -2158,7 +2165,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         params = json.loads(params_raw)
                     else:
                         command["_info"] = tr("harv.show.bad_params")
-                        ui.markdown(f"*SHOW: {command['_info']}*")
+                        ui.markdown(f"*SHOW: {_md_escape(command['_info'])}*")
                         return False
                 try:
                     plot = render_plot_png_b64(data, params)
@@ -2167,11 +2174,11 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     return True
                 except BaseException as plot_error:
                     command["_info"] = f"matplotlib error: {str(plot_error)}"
-                    ui.markdown(f"*SHOW {command['_info']}*")
+                    ui.markdown(f"*SHOW {_md_escape(command['_info'])}*")
                     return False
             else:
                 command["_info"] = tr("harv.show.bad_type", type=show_type)
-                ui.markdown(f"*SHOW: {command['_info']}*")
+                ui.markdown(f"*SHOW: {_md_escape(command['_info'])}*")
                 return False
 
         def _render_save(command, variables, result_map):
@@ -2192,11 +2199,11 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
 
             if missing:
                 command["_info"] = tr("harv.save.no_data", tables=', '.join(missing))
-                ui.markdown(f"*SAVE: {command['_info']}*")
+                ui.markdown(f"*SAVE: {_md_escape(command['_info'])}*")
                 return False
             if not tables_data:
                 command["_info"] = tr("harv.save.no_tables")
-                ui.markdown(f"*SAVE: {command['_info']}*")
+                ui.markdown(f"*SAVE: {_md_escape(command['_info'])}*")
                 return False
 
             # базовое имя файла: AS filename -> имя таблицы (если одна) -> 'export'
@@ -2206,7 +2213,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 content, filename, media_type = records_to_download(tables_data, fmt, base_name)
             except BaseException as save_error:
                 command["_info"] = str(save_error)
-                ui.markdown(f"*SAVE error: {command['_info']}*")
+                ui.markdown(f"*SAVE error: {_md_escape(command['_info'])}*")
                 return False
 
             try:
@@ -2214,7 +2221,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             except TypeError:
                 ui.download(content, filename)
             total = sum(len(d) for d in tables_data.values())
-            ui.markdown(tr("harv.save.downloading", filename=filename, tables=len(tables_data), rows=total))
+            ui.markdown(tr("harv.save.downloading", filename=_md_escape(filename), tables=len(tables_data), rows=total))
             return True
 
         def _update_datavars(variables, result_map):
@@ -2279,7 +2286,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     with card_results:
                         ui.markdown(tr("harv.parse_errors"))
                         for i, c in parse_errors:
-                            ui.markdown(tr("harv.parse_error_item", n=i + 1, cmd=c.get('command', '?'), comment=c.get('parsed_comment', '?')))
+                            ui.markdown(tr("harv.parse_error_item", n=i + 1, cmd=c.get('command', '?'), comment=_md_escape(c.get('parsed_comment', '?'))))
                     return
 
                 # прогресс шагов: инициализация статусов + таймер живого опроса (поток пишет статусы)
@@ -2308,7 +2315,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                             command["_status"] = "rejected"
                     card_results.clear()
                     with card_results:
-                        ui.markdown(tr("harv.exec_error", error=commands_executor_result[1]))
+                        ui.markdown(tr("harv.exec_error", error=_md_escape(commands_executor_result[1])))
                     ui.notify(commands_executor_result[1], type="negative")
                     return
 
