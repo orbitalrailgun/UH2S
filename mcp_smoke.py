@@ -27,7 +27,7 @@ async def main():
     parser = argparse.ArgumentParser(description="Harvester MCP smoke test")
     parser.add_argument("api_key", help="Harvester API key (Settings -> API keys)")
     parser.add_argument("script", nargs="?",
-                        default='GET sqlite:query("SELECT 1 AS n, \'ok\' AS status") AS t | PRINT(t)',
+                        default='GET sqlite3:query(queries=["SELECT 1 AS n, \'ok\' AS status"]) AS t | PRINT(t)',
                         help="DSL script for run_script")
     cli = parser.parse_args()
 

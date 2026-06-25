@@ -78,7 +78,7 @@ curl -k -X POST "$BASE/api/script" \
 curl -k -X POST "$BASE/api/script" \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: text/plain" \
-  --data-binary $'GET sqlite:query("SELECT 1 AS n, \'ok\' AS status") AS t | PRINT(t)'
+  --data-binary $'GET sqlite3:query(queries=["SELECT 1 AS n, \'ok\' AS status"]) AS t | PRINT(t)'
 ```
 
 ### 3.2 JSON-обёртка тела
@@ -107,7 +107,7 @@ curl -k -X POST "$BASE/api/script" \
 curl -k -X POST "$BASE/api/script" \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: text/plain" \
-  --data-binary $'GET sqlite:query("SELECT 1 AS x, 10 AS y UNION SELECT 2,20 UNION SELECT 3,15") AS d | SHOW(d, matplotlib, {"x":"x","y":"y","kind":"line"})' \
+  --data-binary $'GET sqlite3:query(queries=["SELECT 1 AS x, 10 AS y UNION SELECT 2,20 UNION SELECT 3,15"]) AS d | SHOW(d, matplotlib, {"x":"x","y":"y","kind":"line"})' \
   -OJ
 # -> result.zip: output.txt + plot_1_d.png
 unzip -l result.zip
@@ -119,7 +119,7 @@ unzip -l result.zip
 curl -k -X POST "$BASE/api/script" \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: text/plain" \
-  --data-binary $'GET sqlite:query("SELECT 1 AS a UNION SELECT 2") AS rows | SAVE(rows, xlsx) AS report' \
+  --data-binary $'GET sqlite3:query(queries=["SELECT 1 AS a UNION SELECT 2"]) AS rows | SAVE(rows, xlsx) AS report' \
   -OJ
 # -> result.zip: report.xlsx (и output.txt, если были PRINT)
 ```
@@ -130,7 +130,7 @@ curl -k -X POST "$BASE/api/script" \
 curl -k -X POST "$BASE/api/script" \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: text/plain" \
-  --data-binary $'GET sqlite:query("SELECT 1 AS a") AS t1 | GET sqlite:query("SELECT 2 AS b") AS t2 | SAVE([t1,t2], csv_in_zip) AS export' \
+  --data-binary $'GET sqlite3:query(queries=["SELECT 1 AS a"]) AS t1 | GET sqlite3:query(queries=["SELECT 2 AS b"]) AS t2 | SAVE([t1,t2], csv_in_zip) AS export' \
   -OJ
 ```
 
@@ -139,7 +139,7 @@ curl -k -X POST "$BASE/api/script" \
 ```bash
 curl -k -X POST "$BASE/api/script" \
   -H "X-API-Key: $KEY" \
-  --data-binary $'GET sqlite:query("SELECT 1 AS x,10 AS y UNION SELECT 2,20") AS d | PRINT("Отчёт") | PRINT(d) | SHOW(d, matplotlib, {"x":"x","y":"y"}) | SAVE(d, xlsx) AS data' \
+  --data-binary $'GET sqlite3:query(queries=["SELECT 1 AS x,10 AS y UNION SELECT 2,20"]) AS d | PRINT("Отчёт") | PRINT(d) | SHOW(d, matplotlib, {"x":"x","y":"y"}) | SAVE(d, xlsx) AS data' \
   -OJ
 # -> result.zip: output.txt (текст + таблица), plot_1_d.png, data.xlsx
 ```

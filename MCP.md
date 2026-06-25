@@ -56,6 +56,27 @@ which returns a zip.
 
 ---
 
+## 3a. Testing the server
+
+1. **In-process smoke test (no network)** — fastest correctness check (tools/auth/DB):
+   ```bash
+   pip install fastmcp
+   python mcp_smoke.py uh_YOUR_KEY
+   ```
+2. **MCP Inspector (GUI, over HTTP)** — start the server, then connect the inspector:
+   ```bash
+   python mcp_server.py --port 8090            # terminal 1
+   npx @modelcontextprotocol/inspector         # terminal 2 (version-independent)
+   # in the UI: Transport = Streamable HTTP, URL = http://127.0.0.1:8090/mcp
+   ```
+   The bundled FastMCP CLI varies by version — check `fastmcp --help` / `fastmcp inspector --help`
+   (some builds expose only `inspector`/`apps`, without `dev`/`run`). The `npx` inspector above
+   works regardless of the FastMCP CLI.
+3. **Real MCP client** (Claude Desktop / IDE) — see §4.
+
+> DSL note: the in-memory SQL source is `sqlite3` and its function takes a list:
+> `GET sqlite3:query(queries=["SELECT 1 AS n"]) AS t | PRINT(t)`.
+
 ## 4. MCP client configuration
 
 Streamable-HTTP endpoint: `http://<host>:<port><path>` (e.g. `http://127.0.0.1:8090/mcp`).
@@ -90,7 +111,7 @@ Then call a tool, passing your API key, e.g. `run_script`:
 
 ```
 api_key = "uh_xxxxxxxx..."
-script  = "GET sqlite:query(\"SELECT 1 AS n\") AS t | PRINT(t)"
+script  = "GET sqlite3:query(queries=[\"SELECT 1 AS n\"]) AS t | PRINT(t)"
 ```
 
 ---
