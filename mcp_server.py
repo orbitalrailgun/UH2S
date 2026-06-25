@@ -67,74 +67,89 @@ def _auth(api_key):
 
 
 def build_mcp():
-    """Собрать FastMCP-инстанс с инструментами Harvester (lazy import fastmcp)."""
+    """Собрать FastMCP-инстанс с инструментами Harvester (lazy import fastmcp).
+
+    Все инструменты возвращают структурированный JSON (dict/list).
+    Модель данных: source_object (конфиг, type='source', со ИМЕНЕМ) -> source_type
+    (тип коннектора = source_object.json['type']) -> functions. В DSL источник
+    вызывается по ИМЕНИ объекта: GET <source_object_name>:<function>(...)."""
     from fastmcp import FastMCP
-    from app.interface import execute_script_api
-    from app.engine import list_source_types, describe_source_functions
+    from app.engine import list_source_types_struct, describe_source_functions_struct
     from app import agent_actions
 
     mcp = FastMCP(APP_NAME)
 
     @mcp.tool
-    def run_script(api_key: str, script: str) -> str:
-        """Execute a Harvester DSL script in the API key owner's context.
-        Returns PRINT text and, if any, a manifest of produced artifacts
-        (SHOW matplotlib images / SAVE files). Download binary artifacts via the
-        REST endpoint POST /api/script (this MCP tool returns text only)."""
+    def run_script(api_key: str, script: str) -> dict:
+        """Execute a Harvester DSL script in the API key owner's context. Returns JSON:
+        {ok, print:[{type:text|table|value, ...}], tables:{name:rows}, variables:{...}, artifacts:[...]}.
+        PRINT output is structured (text / table rows / named value). Binary artifacts from
+        SHOW(...,matplotlib) and SAVE(...) are only listed in `artifacts` — fetch their bytes via
+        the REST endpoint POST /api/script. In DSL, fetch data via GET <source_object_name>:<function>(...);
+        find available source objects with list_objects(type_filter="source")."""
         ok, owner, state = _auth(api_key)
         if not ok:
-            return f"auth error: {owner}"
-        result = execute_script_api(script, state)
-        if not result[0]:
-            return f"error: {result[1]}"
-        payload = result[3]
-        text = payload.get("text", "")
-        files = payload.get("files", [])
-        out = text or "(no PRINT output)"
-        if files:
-            manifest = "\n".join(f"- {name} ({len(content)} bytes, {media})" for name, content, media in files)
-            out += (f"\n\n[artifacts: {len(files)}]\n{manifest}\n"
-                    "(download binary artifacts via REST: POST /api/script)")
-        return out
+            return {"ok": False, "error": f"auth error: {owner}"}
+        return agent_actions.run_script_structured(script, state)
 
     @mcp.tool
-    def list_sources(api_key: str) -> str:
-        """List available source types (connectors)."""
+    def list_sources(api_key: str) -> dict:
+        """List SUPPORTED connector TYPES (source_type), NOT data you can query directly.
+        Use this only for diagnostics or to propose configuring a NEW source object.
+        To actually fetch data you must reference a configured source OBJECT by its name
+        (see list_objects(type_filter="source")) — its `source_type` maps to the functions
+        returned by get_source_functions."""
         ok, owner, state = _auth(api_key)
         if not ok:
-            return f"auth error: {owner}"
-        return list_source_types()
+            return {"error": f"auth error: {owner}"}
+        return {
+            "supported_source_types": list_source_types_struct(),
+            "note": ("These are connector TYPES, not queryable sources. To fetch data, reference a "
+                     "configured source OBJECT by name via list_objects(type_filter='source') and call "
+                     "GET <source_object_name>:<function>(...) in a DSL script."),
+        }
 
     @mcp.tool
-    def get_source_functions(api_key: str, source_type: str) -> str:
-        """Describe the functions of a source type and their required/optional parameters."""
+    def get_source_functions(api_key: str, source_type: str) -> dict:
+        """Describe functions of a connector TYPE (source_type), with required/optional params per
+        function and the source-object config params. Note: this is per source_type, NOT per concrete
+        source object. A source object's source_type is shown by list_objects/get_object. Returns JSON
+        {source_type, source_object_config_required, source_object_config_optional, functions:[...]}."""
         ok, owner, state = _auth(api_key)
         if not ok:
-            return f"auth error: {owner}"
-        return describe_source_functions((source_type or "").strip())
+            return {"error": f"auth error: {owner}"}
+        return describe_source_functions_struct((source_type or "").strip())
 
     @mcp.tool
-    def list_objects(api_key: str, type_filter: str = "") -> str:
-        """List saved objects accessible to the key owner (scripts include their DEF params)."""
+    def list_objects(api_key: str, type_filter: str = "") -> dict:
+        """List saved objects accessible to the key owner. JSON: {objects:[{name, type, ...}], note}.
+        For type='source' each item includes `source_type` (use it with get_source_functions, and call
+        the source in DSL by its `name`). For type='script' items include `params` (DEF) and `return`.
+        Optional type_filter: source | script | notifier | llm."""
         ok, owner, state = _auth(api_key)
         if not ok:
-            return f"auth error: {owner}"
-        return agent_actions.list_objects(state, type_filter)
+            return {"error": f"auth error: {owner}"}
+        return {
+            "objects": agent_actions.list_objects(state, type_filter),
+            "note": ("Reference a source in DSL by its 'name': GET <name>:<function>(...). "
+                     "'source_type' maps to functions via get_source_functions."),
+        }
 
     @mcp.tool
-    def search_objects(api_key: str, query: str) -> str:
-        """Search saved objects by content (role-filtered)."""
+    def search_objects(api_key: str, query: str) -> dict:
+        """Search saved objects by content (role-filtered). JSON: {results:[{name, type, source_type?, match}]}."""
         ok, owner, state = _auth(api_key)
         if not ok:
-            return f"auth error: {owner}"
-        return agent_actions.search_objects(state, query)
+            return {"error": f"auth error: {owner}"}
+        return {"results": agent_actions.search_objects(state, query)}
 
     @mcp.tool
-    def get_object(api_key: str, name: str) -> str:
-        """Get a saved object by name (full JSON; scripts include DEF params)."""
+    def get_object(api_key: str, name: str) -> dict:
+        """Get a saved object by name. JSON: {name, type, roles, json, source_type?/params?/return?}.
+        For type='source' includes source_type; for type='script' includes params (DEF) and return."""
         ok, owner, state = _auth(api_key)
         if not ok:
-            return f"auth error: {owner}"
+            return {"error": f"auth error: {owner}"}
         return agent_actions.get_object(state, name)
 
     return mcp

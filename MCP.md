@@ -39,24 +39,42 @@ keys of blocked owners are rejected.
 
 ---
 
-## 3. Tools
+## 3. Data model (read this first)
 
-| Tool | Args | Returns |
-|------|------|---------|
-| `run_script` | `api_key`, `script` | PRINT text; if the script has `SHOW matplotlib`/`SAVE`, a manifest of artifacts (download binaries via REST `POST /api/script`) |
-| `list_sources` | `api_key` | available source types (connectors) |
-| `get_source_functions` | `api_key`, `source_type` | functions of a source + required/optional params |
-| `list_objects` | `api_key`, `type_filter?` | accessible objects (scripts include DEF params) |
-| `search_objects` | `api_key`, `query` | objects matching a content query (role-filtered) |
-| `get_object` | `api_key`, `name` | full object JSON (scripts include DEF params) |
+Harvester distinguishes three things — keep them straight:
 
-Note: `run_script` returns **text only**. For binary artifacts (matplotlib PNG,
-`SAVE` files) use the REST endpoint `POST /api/script` (see [`API.md`](API.md)),
-which returns a zip.
+- **source_object** — a *configured* object (type `source`) with a **name**, e.g. `netbox`,
+  `thehive`, `sqlite3`. This is what you actually call.
+- **source_type** — the *connector kind* behind it (`source_object.json["type"]`), e.g.
+  `netbox`, `sqlite3_im`. It determines which functions exist.
+- **functions** — operations of a source_type (e.g. `query`, `search`, `get_alerts`).
+
+In a DSL script you fetch data by the source **object name**:
+`GET <source_object_name>:<function>(params...) AS table`.
+
+So the flow for an agent is: `list_objects(type_filter="source")` → pick an object and read its
+`source_type` → `get_source_functions(source_type)` → build `GET <name>:<function>(...)` →
+`run_script`. `list_sources` is **only** the catalog of supported connector TYPES (diagnostics /
+proposing a new source object) — it is **not** the list of things you can query.
+
+## 4. Tools (all return JSON)
+
+| Tool | Args | Returns (JSON) |
+|------|------|----------------|
+| `run_script` | `api_key`, `script` | `{ok, print:[{type:text\|table\|value,…}], tables:{name:rows}, variables:{…}, artifacts:[…]}` |
+| `list_sources` | `api_key` | `{supported_source_types:[…], note}` — connector TYPES (diagnostic), not queryable directly |
+| `get_source_functions` | `api_key`, `source_type` | `{source_type, source_object_config_required, source_object_config_optional, functions:[{function, required, optional}]}` |
+| `list_objects` | `api_key`, `type_filter?` | `{objects:[{name, type, source_type?/params?/return?}], note}` |
+| `search_objects` | `api_key`, `query` | `{results:[{name, type, source_type?, match}]}` |
+| `get_object` | `api_key`, `name` | `{name, type, roles, json, source_type?/params?/return?}` |
+
+`run_script` returns structured data (PRINT as text/table/value). Binary artifacts from
+`SHOW(…,matplotlib)` and `SAVE(…)` are only **listed** in `artifacts` — fetch their bytes via the
+REST endpoint `POST /api/script` (see [`API.md`](API.md)), which returns a zip.
 
 ---
 
-## 3a. Testing the server
+## 5. Testing the server
 
 1. **In-process smoke test (no network)** — fastest correctness check (tools/auth/DB):
    ```bash
@@ -72,12 +90,12 @@ which returns a zip.
    The bundled FastMCP CLI varies by version — check `fastmcp --help` / `fastmcp inspector --help`
    (some builds expose only `inspector`/`apps`, without `dev`/`run`). The `npx` inspector above
    works regardless of the FastMCP CLI.
-3. **Real MCP client** (Claude Desktop / IDE) — see §4.
+3. **Real MCP client** (Claude Desktop / IDE) — see §6.
 
 > DSL note: the in-memory SQL source is `sqlite3` and its function takes a list:
 > `GET sqlite3:query(queries=["SELECT 1 AS n"]) AS t | PRINT(t)`.
 
-## 4. MCP client configuration
+## 6. MCP client configuration
 
 Streamable-HTTP endpoint: `http://<host>:<port><path>` (e.g. `http://127.0.0.1:8090/mcp`).
 
@@ -116,7 +134,7 @@ script  = "GET sqlite3:query(queries=[\"SELECT 1 AS n\"]) AS t | PRINT(t)"
 
 ---
 
-## 5. Security notes
+## 7. Security notes
 
 - A key authorizes execution of **arbitrary DSL** in the owner's context (including
   SQL — the accepted model for a trusted audience). Issue keys to owners with the
@@ -128,7 +146,7 @@ script  = "GET sqlite3:query(queries=[\"SELECT 1 AS n\"]) AS t | PRINT(t)"
 
 ---
 
-## 6. Relation to the rest
+## 8. Relation to the rest
 
 - **REST** (`API.md`) — single `POST /api/script`, returns text or a zip with binary
   artifacts; best for file outputs and simple automation.

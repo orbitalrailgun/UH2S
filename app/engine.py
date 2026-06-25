@@ -961,6 +961,39 @@ def describe_source_functions(source_type):
     return "\n".join(lines)
 
 
+def list_source_types_struct():
+    """Список зарегистрированных типов источников (коннекторов) как list[str] — для JSON-ответов (MCP)."""
+    types = []
+    for source_type in sorted(ENGINE_SOURCES_AND_FUNCTIONS_MAP.keys()):
+        functions = (ENGINE_SOURCES_AND_FUNCTIONS_MAP[source_type] or {}).get("functions", {}) or {}
+        if any("query" in (f.get("functions") or {}) for f in functions.values()):
+            types.append(source_type)
+    return types
+
+
+def describe_source_functions_struct(source_type):
+    """Структурное (JSON-able) описание функций типа источника: конфиг source-объекта + функции с параметрами."""
+    spec = ENGINE_SOURCES_AND_FUNCTIONS_MAP.get(source_type)
+    if not spec:
+        return {"error": f"source type '{source_type}' not found", "available_source_types": list_source_types_struct()}
+    functions = []
+    for function_name, function_spec in (spec.get("functions", {}) or {}).items():
+        function_spec = function_spec or {}
+        if "query" not in (function_spec.get("functions") or {}):
+            continue
+        functions.append({
+            "function": function_name,
+            "required": list((function_spec.get("required") or {}).keys()),
+            "optional": list((function_spec.get("unrequired") or {}).keys()),
+        })
+    return {
+        "source_type": source_type,
+        "source_object_config_required": list((spec.get("required") or {}).keys()),
+        "source_object_config_optional": list((spec.get("unrequired") or {}).keys()),
+        "functions": functions,
+    }
+
+
 def get_variable_type(text:str, current_state:dict):
     # empty
     if len(text) == 0:
