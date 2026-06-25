@@ -513,6 +513,26 @@ def apply_appearance(appearance, current_state=None):
         f"r.setProperty('--header-color', '{header_color}');"
         f"r.setProperty('--q-primary', '{button_color}');"
     )
+    # Гарантированная окраска шапки и заполненных кнопок: инлайн-стиль с !important на самих
+    # элементах перебивает любые правила Quasar/nicegui. Наблюдатель красит и вновь созданные кнопки.
+    color_js = (
+        "window.__uhColors = {button: '%s', header: '%s'};"
+        "function uhApplyColors(){"
+        "  document.querySelectorAll('.q-btn.bg-primary').forEach(function(e){"
+        "    e.style.setProperty('background-color', window.__uhColors.button, 'important');});"
+        "  document.querySelectorAll('.q-header').forEach(function(e){"
+        "    e.style.setProperty('background-color', window.__uhColors.header, 'important');});"
+        "}"
+        "uhApplyColors();"
+        "if(!window.__uhColorObserver){"
+        "  window.__uhColorObserver = new MutationObserver(function(){"
+        "    if(window.__uhColorRAF) return;"
+        "    window.__uhColorRAF = requestAnimationFrame(function(){window.__uhColorRAF=null; uhApplyColors();});"
+        "  });"
+        "  window.__uhColorObserver.observe(document.body, {childList:true, subtree:true});"
+        "}"
+    ) % (button_color, header_color)
+    ui.run_javascript(color_js)
 
 
 def make_codemirror(current_state, **kwargs):
