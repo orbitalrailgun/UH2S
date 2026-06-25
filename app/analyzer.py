@@ -132,7 +132,8 @@ def build_execution_mermaid(script_text, current_state):
     ctx = {"counter": 0, "lines": [], "classes": {}}
     _build_scope(script_text or "", current_state, ctx, depth=0, visited=set())
 
-    out = ["flowchart TD"]
+    # init-директива: светлее линии/стрелки (чтобы не сливались с тёмным фоном)
+    out = ['%%{init: {"theme": "base", "themeVariables": {"lineColor": "#94a3b8"}}}%%', "flowchart TD"]
     if not ctx["lines"]:
         out.append('    empty["(пустой скрипт)"]')
         return "\n".join(out)

@@ -2377,6 +2377,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             # весь блок harvester — в вертикально-прокручиваемом контейнере.
             # Глобально у body задан overflow:hidden, поэтому скролл задаём здесь,
             # ограничивая высоту вьюпортом (за вычетом шапки приложения).
+            ui.add_css('.mermaid { text-align: center; } .mermaid svg { display: block; margin-left: auto; margin-right: auto; }')
             with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
                 analysis_holder = {}
 
@@ -2401,7 +2402,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                             codemirror_script = make_codemirror(current_state).classes('w-full').style('max-height: 30vh')
                             with ui.row().classes('gap-2'):
                                 button_script = ui.button(tr("harv.execute"), icon='rocket_launch').on_click(button_script_click)
-                                button_analyze = ui.button(tr("harv.analyze"), icon='account_tree').on_click(analyze_click).props('outline')
+                                button_analyze = ui.button(tr("harv.analyze"), icon='account_tree').on_click(analyze_click)
                         # сворачиваемый блок прогресса шагов (вариант A): список команд со статусами
                         with ui.expansion(tr("harv.steps"), icon='list', value=True).classes('w-full'):
                             steps_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')

@@ -556,7 +556,7 @@ class TestAnalyzer(unittest.TestCase):
         script = ('DEF 1000 AS lim | GET jira_sm:search_issues(jql="project = SD", limit=%(lim)i) AS issues '
                   '| GET sqlite3:query(queries=["SELECT * FROM issues"]) AS agg | PRINT(agg) | SAVE(agg, xlsx) AS report')
         graph = build_execution_mermaid(script, self._state())
-        self.assertTrue(graph.startswith("flowchart TD"))
+        self.assertIn("flowchart TD", graph)
         self.assertIn("DEF lim = 1000", graph)
         self.assertIn("issues ⟵ jira_sm:search_issues", graph)
         self.assertIn("agg ⟵ sqlite3:query", graph)
