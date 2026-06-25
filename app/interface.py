@@ -539,12 +539,18 @@ def apply_appearance(appearance, current_state=None):
 
 
 def make_codemirror(current_state, **kwargs):
-    """Создать редактор CodeMirror с темой из настроек и зарегистрировать его для живой смены темы."""
+    """Создать редактор CodeMirror с темой из настроек и зарегистрировать его для живой смены темы.
+    Неизвестные в текущей версии NiceGUI kwargs (напр. line_wrapping) отбрасываются без падения."""
     theme = current_state.get("codemirror_theme") or APPEARANCE_DEFAULTS["codemirror_theme"]
-    try:
-        editor = ui.codemirror(theme=theme, **kwargs)
-    except BaseException:
-        editor = ui.codemirror(**kwargs)
+    editor = None
+    for attempt_kwargs in ({"theme": theme, **kwargs}, {"theme": theme}, {}):
+        try:
+            editor = ui.codemirror(**attempt_kwargs)
+            break
+        except BaseException:
+            continue
+    if editor is None:
+        editor = ui.codemirror()
     current_state.setdefault("ui_codemirrors", []).append(editor)
     return editor
 
@@ -2378,6 +2384,8 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             # Глобально у body задан overflow:hidden, поэтому скролл задаём здесь,
             # ограничивая высоту вьюпортом (за вычетом шапки приложения).
             ui.add_css('.mermaid { text-align: center; } .mermaid svg { display: block; margin-left: auto; margin-right: auto; }')
+            # перенос длинных строк в редакторе скрипта (визуальный; CSS-фолбэк к line_wrapping)
+            ui.add_css('.uh-cm-wrap .cm-content, .uh-cm-wrap .cm-line { white-space: pre-wrap !important; overflow-wrap: anywhere; word-break: break-word; }')
             with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
                 analysis_holder = {}
 
@@ -2399,7 +2407,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     with ui.tab_panel(tab_script):
                         # сворачиваемый блок скрипта (вместе с кнопками Execute/Анализ) — освобождает место под результаты
                         with ui.expansion(tr("harv.script"), icon='code', value=True).classes('w-full'):
-                            codemirror_script = make_codemirror(current_state).classes('w-full').style('max-height: 30vh')
+                            codemirror_script = make_codemirror(current_state, line_wrapping=True).classes('w-full uh-cm-wrap').style('max-height: 30vh')
                             with ui.row().classes('gap-2'):
                                 button_script = ui.button(tr("harv.execute"), icon='rocket_launch').on_click(button_script_click)
                                 button_analyze = ui.button(tr("harv.analyze"), icon='account_tree').on_click(analyze_click)

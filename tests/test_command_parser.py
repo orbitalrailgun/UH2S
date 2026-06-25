@@ -546,6 +546,24 @@ class TestSourcesCatalog(unittest.TestCase):
         self.assertIn("error", describe_source_functions_struct("does_not_exist"))
 
 
+class TestBackslashContinuation(unittest.TestCase):
+    def _state(self):
+        return {"app_name": "test", "app_version": "0", "username": "tester"}
+
+    def test_backslash_line_continuation(self):
+        from app.engine import command_parser
+        # длинная команда GET, разбитая обратным слэшем на физические строки
+        script = 'GET jira_sm:search_issues(jql="project = SD", \\\n    limit=50) AS issues'
+        parsed = command_parser(script, self._state())
+        self.assertEqual(len(parsed), 1)
+        cmd = parsed[0]
+        self.assertTrue(cmd.get("parsed"), cmd.get("parsed_comment"))
+        self.assertEqual(cmd.get("command"), "GET")
+        self.assertEqual(cmd.get("data_name"), "issues")
+        self.assertEqual(cmd.get("source"), "jira_sm")
+        self.assertIn("limit", cmd.get("parameters", {}))
+
+
 class TestAnalyzer(unittest.TestCase):
     def _state(self):
         return {"app_name": "test", "app_version": "0", "username": "tester",
