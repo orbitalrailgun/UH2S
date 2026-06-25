@@ -562,8 +562,9 @@ class TestAnalyzer(unittest.TestCase):
         self.assertIn("agg ⟵ sqlite3:query", graph)
         self.assertIn("PRINT agg", graph)
         self.assertIn("SAVE", graph)
-        # рёбра: DEF -> get(issues), issues -> agg (через SQL FROM)
-        self.assertRegex(graph, r"n1 --> n\d")     # lim -> search_issues
+        # рёбра подписаны именем передаваемых данных: lim -> search_issues, issues -> agg (SQL FROM)
+        self.assertIn('-->|"lim"|', graph)
+        self.assertIn('-->|"issues"|', graph)
         self.assertIn("classDef", graph)
 
     def test_build_execution_mermaid_empty(self):

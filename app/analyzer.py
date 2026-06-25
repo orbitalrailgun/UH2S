@@ -101,9 +101,10 @@ def _build_scope(script_text, current_state, ctx, depth, visited):
         ctx["lines"].append("    " + _wrap(node_id, label, shape))
         ctx["classes"].setdefault(css, []).append(node_id)
 
-        # рёбра от ранее объявленных имён, на которые ссылается команда
+        # рёбра от ранее объявленных имён, на которые ссылается команда (подпись = имя данных)
         for ref in _refs(command, list(defs.keys())):
-            ctx["lines"].append(f"    {defs[ref]} --> {node_id}")
+            edge_label = _short(ref, 24).replace("|", "/").replace('"', "'")
+            ctx["lines"].append(f'    {defs[ref]} -->|"{edge_label}"| {node_id}')
 
         # вложенный скрипт -> подграф
         if command.get("command") == "GET" and command.get("source") == "script":
