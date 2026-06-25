@@ -400,6 +400,14 @@ def update_theme(theme: str, color_overrides=None):
             background: var(--bg-color);
             overflow: hidden;
         }}
+        /* окраска шапки и заполненных кнопок конкретным цветом (без зависимости от --q-primary,
+           т.к. в части версий Quasar .bg-primary использует зашитый цвет). Инжектится живо в #theme-style. */
+        .q-header, .q-header.bg-primary {{
+            background-color: {palette.get('header', palette['panel'])} !important;
+        }}
+        .q-btn.bg-primary, .q-btn--standard.bg-primary {{
+            background-color: {palette.get('button', palette['accent'])} !important;
+        }}
     """
     ui.run_javascript(f"""
         let style = document.querySelector('#theme-style');
