@@ -489,12 +489,20 @@ def apply_appearance(appearance, current_state=None):
         table_font_size = APPEARANCE_DEFAULTS["table_font_size"]
     font = appearance.get("font") or APPEARANCE_DEFAULTS["font"]
     table_font = appearance.get("table_font") or APPEARANCE_DEFAULTS["table_font"]
+    # цвета шапки/кнопок: ставим инлайново на <html> (перебивает любые стили).
+    # --q-primary использует штатное правило Quasar .bg-primary -> кнопки красятся без перезагрузки CSS.
+    palette = {**THEMES.get(theme, THEMES["dark"]), **(color_overrides or {})}
+    button_color = palette.get("button", palette["accent"])
+    header_color = palette.get("header", palette["panel"])
     ui.run_javascript(
         "const r = document.documentElement.style;"
         f"r.setProperty('--app-font', `{font}`);"
         f"r.setProperty('--app-font-size', '{font_size}px');"
         f"r.setProperty('--app-table-font', `{table_font}`);"
         f"r.setProperty('--app-table-font-size', '{table_font_size}px');"
+        f"r.setProperty('--button-color', '{button_color}');"
+        f"r.setProperty('--header-color', '{header_color}');"
+        f"r.setProperty('--q-primary', '{button_color}');"
     )
 
 
