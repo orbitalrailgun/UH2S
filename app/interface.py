@@ -13,6 +13,7 @@ from typing import Dict, Any, Tuple
 from engine import commands_executor
 from app.engine import command_parser, list_source_types, describe_source_functions
 from app.i18n import translate, resolve_language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE
+from app.analyzer import build_execution_mermaid
 from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE, REGEX_USERNAME_RULE
 # via grok
 # Theme definitions
@@ -2377,15 +2378,30 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             # Глобально у body задан overflow:hidden, поэтому скролл задаём здесь,
             # ограничивая высоту вьюпортом (за вычетом шапки приложения).
             with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
+                analysis_holder = {}
+
+                def analyze_click():
+                    # статический анализ потока выполнения -> Mermaid-граф (с вложенными скриптами)
+                    try:
+                        mermaid_text = build_execution_mermaid(codemirror_script.value, current_state)
+                        analysis_holder["m"].content = mermaid_text
+                        analysis_holder["m"].update()
+                        harvester_panels.set_value('Analysis')
+                    except BaseException as analyze_error:
+                        ui.notify(tr("harv.analyze_error", error=str(analyze_error)), type="negative")
+
                 with ui.tabs().classes('w-full') as tabs:
                     tab_script = ui.tab('Scripts', label=tr("harv.tab.scripts"))
                     tab_datavars = ui.tab('Data/Variables', label=tr("harv.tab.datavars"))
+                    tab_analysis = ui.tab('Analysis', label=tr("harv.tab.analysis"))
                 with ui.tab_panels(tabs, value=tab_script).classes('w-full') as harvester_panels:
                     with ui.tab_panel(tab_script):
-                        # сворачиваемый блок скрипта (вместе с кнопкой Execute) — освобождает место под результаты
+                        # сворачиваемый блок скрипта (вместе с кнопками Execute/Анализ) — освобождает место под результаты
                         with ui.expansion(tr("harv.script"), icon='code', value=True).classes('w-full'):
                             codemirror_script = make_codemirror(current_state).classes('w-full').style('max-height: 30vh')
-                            button_script = ui.button(tr("harv.execute")).on_click(button_script_click)
+                            with ui.row().classes('gap-2'):
+                                button_script = ui.button(tr("harv.execute"), icon='rocket_launch').on_click(button_script_click)
+                                button_analyze = ui.button(tr("harv.analyze"), icon='account_tree').on_click(analyze_click).props('outline')
                         # сворачиваемый блок прогресса шагов (вариант A): список команд со статусами
                         with ui.expansion(tr("harv.steps"), icon='list', value=True).classes('w-full'):
                             steps_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
@@ -2396,6 +2412,9 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     with ui.tab_panel(tab_datavars):
                         grid_datavars = ui.aggrid({}).classes('w-full').style('height: 60vh')
                         codemirror_datavar = make_codemirror(current_state).classes('w-full')
+
+                    with ui.tab_panel(tab_analysis):
+                        analysis_holder["m"] = ui.mermaid('flowchart TD\n    start(["нажмите «Анализ выполнения»"])').classes('w-full').style('min-height: 60vh')
 
     except BaseException as e:
         error_message = f"fail: {str(e)}"

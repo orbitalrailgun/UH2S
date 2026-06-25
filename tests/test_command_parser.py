@@ -546,6 +546,32 @@ class TestSourcesCatalog(unittest.TestCase):
         self.assertIn("error", describe_source_functions_struct("does_not_exist"))
 
 
+class TestAnalyzer(unittest.TestCase):
+    def _state(self):
+        return {"app_name": "test", "app_version": "0", "username": "tester",
+                "main_session_id": "m", "user_session_id": "s"}
+
+    def test_build_execution_mermaid(self):
+        from app.analyzer import build_execution_mermaid
+        script = ('DEF 1000 AS lim | GET jira_sm:search_issues(jql="project = SD", limit=%(lim)i) AS issues '
+                  '| GET sqlite3:query(queries=["SELECT * FROM issues"]) AS agg | PRINT(agg) | SAVE(agg, xlsx) AS report')
+        graph = build_execution_mermaid(script, self._state())
+        self.assertTrue(graph.startswith("flowchart TD"))
+        self.assertIn("DEF lim = 1000", graph)
+        self.assertIn("issues ⟵ jira_sm:search_issues", graph)
+        self.assertIn("agg ⟵ sqlite3:query", graph)
+        self.assertIn("PRINT agg", graph)
+        self.assertIn("SAVE", graph)
+        # рёбра: DEF -> get(issues), issues -> agg (через SQL FROM)
+        self.assertRegex(graph, r"n1 --> n\d")     # lim -> search_issues
+        self.assertIn("classDef", graph)
+
+    def test_build_execution_mermaid_empty(self):
+        from app.analyzer import build_execution_mermaid
+        graph = build_execution_mermaid("", self._state())
+        self.assertIn("flowchart TD", graph)
+
+
 class TestLlmContext(unittest.TestCase):
     def test_context_window(self):
         from app.llm import llm_context_window

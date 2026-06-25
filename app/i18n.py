@@ -151,8 +151,9 @@ TRANSLATIONS = {
         "ai.agent_action": "Agent: {action}…", "ai.llm_error": "⚠️ LLM error: {error}", "ai.error": "⚠️ Error: {error}",
         "ai.input_placeholder": "Message to the agent",
         # Harvester
-        "harv.tab.scripts": "Scripts", "harv.tab.datavars": "Data/Variables",
+        "harv.tab.scripts": "Scripts", "harv.tab.datavars": "Data/Variables", "harv.tab.analysis": "Analysis",
         "harv.script": "Script", "harv.steps": "Execution steps", "harv.execute": "Execute",
+        "harv.analyze": "Analyze execution", "harv.analyze_error": "Analysis error: {error}",
         "harv.running": "Running…", "harv.done": "Done",
         "harv.parse_errors": "**Parse errors:**", "harv.parse_error_item": "- command {n} (`{cmd}`): {comment}",
         "harv.exec_error": "**Execution error:** {error}", "harv.no_output": "_Done. The script has no PRINT/SHOW commands to display._",
@@ -311,8 +312,9 @@ TRANSLATIONS = {
         "ai.agent_action": "Агент: {action}…", "ai.llm_error": "⚠️ Ошибка LLM: {error}", "ai.error": "⚠️ Ошибка: {error}",
         "ai.input_placeholder": "Сообщение агенту",
         # Harvester
-        "harv.tab.scripts": "Скрипты", "harv.tab.datavars": "Данные/Переменные",
+        "harv.tab.scripts": "Скрипты", "harv.tab.datavars": "Данные/Переменные", "harv.tab.analysis": "Анализ выполнения",
         "harv.script": "Скрипт", "harv.steps": "Шаги выполнения", "harv.execute": "Выполнить",
+        "harv.analyze": "Анализ выполнения", "harv.analyze_error": "Ошибка анализа: {error}",
         "harv.running": "Выполняется…", "harv.done": "Готово",
         "harv.parse_errors": "**Ошибки парсинга:**", "harv.parse_error_item": "- команда {n} (`{cmd}`): {comment}",
         "harv.exec_error": "**Ошибка выполнения:** {error}", "harv.no_output": "_Выполнено. В скрипте нет команд PRINT/SHOW для вывода._",
