@@ -390,6 +390,9 @@ def update_theme(theme: str, color_overrides=None):
             --panel-bg: {palette['panel']};
             --header-color: {palette.get('header', palette['panel'])};
             --button-color: {palette.get('button', palette['accent'])};
+            /* Quasar primary -> цвет заполненных кнопок (.bg-primary берёт из --q-primary).
+               Шапка перекрывается отдельно правилом .q-header (см. CSS). */
+            --q-primary: {palette.get('button', palette['accent'])};
         }}
         html, body {{
             margin: 0;
