@@ -49,6 +49,7 @@ TRANSLATIONS = {
         "settings.colors.hint": "Colors are set separately for dark and light themes — the currently selected theme is edited.",
         "settings.color.bg": "Background", "settings.color.text": "Text", "settings.color.accent": "Accent",
         "settings.color.card": "Cards", "settings.color.title": "Titles", "settings.color.panel": "Panels",
+        "settings.color.header": "Header", "settings.color.button": "Buttons",
         "settings.appearance.save_fail": "Failed to save: {error}", "settings.appearance.saved": "Appearance saved",
         # учётная запись
         "settings.account.user": "User: **{name}**", "settings.account.changepw": "Change password",
@@ -208,6 +209,7 @@ TRANSLATIONS = {
         "settings.colors.hint": "Цвета задаются отдельно для тёмной и светлой темы — редактируется текущая выбранная тема.",
         "settings.color.bg": "Фон", "settings.color.text": "Текст", "settings.color.accent": "Акцент",
         "settings.color.card": "Карточки", "settings.color.title": "Заголовки", "settings.color.panel": "Панели",
+        "settings.color.header": "Шапка", "settings.color.button": "Кнопки",
         "settings.appearance.save_fail": "Не удалось сохранить: {error}", "settings.appearance.saved": "Внешний вид сохранён",
         # учётная запись
         "settings.account.user": "Пользователь: **{name}**", "settings.account.changepw": "Смена пароля",

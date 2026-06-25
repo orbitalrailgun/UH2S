@@ -359,7 +359,9 @@ THEMES = {
         'card': '#2D3748',
         'glow': '0 0 15px rgba(6, 182, 212, 0.3)',
         'title': '#22D3EE',
-        'panel': '#2D3748'
+        'panel': '#2D3748',
+        'header': '#111827',
+        'button': '#06B6D4'
     },
     'light': {
         'bg': '#F3F4F6',
@@ -368,7 +370,9 @@ THEMES = {
         'card': '#FFFFFF',
         'glow': '0 0 15px rgba(59, 130, 246, 0.2)',
         'title': '#2563EB',
-        'panel': '#F9FAFB'
+        'panel': '#F9FAFB',
+        'header': '#2563EB',
+        'button': '#3B82F6'
     }
 }
 
@@ -384,6 +388,8 @@ def update_theme(theme: str, color_overrides=None):
             --glow: {palette['glow']};
             --title-color: {palette['title']};
             --panel-bg: {palette['panel']};
+            --header-color: {palette.get('header', palette['panel'])};
+            --button-color: {palette.get('button', palette['accent'])};
         }}
         html, body {{
             margin: 0;
@@ -421,6 +427,8 @@ COLOR_ROLES = [
     ("card", "Карточки"),
     ("title", "Заголовки"),
     ("panel", "Панели"),
+    ("header", "Шапка"),
+    ("button", "Кнопки"),
 ]
 
 # Значения по умолчанию для «Внешнего вида» (persist в settings, scope user:<username>).
@@ -576,6 +584,13 @@ async def login_page(current_state: Dict[str, Any]):
         .uh-panel {
             background: var(--panel-bg) !important;
             color: var(--text-color) !important;
+        }
+        /* Шапка и заполненные кнопки следуют палитре (по умолчанию — цвет Quasar primary) */
+        .q-header {
+            background: var(--header-color) !important;
+        }
+        .q-btn--standard {
+            background: var(--button-color) !important;
         }
         .main-container {
             width: 100vw;
@@ -779,6 +794,13 @@ def main_page(keycloak_openid, current_state):
         .uh-panel {
             background: var(--panel-bg) !important;
             color: var(--text-color) !important;
+        }
+        /* Шапка и заполненные кнопки следуют палитре (по умолчанию — цвет Quasar primary) */
+        .q-header {
+            background: var(--header-color) !important;
+        }
+        .q-btn--standard {
+            background: var(--button-color) !important;
         }
         .main-container {
             width: 100vw;
