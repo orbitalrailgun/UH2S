@@ -405,6 +405,7 @@ def update_theme(theme: str, color_overrides=None):
         .q-header, .q-header.bg-primary {{
             background-color: {palette.get('header', palette['panel'])} !important;
         }}
+        .q-btn.q-btn--standard.bg-primary, .q-btn.q-btn--actionable.bg-primary,
         .q-btn.bg-primary, .q-btn--standard.bg-primary {{
             background-color: {palette.get('button', palette['accent'])} !important;
         }}
