@@ -169,8 +169,9 @@ PRINT(имя)               /* переменная или таблица дан
 SHOW(<таблица>, <тип>[, <optional_params>])
 ```
 - `type = table` → интерактивная таблица (фильтры, сортировка по колонкам, горизонтальный скролл).
-- `type = matplotlib` → график; `optional_params` — JSON: `kind` (line/bar/…), `x`, `y`, `title`,
-  `figsize=[w,h]`, `dpi` (по умолчанию 150; поднимайте для HiDPI).
+- `type = matplotlib` → график; `optional_params` — JSON: `kind` (line/bar/…), `x`, `y` (можно список),
+  `title`, `figsize=[w,h]`, `dpi` (по умолчанию 150). Несколько слоёв/типов, вторая ось Y и пороговые
+  линии (`layers`, `secondary_y`, `hlines`/`vlines`) — см. подробную доку [`SHOW_MATPLOTLIB.md`](SHOW_MATPLOTLIB.md).
 ```
 SHOW(alerts, table)
 SHOW(by_sev, matplotlib, {"kind":"bar","x":"severity","y":"cnt","title":"По severity","dpi":200})

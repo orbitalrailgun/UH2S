@@ -104,13 +104,15 @@ def records_to_aggrid_options(data, aggrid_theme="ag-theme-balham-dark", max_row
 
 
 def render_plot_png_b64(data, params):
-    """Построить график matplotlib по данным и optional_params.
+    """Построить график matplotlib по данным и optional_params (см. SHOW_MATPLOTLIB.md).
 
-    Возвращает dict {b64, css_w, css_h}: PNG рендерится с высоким dpi (резкость),
-    а css_w/css_h — «логический» размер для отображения (figsize в дюймах × 96px),
-    чтобы браузер изображение уменьшал, а не растягивал (чётко на retina/HiDPI).
+    Возвращает dict {b64, css_w, css_h}: PNG с высоким dpi (резкость), css_w/css_h —
+    «логический» размер для браузера (figsize в дюймах × 96px), чёткость на retina/HiDPI.
 
-    optional_params: kind, x, y, title, figsize=[w_in,h_in], dpi (по умолчанию 150)."""
+    Простой режим: kind, x, y (y может быть списком столбцов), color, title, figsize, dpi.
+    Общий режим (несколько слоёв): layers=[{kind,x,y,color,label,secondary_y,stacked}, ...].
+    Пороговые линии: hlines=[{y,color,label,linestyle,linewidth}], vlines=[{x,...}].
+    Оформление: title, xlabel, ylabel, grid(bool), legend(bool), legend_loc, logx, logy, ylim, xlim, rot."""
     import io
     import base64
     import matplotlib
@@ -127,14 +129,66 @@ def render_plot_png_b64(data, params):
 
     dataframe = pandas.DataFrame(data)
     fig, ax = plt.subplots(figsize=(figsize[0], figsize[1]))
-    plot_kwargs = {"kind": params.get("kind", "line"), "ax": ax}
-    if params.get("x") is not None:
-        plot_kwargs["x"] = params["x"]
-    if params.get("y") is not None:
-        plot_kwargs["y"] = params["y"]
-    dataframe.plot(**plot_kwargs)
+    ax_secondary = {"ax": None}
+
+    def target_axis(layer):
+        if layer.get("secondary_y"):
+            if ax_secondary["ax"] is None:
+                ax_secondary["ax"] = ax.twinx()
+            return ax_secondary["ax"]
+        return ax
+
+    def plot_one(spec, axis):
+        kw = {"kind": spec.get("kind", "line"), "ax": axis, "legend": False}
+        for key in ("x", "y", "color", "label", "stacked", "rot", "alpha", "width"):
+            if spec.get(key) is not None:
+                kw[key] = spec[key]
+        dataframe.plot(**kw)
+
+    layers = params.get("layers")
+    if layers:
+        for layer in layers:
+            plot_one(layer, target_axis(layer))
+    else:
+        plot_one(params, ax)
+
+    # пороговые/опорные линии (напр. порог, выше которого bar считается превышением)
+    for hl in (params.get("hlines") or []):
+        ax.axhline(y=hl.get("y", 0), color=hl.get("color"), linestyle=hl.get("linestyle", "--"),
+                   linewidth=hl.get("linewidth", 1.5), label=hl.get("label"))
+    for vl in (params.get("vlines") or []):
+        ax.axvline(x=vl.get("x", 0), color=vl.get("color"), linestyle=vl.get("linestyle", "--"),
+                   linewidth=vl.get("linewidth", 1.5), label=vl.get("label"))
+
+    # оформление
     if params.get("title"):
         ax.set_title(params["title"])
+    if params.get("xlabel"):
+        ax.set_xlabel(params["xlabel"])
+    if params.get("ylabel"):
+        ax.set_ylabel(params["ylabel"])
+    if params.get("grid"):
+        ax.grid(True, alpha=0.3)
+    if params.get("logy"):
+        ax.set_yscale("log")
+    if params.get("logx"):
+        ax.set_xscale("log")
+    if params.get("ylim"):
+        ax.set_ylim(params["ylim"])
+    if params.get("xlim"):
+        ax.set_xlim(params["xlim"])
+
+    # единая легенда (объединяем основную/вторичную оси и линии-пороги)
+    if params.get("legend", True):
+        handles, labels = ax.get_legend_handles_labels()
+        if ax_secondary["ax"] is not None:
+            handles2, labels2 = ax_secondary["ax"].get_legend_handles_labels()
+            handles += handles2
+            labels += labels2
+        named = [(h, l) for h, l in zip(handles, labels) if l and not l.startswith("_")]
+        if named:
+            ax.legend([h for h, _ in named], [l for _, l in named], loc=params.get("legend_loc", "best"))
+
     try:
         fig.autofmt_xdate()
     except Exception:
