@@ -99,7 +99,17 @@ def execute_sqlite3(parameters, source_object, data_map, current_state):
                     # нормализация данных, чтобы то, что в пандасе, влезло в sqlite3    
                     stringcols = input_df.select_dtypes(include='object').columns
                     input_df[stringcols] = input_df[stringcols].fillna('').astype(str)
-                    input_df.to_sql(table, db, if_exists="replace", chunksize=100, index=False, method="multi")
+                    # method="multi" биндит chunksize * кол-во_столбцов переменных в один INSERT.
+                    # SQLite ограничивает это SQLITE_MAX_VARIABLE_NUMBER (999 в старых сборках) ->
+                    # подбираем chunksize от числа столбцов, иначе широкие таблицы дают
+                    # "too many SQL variables". При >900 столбцах падаем на построчную вставку.
+                    safe_var_limit = 900
+                    num_columns = max(1, len(column_list))
+                    if num_columns >= safe_var_limit:
+                        input_df.to_sql(table, db, if_exists="replace", index=False)
+                    else:
+                        safe_chunksize = max(1, min(100, safe_var_limit // num_columns))
+                        input_df.to_sql(table, db, if_exists="replace", chunksize=safe_chunksize, index=False, method="multi")
                 else:
                     #input_df = pandas.DataFrame([{"status":"empty"}])
                     pass
