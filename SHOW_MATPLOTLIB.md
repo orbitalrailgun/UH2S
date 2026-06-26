@@ -115,6 +115,11 @@ SHOW(d, matplotlib, {
 | `bar_width` | ширина/глубина столбца для `bar3d` (деф. 0.5) |
 | `alpha` | прозрачность |
 | `elev`,`azim` | угол обзора (вертикальный / горизонтальный поворот) |
+| `fontsize` | базовый размер шрифта для всех подписей сразу |
+| `tick_fontsize` | размер шрифта делений осей (если тики наезжают — уменьшите) |
+| `label_fontsize`,`title_fontsize` | размер подписей осей / заголовка |
+| `tick_rotation` | поворот подписей делений X/Y (град.), чтобы не перекрывались |
+| `labelpad` | отступ подписи оси от делений (деф. 8) |
 | `title`,`figsize`,`dpi` | как в 2D |
 
 ```
@@ -123,7 +128,8 @@ GET sqlite3:query(queries=["SELECT region, month, sales FROM data"]) AS d
 | SHOW(d, matplotlib, {
     "kind":"bar3d", "x":"region", "y":"month", "z":"sales",
     "title":"Sales by region/month", "zlabel":"sales",
-    "color":"#06b6d4", "figsize":[10,7], "elev":25, "azim":-60
+    "color":"#06b6d4", "figsize":[10,7], "elev":25, "azim":-60,
+    "tick_fontsize":8, "label_fontsize":10, "tick_rotation":30
   })
 
 /* 3D-точки */

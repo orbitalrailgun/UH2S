@@ -169,17 +169,25 @@ def render_plot_png_b64(data, params):
         else:  # scatter3d
             ax3d.scatter(xs, ys, zs, c=color, depthshade=True, alpha=params.get("alpha", 1.0))
 
+        # размеры шрифтов (тики наезжают при крупном шрифте — даём контроль)
+        tick_fs = params.get("tick_fontsize", params.get("fontsize"))
+        label_fs = params.get("label_fontsize", params.get("fontsize"))
+        title_fs = params.get("title_fontsize", params.get("fontsize"))
+        tick_rotation = params.get("tick_rotation")
+        if tick_fs is not None:
+            ax3d.tick_params(labelsize=tick_fs)
+
         if x_labels is not None:
             ax3d.set_xticks(x_ticks)
-            ax3d.set_xticklabels(x_labels)
+            ax3d.set_xticklabels(x_labels, rotation=tick_rotation if tick_rotation is not None else 0)
         if y_labels is not None:
             ax3d.set_yticks(y_ticks)
-            ax3d.set_yticklabels(y_labels)
+            ax3d.set_yticklabels(y_labels, rotation=tick_rotation if tick_rotation is not None else 0)
         if params.get("title"):
-            ax3d.set_title(params["title"])
-        ax3d.set_xlabel(params.get("xlabel") or str(params.get("x")))
-        ax3d.set_ylabel(params.get("ylabel") or str(params.get("y")))
-        ax3d.set_zlabel(params.get("zlabel") or str(params.get("z")))
+            ax3d.set_title(params["title"], fontsize=title_fs)
+        ax3d.set_xlabel(params.get("xlabel") or str(params.get("x")), fontsize=label_fs, labelpad=params.get("labelpad", 8))
+        ax3d.set_ylabel(params.get("ylabel") or str(params.get("y")), fontsize=label_fs, labelpad=params.get("labelpad", 8))
+        ax3d.set_zlabel(params.get("zlabel") or str(params.get("z")), fontsize=label_fs, labelpad=params.get("labelpad", 8))
         if params.get("elev") is not None or params.get("azim") is not None:
             ax3d.view_init(elev=params.get("elev"), azim=params.get("azim"))
         return _finish(fig)
