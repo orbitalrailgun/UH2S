@@ -112,6 +112,7 @@ def render_plot_png_b64(data, params):
     Простой режим: kind, x, y (y может быть списком столбцов), color, title, figsize, dpi.
     Общий режим (несколько слоёв): layers=[{kind,x,y,color,label,secondary_y,stacked}, ...].
     Пороговые линии: hlines=[{y,color,label,linestyle,linewidth}], vlines=[{x,...}].
+    3D-режим: kind=bar3d|scatter3d, x, y, z (z — высота/третья ось), zlabel, elev, azim, bar_width.
     Оформление: title, xlabel, ylabel, grid(bool), legend(bool), legend_loc, logx, logy, ylim, xlim, rot."""
     import io
     import base64
@@ -128,6 +129,61 @@ def render_plot_png_b64(data, params):
     dpi = max(50, min(dpi, 400))
 
     dataframe = pandas.DataFrame(data)
+
+    def _finish(fig):
+        buffer = io.BytesIO()
+        fig.savefig(buffer, format="png", bbox_inches="tight", dpi=dpi)
+        plt.close(fig)
+        b64 = base64.b64encode(buffer.getvalue()).decode()
+        return {"b64": b64, "css_w": int(figsize[0] * 96), "css_h": int(figsize[1] * 96)}
+
+    # --- 3D-режим (bar3d / scatter3d) — отдельная ветка, 2D-параметры не применяются ---
+    kind = (params.get("kind") or "").strip().lower()
+    if kind in ("bar3d", "scatter3d"):
+        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (регистрирует projection='3d')
+
+        def column(name):
+            if name is None or name not in dataframe.columns:
+                raise ValueError(f"3D: столбец '{name}' не найден (есть: {', '.join(map(str, dataframe.columns))})")
+            return dataframe[name]
+
+        def positions(series):
+            # числовой столбец -> значения как есть; категориальный -> индексы + подписи тиков
+            if pandas.api.types.is_numeric_dtype(series):
+                return [float(v) for v in series.tolist()], None, None
+            categories = list(dict.fromkeys(series.tolist()))
+            index = {c: i for i, c in enumerate(categories)}
+            return [float(index[v]) for v in series.tolist()], list(range(len(categories))), [str(c) for c in categories]
+
+        fig = plt.figure(figsize=(figsize[0], figsize[1]))
+        ax3d = fig.add_subplot(projection="3d")
+        xs, x_ticks, x_labels = positions(column(params.get("x")))
+        ys, y_ticks, y_labels = positions(column(params.get("y")))
+        zs = [float(v) for v in column(params.get("z")).tolist()]
+        color = params.get("color", "#06b6d4")
+
+        if kind == "bar3d":
+            width = params.get("bar_width", 0.5)
+            ax3d.bar3d([x - width / 2 for x in xs], [y - width / 2 for y in ys], [0] * len(zs),
+                       width, width, zs, color=color, shade=True, alpha=params.get("alpha", 1.0))
+        else:  # scatter3d
+            ax3d.scatter(xs, ys, zs, c=color, depthshade=True, alpha=params.get("alpha", 1.0))
+
+        if x_labels is not None:
+            ax3d.set_xticks(x_ticks)
+            ax3d.set_xticklabels(x_labels)
+        if y_labels is not None:
+            ax3d.set_yticks(y_ticks)
+            ax3d.set_yticklabels(y_labels)
+        if params.get("title"):
+            ax3d.set_title(params["title"])
+        ax3d.set_xlabel(params.get("xlabel") or str(params.get("x")))
+        ax3d.set_ylabel(params.get("ylabel") or str(params.get("y")))
+        ax3d.set_zlabel(params.get("zlabel") or str(params.get("z")))
+        if params.get("elev") is not None or params.get("azim") is not None:
+            ax3d.view_init(elev=params.get("elev"), azim=params.get("azim"))
+        return _finish(fig)
+
     fig, ax = plt.subplots(figsize=(figsize[0], figsize[1]))
     ax_secondary = {"ax": None}
 
@@ -199,11 +255,7 @@ def render_plot_png_b64(data, params):
         fig.autofmt_xdate()
     except Exception:
         pass
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", bbox_inches="tight", dpi=dpi)
-    plt.close(fig)
-    b64 = base64.b64encode(buffer.getvalue()).decode()
-    return {"b64": b64, "css_w": int(figsize[0] * 96), "css_h": int(figsize[1] * 96)}
+    return _finish(fig)
 
 
 def _safe_filename(name):
@@ -2453,6 +2505,10 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             ui.add_css('.mermaid { text-align: center; } .mermaid svg { display: block; margin-left: auto; margin-right: auto; }')
             # перенос длинных строк в редакторе скрипта (визуальный; CSS-фолбэк к line_wrapping)
             ui.add_css('.uh-cm-wrap .cm-content, .uh-cm-wrap .cm-line { white-space: pre-wrap !important; overflow-wrap: anywhere; word-break: break-word; }')
+            # ручное растягивание окна редактора скрипта по вертикали: грип на внешней обёртке,
+            # чтобы она росла в потоке и смещала кнопки/нижние элементы вниз; .cm-editor заполняет её
+            ui.add_css('.uh-cm-resize { resize: vertical; overflow: auto; min-height: 120px; height: 30vh; max-height: 85vh; }'
+                       ' .uh-cm-resize .cm-editor { height: 100%; }')
             with ui.column().classes('w-full no-wrap'):
                 analysis_holder = {}
 
@@ -2474,7 +2530,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     with ui.tab_panel(tab_script):
                         # сворачиваемый блок скрипта (вместе с кнопками Execute/Анализ) — освобождает место под результаты
                         with ui.expansion(tr("harv.script"), icon='code', value=True).classes('w-full'):
-                            codemirror_script = make_codemirror(current_state, line_wrapping=True).classes('w-full uh-cm-wrap').style('max-height: 30vh')
+                            codemirror_script = make_codemirror(current_state, line_wrapping=True).classes('w-full uh-cm-wrap uh-cm-resize')
                             with ui.row().classes('gap-2'):
                                 button_script = ui.button(tr("harv.execute"), icon='rocket_launch').on_click(button_script_click)
                                 button_analyze = ui.button(tr("harv.analyze"), icon='account_tree').on_click(analyze_click)
