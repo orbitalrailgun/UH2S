@@ -82,7 +82,8 @@ GET sqlite3:query(queries=["SELECT date, count, avg_latency FROM data ORDER BY d
     ]
   })
 ```
-`hlines`/`vlines` и всё оформление (`title/xlabel/ylabel/grid/legend/logy/...`) работают и в режиме `layers`.
+`hlines`/`vlines` можно задавать **на верхнем уровне** params (рекомендуется) **или внутри слоя** — оба
+написания работают. Всё оформление (`title/xlabel/ylabel/grid/legend/logy/...`) работает и в режиме `layers`.
 `secondary_y:true` рисует слой на правой оси Y (другой масштаб). Легенда объединяет обе оси и линии-пороги.
 
 ```

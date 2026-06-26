@@ -145,18 +145,24 @@ def render_plot_png_b64(data, params):
                 kw[key] = spec[key]
         dataframe.plot(**kw)
 
+    # пороговые/опорные линии можно задать как на верхнем уровне, так и внутри слоёв —
+    # собираем из обоих мест, чтобы оба написания работали
+    hlines = list(params.get("hlines") or [])
+    vlines = list(params.get("vlines") or [])
     layers = params.get("layers")
     if layers:
         for layer in layers:
             plot_one(layer, target_axis(layer))
+            hlines.extend(layer.get("hlines") or [])
+            vlines.extend(layer.get("vlines") or [])
     else:
         plot_one(params, ax)
 
     # пороговые/опорные линии (напр. порог, выше которого bar считается превышением)
-    for hl in (params.get("hlines") or []):
+    for hl in hlines:
         ax.axhline(y=hl.get("y", 0), color=hl.get("color"), linestyle=hl.get("linestyle", "--"),
                    linewidth=hl.get("linewidth", 1.5), label=hl.get("label"))
-    for vl in (params.get("vlines") or []):
+    for vl in vlines:
         ax.axvline(x=vl.get("x", 0), color=vl.get("color"), linestyle=vl.get("linestyle", "--"),
                    linewidth=vl.get("linewidth", 1.5), label=vl.get("label"))
 
