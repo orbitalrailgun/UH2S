@@ -103,6 +103,25 @@ def records_to_aggrid_options(data, aggrid_theme="ag-theme-balham-dark", max_row
     }
 
 
+def _resolve_plot_styles(params, plt):
+    """Разрешить запрошенные стили matplotlib/SciencePlots в список доступных.
+
+    style: строка или список ('science', 'ieee', 'nature', 'grid', 'ggplot', ...).
+    SciencePlots (если установлен) регистрирует свои стили при импорте. Неизвестные
+    стили молча отбрасываются, чтобы рендер не падал."""
+    requested = params.get("style")
+    if not requested:
+        return []
+    if isinstance(requested, str):
+        requested = [requested]
+    try:
+        import scienceplots  # noqa: F401  (регистрирует стили 'science'/'ieee'/'nature'/...)
+    except Exception:
+        pass
+    available = set(plt.style.available)
+    return [s for s in requested if s in available]
+
+
 def render_plot_png_b64(data, params):
     """Построить график matplotlib по данным и optional_params (см. SHOW_MATPLOTLIB.md).
 
@@ -113,7 +132,9 @@ def render_plot_png_b64(data, params):
     Общий режим (несколько слоёв): layers=[{kind,x,y,color,label,secondary_y,stacked}, ...].
     Пороговые линии: hlines=[{y,color,label,linestyle,linewidth}], vlines=[{x,...}].
     3D-режим: kind=bar3d|scatter3d, x, y, z (z — высота/третья ось), zlabel, elev, azim, bar_width.
-    Оформление: title, xlabel, ylabel, grid(bool), legend(bool), legend_loc, logx, logy, ylim, xlim, rot."""
+    Оформление: title, xlabel, ylabel, grid(bool), legend(bool), legend_loc, logx, logy, ylim, xlim, rot.
+    Стиль: style='science'|['science','grid']|'ggplot'|... (SciencePlots/встроенные), rc={...} переопределения,
+    usetex(bool, по умолчанию False — стиль science не требует LaTeX)."""
     import io
     import base64
     import matplotlib
@@ -137,133 +158,146 @@ def render_plot_png_b64(data, params):
         b64 = base64.b64encode(buffer.getvalue()).decode()
         return {"b64": b64, "css_w": int(figsize[0] * 96), "css_h": int(figsize[1] * 96)}
 
-    # --- 3D-режим (bar3d / scatter3d) — отдельная ветка, 2D-параметры не применяются ---
-    kind = (params.get("kind") or "").strip().lower()
-    if kind in ("bar3d", "scatter3d"):
-        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (регистрирует projection='3d')
+    def _build():
+        # --- 3D-режим (bar3d / scatter3d) — отдельная ветка, 2D-параметры не применяются ---
+        kind = (params.get("kind") or "").strip().lower()
+        if kind in ("bar3d", "scatter3d"):
+            from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (регистрирует projection='3d')
 
-        def column(name):
-            if name is None or name not in dataframe.columns:
-                raise ValueError(f"3D: столбец '{name}' не найден (есть: {', '.join(map(str, dataframe.columns))})")
-            return dataframe[name]
+            def column(name):
+                if name is None or name not in dataframe.columns:
+                    raise ValueError(f"3D: столбец '{name}' не найден (есть: {', '.join(map(str, dataframe.columns))})")
+                return dataframe[name]
 
-        def positions(series):
-            # числовой столбец -> значения как есть; категориальный -> индексы + подписи тиков
-            if pandas.api.types.is_numeric_dtype(series):
-                return [float(v) for v in series.tolist()], None, None
-            categories = list(dict.fromkeys(series.tolist()))
-            index = {c: i for i, c in enumerate(categories)}
-            return [float(index[v]) for v in series.tolist()], list(range(len(categories))), [str(c) for c in categories]
+            def positions(series):
+                # числовой столбец -> значения как есть; категориальный -> индексы + подписи тиков
+                if pandas.api.types.is_numeric_dtype(series):
+                    return [float(v) for v in series.tolist()], None, None
+                categories = list(dict.fromkeys(series.tolist()))
+                index = {c: i for i, c in enumerate(categories)}
+                return [float(index[v]) for v in series.tolist()], list(range(len(categories))), [str(c) for c in categories]
 
-        fig = plt.figure(figsize=(figsize[0], figsize[1]))
-        ax3d = fig.add_subplot(projection="3d")
-        xs, x_ticks, x_labels = positions(column(params.get("x")))
-        ys, y_ticks, y_labels = positions(column(params.get("y")))
-        zs = [float(v) for v in column(params.get("z")).tolist()]
-        color = params.get("color", "#06b6d4")
+            fig = plt.figure(figsize=(figsize[0], figsize[1]))
+            ax3d = fig.add_subplot(projection="3d")
+            xs, x_ticks, x_labels = positions(column(params.get("x")))
+            ys, y_ticks, y_labels = positions(column(params.get("y")))
+            zs = [float(v) for v in column(params.get("z")).tolist()]
+            color = params.get("color", "#06b6d4")
 
-        if kind == "bar3d":
-            width = params.get("bar_width", 0.5)
-            ax3d.bar3d([x - width / 2 for x in xs], [y - width / 2 for y in ys], [0] * len(zs),
-                       width, width, zs, color=color, shade=True, alpha=params.get("alpha", 1.0))
-        else:  # scatter3d
-            ax3d.scatter(xs, ys, zs, c=color, depthshade=True, alpha=params.get("alpha", 1.0))
+            if kind == "bar3d":
+                width = params.get("bar_width", 0.5)
+                ax3d.bar3d([x - width / 2 for x in xs], [y - width / 2 for y in ys], [0] * len(zs),
+                           width, width, zs, color=color, shade=True, alpha=params.get("alpha", 1.0))
+            else:  # scatter3d
+                ax3d.scatter(xs, ys, zs, c=color, depthshade=True, alpha=params.get("alpha", 1.0))
 
-        # размеры шрифтов (тики наезжают при крупном шрифте — даём контроль)
-        tick_fs = params.get("tick_fontsize", params.get("fontsize"))
-        label_fs = params.get("label_fontsize", params.get("fontsize"))
-        title_fs = params.get("title_fontsize", params.get("fontsize"))
-        tick_rotation = params.get("tick_rotation")
-        if tick_fs is not None:
-            ax3d.tick_params(labelsize=tick_fs)
+            # размеры шрифтов (тики наезжают при крупном шрифте — даём контроль)
+            tick_fs = params.get("tick_fontsize", params.get("fontsize"))
+            label_fs = params.get("label_fontsize", params.get("fontsize"))
+            title_fs = params.get("title_fontsize", params.get("fontsize"))
+            tick_rotation = params.get("tick_rotation")
+            if tick_fs is not None:
+                ax3d.tick_params(labelsize=tick_fs)
 
-        if x_labels is not None:
-            ax3d.set_xticks(x_ticks)
-            ax3d.set_xticklabels(x_labels, rotation=tick_rotation if tick_rotation is not None else 0)
-        if y_labels is not None:
-            ax3d.set_yticks(y_ticks)
-            ax3d.set_yticklabels(y_labels, rotation=tick_rotation if tick_rotation is not None else 0)
+            if x_labels is not None:
+                ax3d.set_xticks(x_ticks)
+                ax3d.set_xticklabels(x_labels, rotation=tick_rotation if tick_rotation is not None else 0)
+            if y_labels is not None:
+                ax3d.set_yticks(y_ticks)
+                ax3d.set_yticklabels(y_labels, rotation=tick_rotation if tick_rotation is not None else 0)
+            if params.get("title"):
+                ax3d.set_title(params["title"], fontsize=title_fs)
+            ax3d.set_xlabel(params.get("xlabel") or str(params.get("x")), fontsize=label_fs, labelpad=params.get("labelpad", 8))
+            ax3d.set_ylabel(params.get("ylabel") or str(params.get("y")), fontsize=label_fs, labelpad=params.get("labelpad", 8))
+            ax3d.set_zlabel(params.get("zlabel") or str(params.get("z")), fontsize=label_fs, labelpad=params.get("labelpad", 8))
+            if params.get("elev") is not None or params.get("azim") is not None:
+                ax3d.view_init(elev=params.get("elev"), azim=params.get("azim"))
+            return _finish(fig)
+
+        fig, ax = plt.subplots(figsize=(figsize[0], figsize[1]))
+        ax_secondary = {"ax": None}
+
+        def target_axis(layer):
+            if layer.get("secondary_y"):
+                if ax_secondary["ax"] is None:
+                    ax_secondary["ax"] = ax.twinx()
+                return ax_secondary["ax"]
+            return ax
+
+        def plot_one(spec, axis):
+            kw = {"kind": spec.get("kind", "line"), "ax": axis, "legend": False}
+            for key in ("x", "y", "color", "label", "stacked", "rot", "alpha", "width"):
+                if spec.get(key) is not None:
+                    kw[key] = spec[key]
+            dataframe.plot(**kw)
+
+        # пороговые/опорные линии можно задать как на верхнем уровне, так и внутри слоёв —
+        # собираем из обоих мест, чтобы оба написания работали
+        hlines = list(params.get("hlines") or [])
+        vlines = list(params.get("vlines") or [])
+        layers = params.get("layers")
+        if layers:
+            for layer in layers:
+                plot_one(layer, target_axis(layer))
+                hlines.extend(layer.get("hlines") or [])
+                vlines.extend(layer.get("vlines") or [])
+        else:
+            plot_one(params, ax)
+
+        # пороговые/опорные линии (напр. порог, выше которого bar считается превышением)
+        for hl in hlines:
+            ax.axhline(y=hl.get("y", 0), color=hl.get("color"), linestyle=hl.get("linestyle", "--"),
+                       linewidth=hl.get("linewidth", 1.5), label=hl.get("label"))
+        for vl in vlines:
+            ax.axvline(x=vl.get("x", 0), color=vl.get("color"), linestyle=vl.get("linestyle", "--"),
+                       linewidth=vl.get("linewidth", 1.5), label=vl.get("label"))
+
+        # оформление
         if params.get("title"):
-            ax3d.set_title(params["title"], fontsize=title_fs)
-        ax3d.set_xlabel(params.get("xlabel") or str(params.get("x")), fontsize=label_fs, labelpad=params.get("labelpad", 8))
-        ax3d.set_ylabel(params.get("ylabel") or str(params.get("y")), fontsize=label_fs, labelpad=params.get("labelpad", 8))
-        ax3d.set_zlabel(params.get("zlabel") or str(params.get("z")), fontsize=label_fs, labelpad=params.get("labelpad", 8))
-        if params.get("elev") is not None or params.get("azim") is not None:
-            ax3d.view_init(elev=params.get("elev"), azim=params.get("azim"))
+            ax.set_title(params["title"])
+        if params.get("xlabel"):
+            ax.set_xlabel(params["xlabel"])
+        if params.get("ylabel"):
+            ax.set_ylabel(params["ylabel"])
+        if params.get("grid"):
+            ax.grid(True, alpha=0.3)
+        if params.get("logy"):
+            ax.set_yscale("log")
+        if params.get("logx"):
+            ax.set_xscale("log")
+        if params.get("ylim"):
+            ax.set_ylim(params["ylim"])
+        if params.get("xlim"):
+            ax.set_xlim(params["xlim"])
+
+        # единая легенда (объединяем основную/вторичную оси и линии-пороги)
+        if params.get("legend", True):
+            handles, labels = ax.get_legend_handles_labels()
+            if ax_secondary["ax"] is not None:
+                handles2, labels2 = ax_secondary["ax"].get_legend_handles_labels()
+                handles += handles2
+                labels += labels2
+            named = [(h, l) for h, l in zip(handles, labels) if l and not l.startswith("_")]
+            if named:
+                ax.legend([h for h, _ in named], [l for _, l in named], loc=params.get("legend_loc", "best"))
+
+        try:
+            fig.autofmt_xdate()
+        except Exception:
+            pass
         return _finish(fig)
 
-    fig, ax = plt.subplots(figsize=(figsize[0], figsize[1]))
-    ax_secondary = {"ax": None}
-
-    def target_axis(layer):
-        if layer.get("secondary_y"):
-            if ax_secondary["ax"] is None:
-                ax_secondary["ax"] = ax.twinx()
-            return ax_secondary["ax"]
-        return ax
-
-    def plot_one(spec, axis):
-        kw = {"kind": spec.get("kind", "line"), "ax": axis, "legend": False}
-        for key in ("x", "y", "color", "label", "stacked", "rot", "alpha", "width"):
-            if spec.get(key) is not None:
-                kw[key] = spec[key]
-        dataframe.plot(**kw)
-
-    # пороговые/опорные линии можно задать как на верхнем уровне, так и внутри слоёв —
-    # собираем из обоих мест, чтобы оба написания работали
-    hlines = list(params.get("hlines") or [])
-    vlines = list(params.get("vlines") or [])
-    layers = params.get("layers")
-    if layers:
-        for layer in layers:
-            plot_one(layer, target_axis(layer))
-            hlines.extend(layer.get("hlines") or [])
-            vlines.extend(layer.get("vlines") or [])
-    else:
-        plot_one(params, ax)
-
-    # пороговые/опорные линии (напр. порог, выше которого bar считается превышением)
-    for hl in hlines:
-        ax.axhline(y=hl.get("y", 0), color=hl.get("color"), linestyle=hl.get("linestyle", "--"),
-                   linewidth=hl.get("linewidth", 1.5), label=hl.get("label"))
-    for vl in vlines:
-        ax.axvline(x=vl.get("x", 0), color=vl.get("color"), linestyle=vl.get("linestyle", "--"),
-                   linewidth=vl.get("linewidth", 1.5), label=vl.get("label"))
-
-    # оформление
-    if params.get("title"):
-        ax.set_title(params["title"])
-    if params.get("xlabel"):
-        ax.set_xlabel(params["xlabel"])
-    if params.get("ylabel"):
-        ax.set_ylabel(params["ylabel"])
-    if params.get("grid"):
-        ax.grid(True, alpha=0.3)
-    if params.get("logy"):
-        ax.set_yscale("log")
-    if params.get("logx"):
-        ax.set_xscale("log")
-    if params.get("ylim"):
-        ax.set_ylim(params["ylim"])
-    if params.get("xlim"):
-        ax.set_xlim(params["xlim"])
-
-    # единая легенда (объединяем основную/вторичную оси и линии-пороги)
-    if params.get("legend", True):
-        handles, labels = ax.get_legend_handles_labels()
-        if ax_secondary["ax"] is not None:
-            handles2, labels2 = ax_secondary["ax"].get_legend_handles_labels()
-            handles += handles2
-            labels += labels2
-        named = [(h, l) for h, l in zip(handles, labels) if l and not l.startswith("_")]
-        if named:
-            ax.legend([h for h, _ in named], [l for _, l in named], loc=params.get("legend_loc", "best"))
-
-    try:
-        fig.autofmt_xdate()
-    except Exception:
-        pass
-    return _finish(fig)
+    # оформление science-plots / встроенные стили — скоупом, чтобы не «протекало» на следующие графики.
+    # text.usetex по умолчанию выключаем: стиль 'science' иначе требует установленного LaTeX.
+    styles = _resolve_plot_styles(params, plt)
+    rc_overrides = {}
+    if not params.get("usetex"):
+        rc_overrides["text.usetex"] = False
+    if isinstance(params.get("rc"), dict):
+        rc_overrides.update(params["rc"])
+    with plt.style.context(styles):
+        with plt.rc_context(rc_overrides):
+            return _build()
 
 
 def _safe_filename(name):

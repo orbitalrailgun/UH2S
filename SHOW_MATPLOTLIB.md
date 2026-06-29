@@ -142,6 +142,41 @@ SHOW(d, matplotlib, {"kind":"scatter3d", "x":"cpu", "y":"mem", "z":"latency",
 
 ---
 
+## 3b. Научное оформление (SciencePlots / встроенные стили)
+
+Параметр `style` применяет готовый стиль оформления ко **всему** графику (2D и 3D).
+Принимает строку или список (стили накладываются по порядку):
+
+- **Встроенные стили matplotlib**: `ggplot`, `bmh`, `grayscale`, `fivethirtyeight`, `seaborn-v0_8-*` и др.
+- **SciencePlots** (если установлен пакет `SciencePlots`): `science`, `ieee`, `nature`, `grid`, `high-vis`,
+  `scatter`, `notebook`, `no-latex` и пр. — научное оформление для публикаций.
+
+```
+SHOW(d, matplotlib, {"kind":"line","x":"day","y":["a","b"], "style":"science", "title":"Result"})
+
+/* комбинация стилей: научный + сетка */
+SHOW(d, matplotlib, {"kind":"bar","x":"host","y":"errors", "style":["science","grid"]})
+
+/* встроенный стиль без зависимостей */
+SHOW(d, matplotlib, {"kind":"line","x":"day","y":"value", "style":"ggplot"})
+```
+
+Доп. параметры оформления:
+| Параметр | Описание |
+|---|---|
+| `style` | стиль(и): строка или список |
+| `rc` | точечные переопределения rcParams, напр. `{"axes.grid":true,"font.size":11}` |
+| `usetex` | `true` — рендер подписей через LaTeX (нужен установленный LaTeX); по умолчанию `false` |
+
+Важно:
+- Стиль `science` без `usetex` работает **без LaTeX** (мы по умолчанию выключаем `text.usetex`). Включайте
+  `usetex:true` только если в системе установлен LaTeX, иначе рендер упадёт.
+- Установка SciencePlots: `pip install SciencePlots` (есть в `requirements.txt`). Без пакета имена
+  `science`/`ieee`/... молча игнорируются — график строится в стандартном оформлении.
+- Стиль применяется **скоупом** на один график и не влияет на остальные.
+
+---
+
 ## 4. Подготовка данных перед графиком
 
 Часто проще сначала привести данные к нужной форме in-memory SQL, затем рисовать:

@@ -37,6 +37,7 @@ fastmcp                    # только для outward-facing MCP-сервер
 pandas                     # pandas_im (агрегации) + дедуп в APPLY (app/engine.py) + вывод PRINT/SHOW
 numpy                      # app/sources/pandas.py (dynamic_aggr)
 matplotlib                 # SHOW(table, matplotlib, {...}) — графики в интерфейсе Harvester
+SciencePlots               # опц.: научные стили (style='science'/'ieee'/'nature'/...) для SHOW matplotlib
 openpyxl                   # SAVE(table, xlsx) — экспорт таблиц в Excel
 requests                   # gitlab, youtrack, iris, manticoresearch, ollama, netbox, notify (mattermost/telegram)
 pytz                       # sqlite3_im, duckdb_im (преобразования времени)
