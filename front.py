@@ -9,6 +9,7 @@ import re
 
 import uuid
 import sys
+import pwinput
 
 from app.logging import currentTimestamp, get_log_message, logger_log#, currentFuncName
 from app.interface import login_page
@@ -44,21 +45,20 @@ def main():
     # Ввод всех необходимых данных
     ########################################
 
-    #MASTER_KEY = pwinput.pwinput(prompt='The master key: ', mask='*')
-    MASTER_KEY = "***MASTER_KEY_REMOVED***"
+    MASTER_KEY = pwinput.pwinput(prompt='The master key: ', mask='*')
 
     global args
     parser = argparse.ArgumentParser(description="Front UH")
     parser.add_argument(
         "--db_conf_object",
         type=str,
-        default = '***FERNET_TOKEN_REMOVED***',
+        default = '',
         help="Объект конфигурации БД (генерируется и шифруется вспомогательным модулем)"
     )
     parser.add_argument(
         "--nicegui_storage_key_object",
         type=str,
-        default='***FERNET_TOKEN_REMOVED***',
+        default='',
         help="Ключ хранилища nicegui (sessions-key) (генерируется и шифруется вспомогательным модулем)"
     )
     parser.add_argument(
@@ -472,6 +472,6 @@ def main():
     ########################################
     # запуск
     ########################################
-    ui.run(host=args.host, storage_secret=NICEGUI_STORAGE_KEY,port=args.port, favicon="favicon.ico", reload=True, show=True, ssl_certfile=args.ssl_certfile, ssl_keyfile=args.ssl_keyfile)
+    ui.run(host=args.host, storage_secret=NICEGUI_STORAGE_KEY,port=args.port, favicon="favicon.ico", reload=False, show=True, ssl_certfile=args.ssl_certfile, ssl_keyfile=args.ssl_keyfile)
 
 main()

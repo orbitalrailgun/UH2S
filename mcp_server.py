@@ -14,6 +14,7 @@ Authentication: every tool takes an `api_key` argument — a Harvester API key
 See API.md for how to create keys. See MCP.md for client configuration.
 """
 
+import os
 import argparse
 import uuid
 
@@ -22,10 +23,10 @@ from app.version import get_app_version
 APP_NAME = "Universal Harvester 2 Scripted"
 APP_VERSION = get_app_version()  # из git-тега (фолбэк: файл VERSION -> константа)
 
-# Те же значения по умолчанию, что и у фронта (dev-стенд против той же БД).
-# В проде переопределяйте через аргументы/окружение.
-DEFAULT_DB_CONF = "***FERNET_TOKEN_REMOVED***"
-DEFAULT_MASTER_KEY = "***MASTER_KEY_REMOVED***"
+# Секреты НЕ хранятся в коде: берём из окружения (UH2S_DB_CONF / UH2S_MASTER_KEY)
+# или передаём аргументами --db_conf_object / --master_key. По умолчанию пусто.
+DEFAULT_DB_CONF = os.environ.get("UH2S_DB_CONF", "")
+DEFAULT_MASTER_KEY = os.environ.get("UH2S_MASTER_KEY", "")
 
 ARGS = None
 

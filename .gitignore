@@ -185,3 +185,8 @@ build.py
 app.db
 app.ipynb
 tests.ipynb
+
+# артефакты чистки истории от секретов (НИКОГДА не коммитить — содержат реальные значения)
+secrets-replacements.txt
+secrets-scrub-backup/
+VERSION
