@@ -597,6 +597,29 @@ class TestBackslashContinuation(unittest.TestCase):
         self.assertIn("limit", cmd.get("parameters", {}))
 
 
+class TestLineNumbers(unittest.TestCase):
+    """Каждая команда должна знать номер своей строки в исходном скрипте (для ошибок валидации)."""
+
+    def test_multiline_line_numbers(self):
+        script = "DEF 1 AS a\n| DEF 2 AS b\n| PRINT(a)"
+        cmds = parse(script)
+        self.assertEqual([c["line_number"] for c in cmds], [1, 2, 3])
+
+    def test_line_numbers_survive_multiline_comment(self):
+        # многострочный комментарий не должен сбивать нумерацию последующих строк
+        script = "DEF 1 AS a\n/* строка\nкомментария */\n| GET sqlite3:query(queries=[\"SELECT 1\"]) AS r"
+        cmds = parse(script)
+        self.assertEqual(cmds[0]["line_number"], 1)
+        self.assertEqual(cmds[1]["line_number"], 4)
+
+    def test_line_number_points_to_keyword_line(self):
+        # перенос обратным слэшем: номер строки — там, где ключевое слово
+        script = "DEF 1 AS a\n| GET jira_sm:search_issues(jql=\"x\", \\\n    limit=5) AS issues"
+        cmds = parse(script)
+        self.assertEqual(cmds[1]["command"], "GET")
+        self.assertEqual(cmds[1]["line_number"], 2)
+
+
 class TestAnalyzer(unittest.TestCase):
     def _state(self):
         return {"app_name": "test", "app_version": "0", "username": "tester",

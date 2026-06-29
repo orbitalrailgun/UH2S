@@ -181,7 +181,7 @@ def run_script_structured(script_text, current_state):
         parsed = command_parser(script_text, current_state)
         parse_errors = [(i, c) for i, c in enumerate(parsed) if not c.get("parsed", True)]
         if parse_errors:
-            details = "; ".join(f"#{i + 1} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for i, c in parse_errors)
+            details = "; ".join(f"line {c.get('line_number', '?')} #{i + 1} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for i, c in parse_errors)
             return {"ok": False, "error": f"parse errors: {details}"}
 
         executor_result = commands_executor(parsed, current_state)

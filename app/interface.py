@@ -404,7 +404,7 @@ def execute_script_api(script_text, current_state):
         parsed = command_parser(script_text, current_state)
         parse_errors = [(i, c) for i, c in enumerate(parsed) if not c.get("parsed", True)]
         if parse_errors:
-            details = "; ".join(f"#{i + 1} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for i, c in parse_errors)
+            details = "; ".join(f"line {c.get('line_number', '?')} #{i + 1} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for i, c in parse_errors)
             return False, f"parse errors: {details}", currentFuncName(), None
 
         executor_result = commands_executor(parsed, current_state)
@@ -489,28 +489,35 @@ def execute_script_api(script_text, current_state):
 STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌", "rejected": "⛔", "warning": "⚠️"}
 
 def _step_label(command):
-    """Человекочитаемая подпись шага для панели прогресса выполнения."""
+    """Человекочитаемая подпись шага для панели прогресса выполнения.
+    Префикс `LN` — номер строки в скрипте (если известен), чтобы было видно,
+    к какой строке относится статус/ошибка шага."""
     kind = command.get("command", "?")
-    if kind == "VALIDATE":
-        return "Валидация скрипта"
-    if kind == "GET":
-        prefix = "APPLY " if "apply" in command else ""
-        return f"{prefix}GET {command.get('source', '?')}:{command.get('function', '?')} → {command.get('data_name', '?')}"
-    if kind == "DEF":
-        return f"DEF {command.get('variable_name', '?')}"
-    if kind == "PRINT":
-        return f"PRINT {command.get('print_arg', '')}"
-    if kind == "SHOW":
-        return f"SHOW {command.get('show_table', '?')} ({command.get('show_type', '?')})"
-    if kind == "SAVE":
-        tables = ", ".join(command.get("save_tables", []))
-        as_part = f" AS {command['save_filename']}" if command.get("save_filename") else ""
-        return f"SAVE [{tables}] ({command.get('save_format', '?')}){as_part}"
-    if kind == "NOTIFY":
-        return f"NOTIFY {command.get('notifier', '?')}"
-    if kind == "CALC":
-        return f"CALC {command.get('operation', '?')}({command.get('calc_x', '?')}, {command.get('calc_y', '?')}) → {command.get('result_name', '?')}"
-    return kind
+
+    def base():
+        if kind == "VALIDATE":
+            return "Валидация скрипта"
+        if kind == "GET":
+            prefix = "APPLY " if "apply" in command else ""
+            return f"{prefix}GET {command.get('source', '?')}:{command.get('function', '?')} → {command.get('data_name', '?')}"
+        if kind == "DEF":
+            return f"DEF {command.get('variable_name', '?')}"
+        if kind == "PRINT":
+            return f"PRINT {command.get('print_arg', '')}"
+        if kind == "SHOW":
+            return f"SHOW {command.get('show_table', '?')} ({command.get('show_type', '?')})"
+        if kind == "SAVE":
+            tables = ", ".join(command.get("save_tables", []))
+            as_part = f" AS {command['save_filename']}" if command.get("save_filename") else ""
+            return f"SAVE [{tables}] ({command.get('save_format', '?')}){as_part}"
+        if kind == "NOTIFY":
+            return f"NOTIFY {command.get('notifier', '?')}"
+        if kind == "CALC":
+            return f"CALC {command.get('operation', '?')}({command.get('calc_x', '?')}, {command.get('calc_y', '?')}) → {command.get('result_name', '?')}"
+        return kind
+
+    line_number = command.get("line_number")
+    return f"L{line_number}: {base()}" if line_number else base()
 
 
 THEMES = {
@@ -2435,12 +2442,12 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 if parse_errors:
                     validation_step["_status"] = "error"
                     validation_step["_info"] = "; ".join(
-                        f"#{i + 1} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for i, c in parse_errors)
+                        f"L{c.get('line_number', '?')} #{i + 1} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for i, c in parse_errors)
                     card_results.clear()
                     with card_results:
                         ui.markdown(tr("harv.parse_errors"))
                         for i, c in parse_errors:
-                            ui.markdown(tr("harv.parse_error_item", n=i + 1, cmd=c.get('command', '?'), comment=_md_escape(c.get('parsed_comment', '?'))))
+                            ui.markdown(tr("harv.parse_error_item", line=c.get('line_number', '?'), n=i + 1, cmd=c.get('command', '?'), comment=_md_escape(c.get('parsed_comment', '?'))))
                     return
 
                 # прогресс шагов: инициализация статусов + таймер живого опроса (поток пишет статусы)
@@ -2616,7 +2623,7 @@ def run_agent_script(script_text, current_state):
         parse_errors = [c for c in parsed if not c.get("parsed", True)]
         if parse_errors:
             return "ОШИБКА ПАРСИНГА: " + "; ".join(
-                f"{c.get('command', '?')}: {c.get('parsed_comment', '?')}" for c in parse_errors)
+                f"строка {c.get('line_number', '?')} {c.get('command', '?')}: {c.get('parsed_comment', '?')}" for c in parse_errors)
 
         # на этапе подготовки агент НЕ выполняет SHOW/SAVE — это вывод для человека;
         # все данные агенту возвращаются ниже (переменные + таблицы как list of dict)
