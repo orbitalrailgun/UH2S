@@ -2660,8 +2660,8 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
 
                     with ui.tab_panel(tab_analysis):
                         with ui.row().classes('gap-2 q-mb-sm'):
-                            ui.button(tr("harv.export_svg"), icon='download').props('outline size=sm').on_click(lambda: export_graph("svg"))
-                            ui.button(tr("harv.export_png"), icon='image').props('outline size=sm').on_click(lambda: export_graph("png"))
+                            ui.button(tr("harv.export_svg"), icon='download').props('size=sm').on_click(lambda: export_graph("svg"))
+                            ui.button(tr("harv.export_png"), icon='image').props('size=sm').on_click(lambda: export_graph("png"))
                         analysis_holder["m"] = ui.mermaid('flowchart TD\n    start(["нажмите «Анализ выполнения»"])').classes('w-full uh-exec-graph').style('min-height: 60vh')
 
     except BaseException as e:
