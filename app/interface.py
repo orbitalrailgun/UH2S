@@ -2576,6 +2576,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         mermaid_text = build_execution_mermaid(codemirror_script.value, current_state)
                         analysis_holder["m"].content = mermaid_text
                         analysis_holder["m"].update()
+                        analysis_holder["ready"] = True
                         harvester_panels.set_value('Analysis')
                     except BaseException as analyze_error:
                         ui.notify(tr("harv.analyze_error", error=str(analyze_error)), type="negative")
@@ -2636,6 +2637,15 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     else:
                         ui.notify(tr("harv.export_done", fmt=fmt.upper()), type="positive")
 
+                def export_mermaid_text():
+                    # сохранить исходник Mermaid (текст схемы) как .mmd
+                    if not analysis_holder.get("ready"):
+                        ui.notify(tr("harv.export_empty"), type="warning")
+                        return
+                    content = analysis_holder["m"].content or ""
+                    ui.download(content.encode("utf-8"), "execution_schema.mmd", "text/plain")
+                    ui.notify(tr("harv.export_done", fmt="Mermaid"), type="positive")
+
                 with ui.tabs().classes('w-full') as tabs:
                     tab_script = ui.tab('Scripts', label=tr("harv.tab.scripts"))
                     tab_datavars = ui.tab('Data/Variables', label=tr("harv.tab.datavars"))
@@ -2662,6 +2672,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         with ui.row().classes('gap-2 q-mb-sm'):
                             ui.button(tr("harv.export_svg"), icon='download').props('size=sm').on_click(lambda: export_graph("svg"))
                             ui.button(tr("harv.export_png"), icon='image').props('size=sm').on_click(lambda: export_graph("png"))
+                            ui.button(tr("harv.export_mmd"), icon='description').props('size=sm').on_click(export_mermaid_text)
                         analysis_holder["m"] = ui.mermaid('flowchart TD\n    start(["нажмите «Анализ выполнения»"])').classes('w-full uh-exec-graph').style('min-height: 60vh')
 
     except BaseException as e:
