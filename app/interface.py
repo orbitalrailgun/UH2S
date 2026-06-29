@@ -2580,6 +2580,62 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     except BaseException as analyze_error:
                         ui.notify(tr("harv.analyze_error", error=str(analyze_error)), type="negative")
 
+                async def export_graph(fmt):
+                    # экспорт ВСЕГО графа (а не скриншота видимой части): берём уже отрисованный mermaid <svg>
+                    # на клиенте и сохраняем как SVG (вектор) или PNG (растеризация всего bbox через canvas).
+                    if fmt == "svg":
+                        js = r"""
+                        (function(){
+                          const svg = document.querySelector('.uh-exec-graph svg');
+                          if(!svg){ return 'nograph'; }
+                          const xml = new XMLSerializer().serializeToString(svg);
+                          const blob = new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n'+xml], {type:'image/svg+xml;charset=utf-8'});
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a'); a.href=url; a.download='execution_schema.svg';
+                          document.body.appendChild(a); a.click(); a.remove();
+                          setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+                          return 'ok';
+                        })()
+                        """
+                    else:
+                        js = r"""
+                        (function(){
+                          const svg = document.querySelector('.uh-exec-graph svg');
+                          if(!svg){ return 'nograph'; }
+                          const rect = svg.getBoundingClientRect();
+                          const w = Math.max(1, Math.ceil(rect.width)), h = Math.max(1, Math.ceil(rect.height));
+                          const xml = new XMLSerializer().serializeToString(svg);
+                          const svg64 = btoa(unescape(encodeURIComponent(xml)));
+                          const img = new Image();
+                          img.onload = function(){
+                            const scale = 2;  // ретина-резкость
+                            const canvas = document.createElement('canvas');
+                            canvas.width = w*scale; canvas.height = h*scale;
+                            const ctx = canvas.getContext('2d');
+                            ctx.scale(scale, scale);
+                            ctx.fillStyle = getComputedStyle(document.body).backgroundColor || '#ffffff';
+                            ctx.fillRect(0, 0, w, h);
+                            ctx.drawImage(img, 0, 0, w, h);
+                            canvas.toBlob(function(blob){
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a'); a.href=url; a.download='execution_schema.png';
+                              document.body.appendChild(a); a.click(); a.remove();
+                              setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+                            }, 'image/png');
+                          };
+                          img.src = 'data:image/svg+xml;base64,' + svg64;
+                          return 'ok';
+                        })()
+                        """
+                    try:
+                        result = await ui.run_javascript(js, timeout=10.0)
+                    except BaseException:
+                        result = None
+                    if result == "nograph":
+                        ui.notify(tr("harv.export_empty"), type="warning")
+                    else:
+                        ui.notify(tr("harv.export_done", fmt=fmt.upper()), type="positive")
+
                 with ui.tabs().classes('w-full') as tabs:
                     tab_script = ui.tab('Scripts', label=tr("harv.tab.scripts"))
                     tab_datavars = ui.tab('Data/Variables', label=tr("harv.tab.datavars"))
@@ -2603,7 +2659,10 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         codemirror_datavar = make_codemirror(current_state).classes('w-full')
 
                     with ui.tab_panel(tab_analysis):
-                        analysis_holder["m"] = ui.mermaid('flowchart TD\n    start(["нажмите «Анализ выполнения»"])').classes('w-full').style('min-height: 60vh')
+                        with ui.row().classes('gap-2 q-mb-sm'):
+                            ui.button(tr("harv.export_svg"), icon='download').props('outline size=sm').on_click(lambda: export_graph("svg"))
+                            ui.button(tr("harv.export_png"), icon='image').props('outline size=sm').on_click(lambda: export_graph("png"))
+                        analysis_holder["m"] = ui.mermaid('flowchart TD\n    start(["нажмите «Анализ выполнения»"])').classes('w-full uh-exec-graph').style('min-height: 60vh')
 
     except BaseException as e:
         error_message = f"fail: {str(e)}"
