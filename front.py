@@ -25,9 +25,13 @@ import syslog
 
 from app.db import get_secret
 
+from app.version import get_app_version
+
 def main():
     APP_NAME = "Universal Harvester 2 Scripted"
-    APP_VERSION = "0.1.0"
+    # версия определяется автоматически из git-тега (фолбэк: файл VERSION -> константа),
+    # чтобы в syslog уходила актуальная версия, а не захардкоженная
+    APP_VERSION = get_app_version()
 
     DUMMY_SESSION_ID = "00000000-0000-0000-0000-000000000000"
     DUMMY_IP = "127.0.0.1"

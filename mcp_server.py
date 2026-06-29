@@ -17,8 +17,10 @@ See API.md for how to create keys. See MCP.md for client configuration.
 import argparse
 import uuid
 
+from app.version import get_app_version
+
 APP_NAME = "Universal Harvester 2 Scripted"
-APP_VERSION = "0.4.0"
+APP_VERSION = get_app_version()  # из git-тега (фолбэк: файл VERSION -> константа)
 
 # Те же значения по умолчанию, что и у фронта (dev-стенд против той же БД).
 # В проде переопределяйте через аргументы/окружение.
