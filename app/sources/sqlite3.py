@@ -54,10 +54,20 @@ def validate_ip_address(ip_string):
         return False
 
 def datetime_to_timestamp(timestamp_string, format):
+    # 1) строгий формат, как указал пользователь
     try:
-        timestamp = datetime.datetime.strptime(timestamp_string, format)
-        unixtime = timestamp.timestamp()
-        return unixtime
+        return datetime.datetime.strptime(timestamp_string, format).timestamp()
+    except BaseException:
+        pass
+    # 2) толерантный фолбэк на ISO 8601: с/без микросекунд (.%f), таймзона со/без двоеточия,
+    #    суффикс 'Z'. Решает частый случай, когда данные не содержат микросекунд и поэтому
+    #    не матчат строгий формат '...%S.%f%z' -> раньше тихо возвращалось -1, и строки
+    #    отфильтровывались условиями вида MTTA>0 (пустой результат без диагностики).
+    try:
+        iso = str(timestamp_string).strip()
+        if iso[-1:] in ("Z", "z"):
+            iso = iso[:-1] + "+00:00"
+        return datetime.datetime.fromisoformat(iso).timestamp()
     except BaseException:
         return -1
     
@@ -136,9 +146,11 @@ def execute_sqlite3(parameters, source_object, data_map, current_state):
             return False, error_message, currentFuncName(), []
 
         # выполняем последний запрос, ожидается, что это SELECT из получившейся БД
-        output_df = pandas.read_sql_query(query["queries"][-1], db)            
+        output_df = pandas.read_sql_query(query["queries"][-1], db)
         db.close()
-        return True, "OK", currentFuncName(), output_df.to_dict('records')
+        records = output_df.to_dict('records')
+        # количество строк в статусе: пустой результат последнего SELECT перестаёт быть «молчаливым»
+        return True, f"OK (rows {len(records)})", currentFuncName(), records
 
     except BaseException as e:
         error_message = f"sqlite3 fail: {str(e)}"

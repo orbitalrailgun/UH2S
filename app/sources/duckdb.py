@@ -53,13 +53,20 @@ def validate_ip_address(ip_string):
         return False
 
 def datetime_to_timestamp(timestamp_string, format):
+    # 1) строгий формат, как указал пользователь
     try:
-        timestamp = datetime.datetime.strptime(timestamp_string, format)
-        unixtime = timestamp.timestamp()
-        return unixtime
+        return datetime.datetime.strptime(timestamp_string, format).timestamp()
+    except BaseException:
+        pass
+    # 2) толерантный фолбэк на ISO 8601: с/без микросекунд (.%f), tz со/без двоеточия, суффикс 'Z'.
+    try:
+        iso = str(timestamp_string).strip()
+        if iso[-1:] in ("Z", "z"):
+            iso = iso[:-1] + "+00:00"
+        return datetime.datetime.fromisoformat(iso).timestamp()
     except BaseException:
         return -1
-    
+
 def execute_duckdb(parameters, source_object, data_map, current_state):
     import duckdb
     import duckdb.typing
