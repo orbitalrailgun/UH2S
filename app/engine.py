@@ -1412,14 +1412,19 @@ def get_command_dependency(command, current_state):
             if command["source_type"] in ["sqlite3_im", "duckdb_im"]:
                 sql_dependency = []
                 sql_with_statement = []
+                sql_created_tables = []
                 query_string = json.dumps(command['parameters'])
 
                 for sql_depend in re.findall(r"(FROM|JOIN)\s+([^\s;)]+)",query_string):
                     sql_dependency.append(sql_depend[1])
                 for sql_with in re.findall(r"(WITH|\),)\s+([^\s;]+)\s+AS\s+\(",query_string):
                     sql_with_statement.append(sql_with[1])
+                # таблицы/представления, создаваемые ВНУТРИ того же запроса (CREATE [TEMP] TABLE/VIEW),
+                # — не внешние зависимости: их нельзя ждать из другого GET, иначе шаг зависнет в pending
+                for sql_created in re.findall(r"CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?(?:TABLE|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)", query_string, flags=re.IGNORECASE):
+                    sql_created_tables.append(sql_created)
                 for sql_dependency_candidate in sql_dependency:
-                    if sql_dependency_candidate not in sql_with_statement:
+                    if sql_dependency_candidate not in sql_with_statement and sql_dependency_candidate not in sql_created_tables:
                         dependency.append(sql_dependency_candidate)
             
             if command["source_type"] == "pandas_im":

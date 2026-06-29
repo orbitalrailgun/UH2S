@@ -620,6 +620,33 @@ class TestLineNumbers(unittest.TestCase):
         self.assertEqual(cmds[1]["line_number"], 2)
 
 
+class TestSqlDependencies(unittest.TestCase):
+    """Зависимости sqlite3/duckdb: таблицы, создаваемые тем же запросом (CREATE [TEMP] TABLE),
+    не должны считаться внешними зависимостями (иначе шаг зависает в pending)."""
+
+    def _dep(self, queries):
+        from app.engine import get_command_dependency
+        cmd = {"command": "GET", "source_type": "sqlite3_im", "data_name": "out",
+               "parameters": {"queries": queries}}
+        res = get_command_dependency(cmd, CS)
+        self.assertTrue(res[0], res[1])
+        return sorted(res[3])
+
+    def test_temp_table_excluded(self):
+        deps = self._dep([
+            "CREATE TEMP TABLE temp AS SELECT a FROM normal_alerts;",
+            "SELECT * FROM temp WHERE a>0;",
+        ])
+        self.assertEqual(deps, ["normal_alerts"])
+
+    def test_plain_create_table_excluded_sources_kept(self):
+        deps = self._dep([
+            "CREATE TABLE t2 AS SELECT x FROM src_a JOIN src_b ON src_a.id=src_b.id;",
+            "SELECT * FROM t2;",
+        ])
+        self.assertEqual(deps, ["src_a", "src_b"])
+
+
 class TestAnalyzer(unittest.TestCase):
     def _state(self):
         return {"app_name": "test", "app_version": "0", "username": "tester",
