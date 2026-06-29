@@ -2470,10 +2470,15 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     if not any(c.get("_status") == "error" for c in parsed_command):
                         validation_step["_status"] = "error"
                         validation_step["_info"] = commands_executor_result[1]
-                    # все ещё не выполненные шаги отклонены: после ошибки они не запустятся
+                    # все ещё не выполненные шаги отклонены; зависший на running (упавший без
+                    # терминального статуса) помечаем error — он не должен крутиться вечно
                     for command in parsed_command:
                         if command.get("_status") == "pending":
                             command["_status"] = "rejected"
+                        elif command.get("_status") == "running":
+                            command["_status"] = "error"
+                            if not command.get("_info"):
+                                command["_info"] = commands_executor_result[1]
                     card_results.clear()
                     with card_results:
                         ui.markdown(tr("harv.exec_error", error=_md_escape(commands_executor_result[1])))
@@ -2510,11 +2515,15 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 if validation_step["_status"] == "running":
                     validation_step["_status"] = "error"
                     validation_step["_info"] = error_message
-                # оставшиеся шаги отклонены
+                # оставшиеся шаги отклонены; зависший на running помечаем error (не крутится вечно)
                 try:
                     for command in parsed_command:
                         if command.get("_status") == "pending":
                             command["_status"] = "rejected"
+                        elif command.get("_status") == "running":
+                            command["_status"] = "error"
+                            if not command.get("_info"):
+                                command["_info"] = error_message
                 except NameError:
                     pass
                 ui.notify(error_message, type="negative")

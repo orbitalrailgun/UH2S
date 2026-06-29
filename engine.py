@@ -266,15 +266,26 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
             print(executed_command)
             if executed_command.get("_status") == "pending":
                 executed_command["_status"] = "running"
-            if executed_command.get("is_script"):
-                if "apply" in executed_command:
-                    results[executed_command["data_name"]] = run_apply_script_command(executed_command, current_data_map, current_state)
+            # любое НЕперехваченное исключение шага (а не аккуратный кортеж) раньше пролетало мимо
+            # установки терминального статуса -> шаг навсегда «running» в UI. Перехватываем здесь,
+            # помечаем шаг error с текстом исключения и аккуратно завершаем выполнение.
+            try:
+                if executed_command.get("is_script"):
+                    if "apply" in executed_command:
+                        results[executed_command["data_name"]] = run_apply_script_command(executed_command, current_data_map, current_state)
+                    else:
+                        results[executed_command["data_name"]] = run_script_command(executed_command, current_data_map, current_state)
+                elif "apply" in executed_command:
+                    results[executed_command["data_name"]] = run_apply_command(executed_command, current_data_map, current_state)
                 else:
-                    results[executed_command["data_name"]] = run_script_command(executed_command, current_data_map, current_state)
-            elif "apply" in executed_command:
-                results[executed_command["data_name"]] = run_apply_command(executed_command, current_data_map, current_state)
-            else:
-                results[executed_command["data_name"]] = run_command(executed_command, current_data_map, current_state)
+                    results[executed_command["data_name"]] = run_command(executed_command, current_data_map, current_state)
+            except BaseException as step_exception:
+                error_message = f"step '{executed_command.get('data_name', '?')}' crashed: {step_exception}"
+                if "_status" in executed_command:
+                    executed_command["_status"] = "error"
+                    executed_command["_info"] = str(step_exception)
+                logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+                return False, error_message, currentFuncName(), commands
 
             for r in results.keys():
                 result_map[r] = results[r]
