@@ -175,7 +175,10 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                 return False, error_message, currentFuncName(), commands
             for parameter in command["function_parameters"]:
                 if type(command["function_parameters"][parameter]) != type(command["parameters"][parameter]):
-                    logger_log(syslog.LOG_INFO, get_log_message(f"parameter {command["function_parameters"][parameter]} type {type(command["function_parameters"][parameter])} check parameter {command["parameters"][parameter]} type {type(command["parameters"][parameter])}", currentFuncName(), current_state))
+                    # только имя и типы, без значений (значение параметра может быть секретом); DEBUG, не INFO
+                    logger_log(syslog.LOG_DEBUG, get_log_message(
+                        f"param '{parameter}' type coerce: {type(command['parameters'][parameter]).__name__} "
+                        f"-> {type(command['function_parameters'][parameter]).__name__}", currentFuncName(), current_state))
                     # дополнительная попытка переконвертации
                     get_variable_type_result = get_variable_type(command["parameters"][parameter], current_state)
                     if not get_variable_type_result:
@@ -263,7 +266,12 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
         for executed_command in stage_execute_commands:
             current_data_map = {key: result_map[key][3] for key in executed_command["dependency"]}
             results = {}
-            print(executed_command)
+            # компактная отметка о старте шага БЕЗ параметров и source_object: последний содержит
+            # уже подставленный секрет (key.value) — его нельзя писать в лог. Только тип/источник/имя.
+            logger_log(syslog.LOG_DEBUG, get_log_message(
+                f"exec {executed_command.get('command', '?')} "
+                f"{executed_command.get('source', '')}:{executed_command.get('function', '')} "
+                f"-> {executed_command.get('data_name', '?')}", currentFuncName(), current_state))
             if executed_command.get("_status") == "pending":
                 executed_command["_status"] = "running"
             # любое НЕперехваченное исключение шага (а не аккуратный кортеж) раньше пролетало мимо
