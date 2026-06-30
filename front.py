@@ -486,6 +486,6 @@ def main():
     # show=True открывает браузер (локально). В контейнере выключаем через UH2S_SHOW=false.
     show_browser = os.environ.get("UH2S_SHOW", "true").lower() not in ("0", "false", "no")
     ui.run(host=args.host, storage_secret=NICEGUI_STORAGE_KEY, port=args.port, favicon="favicon.ico",
-           reload=False, show=show_browser, **ssl_kwargs)
+           title=APP_NAME, reload=False, show=show_browser, **ssl_kwargs)
 
 main()
