@@ -1,0 +1,43 @@
+# --- VCS / история (НЕ кладём в образ: и вес, и секреты из старой истории) ---
+.git
+.gitignore
+.gitattributes
+
+# --- байткод/кеши ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- виртуальные окружения ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- секреты и ключи (инъекция в рантайме через env/секреты, не в образ) ---
+.env
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+secrets-replacements.txt
+secrets-replacements.txt.example
+*-backup.git/
+secrets-scrub-backup/
+
+# --- рантайм-данные/состояние (монтируются томами) ---
+.nicegui/
+app.db
+app.db-journal
+*.tar
+
+# --- прочее ---
+.DS_Store
+*.ipynb
+.ipynb_checkpoints/
+build.py
+VERSION

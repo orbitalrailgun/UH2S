@@ -181,10 +181,12 @@ build.py
 *.pem
 *.tar
 .nicegui/storage_*
-.dockerignore
 app.db
 app.ipynb
 tests.ipynb
+
+# Docker: артефакты коммитим (Dockerfile, docker-compose.yml, .dockerignore, env.example),
+# а реальный .env и сертификаты — нет (.env ниже в «Environments», *.pem выше).
 
 # артефакты чистки истории от секретов (НИКОГДА не коммитить — содержат реальные значения)
 secrets-replacements.txt

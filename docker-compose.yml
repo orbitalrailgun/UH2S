@@ -1,0 +1,47 @@
+# UH2S — развёртывание в Docker.
+#
+# Перед запуском: cp .env.example .env  и заполните секреты (UH2S_MASTER_KEY / UH2S_DB_CONF / UH2S_STORAGE_KEY).
+# Запуск:        docker compose up -d --build
+#
+# Секреты передаются окружением (env_file), в образ не зашиваются.
+# Данные БД (sqlite) и состояние сессий nicegui хранятся в именованных томах.
+
+services:
+  uh2s:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0-docker}
+    image: uh2s:latest
+    env_file: .env
+    environment:
+      UH2S_SHOW: "false"            # не открывать браузер в контейнере
+    ports:
+      - "${UH2S_PORT:-8082}:8082"
+    volumes:
+      - uh2s-data:/data             # sqlite БД: в db_conf укажите sqlite db_path = /data/app.db
+      - uh2s-storage:/app/.nicegui  # состояние сессий nicegui
+      # Для in-app TLS примонтируйте сертификаты (front.py включит HTTPS автоматически):
+      # - ./crt.pem:/app/crt.pem:ro
+      # - ./key.pem:/app/key.pem:ro
+    restart: unless-stopped
+
+  # Outward-facing MCP-сервер (см. MCP.md). Тот же образ, другая команда.
+  # Если MCP наружу не нужен — закомментируйте весь сервис.
+  mcp:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0-docker}
+    image: uh2s:latest
+    env_file: .env
+    command: ["python", "mcp_server.py", "--host", "0.0.0.0", "--port", "8090"]
+    ports:
+      - "${UH2S_MCP_PORT:-8090}:8090"
+    volumes:
+      - uh2s-data:/data             # тот же том БД, что и у веб-сервиса
+    restart: unless-stopped
+
+volumes:
+  uh2s-data:
+  uh2s-storage:

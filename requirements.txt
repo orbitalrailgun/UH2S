@@ -22,6 +22,7 @@
 nicegui                    # web/UI (тянет fastapi, starlette, uvicorn)
 cryptography               # расшифровка db_conf/storage key при старте (app/crptgrphy.py)
 bcrypt                     # проверка пароля при логине (app/login.py)
+pwinput                    # интерактивный ввод master key при старте front.py (если нет UH2S_MASTER_KEY)
 
 # ============================================================
 # ОПЦИОНАЛЬНО (включается по конфигурации)

@@ -1,4 +1,5 @@
 import argparse
+import os
 
 from fastapi import Request, Response, HTTPException
 from fastapi.responses import RedirectResponse, StreamingResponse
@@ -45,7 +46,8 @@ def main():
     # Ввод всех необходимых данных
     ########################################
 
-    MASTER_KEY = pwinput.pwinput(prompt='The master key: ', mask='*')
+    # master key: из окружения (для контейнеров/оркестрации) либо интерактивный ввод (локально)
+    MASTER_KEY = os.environ.get("UH2S_MASTER_KEY") or pwinput.pwinput(prompt='The master key: ', mask='*')
 
     global args
     parser = argparse.ArgumentParser(description="Front UH")
@@ -123,6 +125,10 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # секреты/конфиг можно передать окружением (для контейнеров) — приоритет у явного аргумента
+    args.db_conf_object = args.db_conf_object or os.environ.get("UH2S_DB_CONF", "")
+    args.nicegui_storage_key_object = args.nicegui_storage_key_object or os.environ.get("UH2S_STORAGE_KEY", "")
 
     NICEGUI_STORAGE_KEY = args.nicegui_storage_key_object
     ITSELF_LINK = args.itself_link
@@ -472,6 +478,14 @@ def main():
     ########################################
     # запуск
     ########################################
-    ui.run(host=args.host, storage_secret=NICEGUI_STORAGE_KEY,port=args.port, favicon="favicon.ico", reload=False, show=True, ssl_certfile=args.ssl_certfile, ssl_keyfile=args.ssl_keyfile)
+    # TLS опционален: если оба файла сертификата/ключа существуют — HTTPS, иначе HTTP
+    # (HTTP-режим рассчитан на терминацию TLS внешним reverse proxy в контейнерном деплое).
+    ssl_kwargs = {}
+    if args.ssl_certfile and args.ssl_keyfile and os.path.exists(args.ssl_certfile) and os.path.exists(args.ssl_keyfile):
+        ssl_kwargs = {"ssl_certfile": args.ssl_certfile, "ssl_keyfile": args.ssl_keyfile}
+    # show=True открывает браузер (локально). В контейнере выключаем через UH2S_SHOW=false.
+    show_browser = os.environ.get("UH2S_SHOW", "true").lower() not in ("0", "false", "no")
+    ui.run(host=args.host, storage_secret=NICEGUI_STORAGE_KEY, port=args.port, favicon="favicon.ico",
+           reload=False, show=show_browser, **ssl_kwargs)
 
 main()
