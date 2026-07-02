@@ -3,6 +3,7 @@ import sqlite3
 import base64
 import json
 import time
+import datetime
 from app.logging import get_log_message, logger_log, currentFuncName, currentTimestamp
 from app.crptgrphy import decrypt, encrypt
 
@@ -1207,13 +1208,28 @@ def storage_save(key, records, ttl, current_state):
         connection = create_db_connection_result[3]
         placeholder = create_db_connection_result[1]
 
-        envelope = {"created_ts": int(time.time()),
-                    "ttl": (int(ttl) if ttl is not None else None),
-                    "data": records}
+        now = int(time.time())
         owner = current_state.get("username", "")
         execution = current_state.get("main_session_id", "")
 
         cursor = connection.cursor()
+        # сохраняем исходное время создания при перезаписи (updated_ts обновляем)
+        created_ts = now
+        cursor.execute(f"SELECT json FROM storage WHERE id = {placeholder};", (key,))
+        existing = cursor.fetchone()
+        if existing and existing[0]:
+            try:
+                prev = json.loads(existing[0])
+                if isinstance(prev, dict) and prev.get("created_ts") is not None:
+                    created_ts = int(prev["created_ts"])
+            except BaseException:
+                pass
+
+        envelope = {"created_ts": created_ts,
+                    "updated_ts": now,
+                    "ttl": (int(ttl) if ttl is not None else None),
+                    "data": records}
+
         cursor.execute(f"DELETE FROM storage WHERE id = {placeholder};", (key,))
         cursor.execute(
             f"INSERT INTO storage (id, owner, execution, json) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder});",
@@ -1278,6 +1294,71 @@ def storage_delete(key, current_state):
         cursor.close()
         connection.close()
         return True, "Ok", currentFuncName(), key
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def _iso_utc(ts):
+    """Unix-время -> ISO 8601 UTC (для показа); None/битое -> ''."""
+    try:
+        return datetime.datetime.fromtimestamp(int(ts), datetime.timezone.utc).isoformat(timespec="seconds")
+    except BaseException:
+        return ""
+
+
+def storage_list(current_state):
+    """Список всех записей storage с метаданными (кэш общий). Возврат (ok, msg, func, list),
+    где элемент: {id, owner, created_ts, updated_ts, ttl, rows, size_bytes, expired}
+    (created_ts/updated_ts — ISO-строки UTC). Битые конверты не роняют список."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+
+        cursor = connection.cursor()
+        cursor.execute("SELECT id, owner, json FROM storage;")
+        rows = cursor.fetchall()
+        cursor.close()
+        connection.close()
+
+        now = int(time.time())
+        entries = []
+        for row in (rows or []):
+            key, owner, raw = row[0], row[1], row[2]
+            created = updated = None
+            ttl = None
+            record_count = 0
+            size_bytes = len(raw) if raw else 0
+            expired = False
+            try:
+                envelope = json.loads(raw) if raw else {}
+                if isinstance(envelope, dict):
+                    created = envelope.get("created_ts")
+                    updated = envelope.get("updated_ts", created)   # старые конверты без updated_ts
+                    ttl = envelope.get("ttl")
+                    data = envelope.get("data")
+                    record_count = len(data) if isinstance(data, list) else 0
+                    if ttl is not None and created is not None and (now - int(created)) > int(ttl):
+                        expired = True
+            except BaseException:
+                pass
+            entries.append({
+                "id": key,
+                "owner": owner or "",
+                "created_ts": _iso_utc(created),
+                "updated_ts": _iso_utc(updated),
+                "ttl": ("" if ttl is None else int(ttl)),
+                "rows": record_count,
+                "size_bytes": size_bytes,
+                "expired": expired,
+            })
+        entries.sort(key=lambda e: e["updated_ts"], reverse=True)
+        return True, "Ok", currentFuncName(), entries
 
     except BaseException as e:
         if 'connection' in locals():

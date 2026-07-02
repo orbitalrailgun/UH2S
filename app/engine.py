@@ -1606,9 +1606,9 @@ def _cache_envelope_expired(envelope):
 
 def run_load_command(command, current_state):
     """LOAD(id[, ttl_ignore]) AS name — чтение из storage с обработкой TTL.
-    Истёк без ttl_ignore -> удаляем строку и возвращаем ошибку; истёк с ttl_ignore -> _warning
+    Истёк без ttl_ignore -> ошибка с подсказкой (данные НЕ удаляются); истёк с ttl_ignore -> _warning
     + данные; отсутствует/битый -> ошибка. Возврат (ok, str(len)|msg, func, records|{})."""
-    from app.db import storage_load, storage_delete
+    from app.db import storage_load
     key = command["load_id"]
     load_result = storage_load(key, current_state)
     if not load_result[0]:
@@ -1621,8 +1621,8 @@ def run_load_command(command, current_state):
         return False, f"data '{key}' corrupt: envelope has no record list", currentFuncName(), {}
     if _cache_envelope_expired(envelope):
         if not command.get("load_ttl_ignore"):
-            storage_delete(key, current_state)
-            return False, f"data '{key}' expired and deleted", currentFuncName(), {}
+            return (False, f"data '{key}' expired (ttl); refresh it or use LOAD({key}, true) to ignore ttl",
+                    currentFuncName(), {})
         command["_warning"] = f"data '{key}' expired by ttl (kept via ttl_ignore)"
     return True, str(len(data)), currentFuncName(), data
 

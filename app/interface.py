@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled, storage_list, storage_load, storage_delete
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -1139,6 +1139,9 @@ def main_page(keycloak_openid, current_state):
 
     tr = lambda key, **kw: translate(key, current_state.get("lang", DEFAULT_LANGUAGE), **kw)
 
+    # раздел «Хранилище» — только администраторам (кэш общий, удаление влияет на всех)
+    is_storage_admin = any(r in (current_state.get("roles") or []) for r in ("fullmaster", "storage_admin"))
+
     with ui.header(elevated=True) as top_panel:
         with ui.row().classes('items-center'):
             menu_items = [
@@ -1148,8 +1151,10 @@ def main_page(keycloak_openid, current_state):
                 (tr("nav.ai"), tr("nav.ai.tip"), 'psychology', "AI"),
                 (tr("nav.harvester"), tr("nav.harvester.tip"), 'rocket_launch', "Harvester"),
                 (tr("nav.history"), tr("nav.history.tip"), 'history', "History"),
-                (tr("nav.logout"), tr("nav.logout.tip"), 'logout', "__logout__"),
             ]
+            if is_storage_admin:
+                menu_items.append((tr("nav.storage"), tr("nav.storage.tip"), 'inventory_2', "Storage"))
+            menu_items.append((tr("nav.logout"), tr("nav.logout.tip"), 'logout', "__logout__"))
             for item, tooltip, icon, target in menu_items:
                 menu_item = ui.button(item, icon=icon).tooltip(tooltip)
                 if target == "__logout__":
@@ -1190,6 +1195,10 @@ def main_page(keycloak_openid, current_state):
         "Settings": panel_settings, "Secrets": panel_secrets, "Objects": panel_objects,
         "AI": panel_ai, "Harvester": panel_harvester, "History": panel_history,
     }
+    panel_storage = None
+    if is_storage_admin:
+        panel_storage = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
+        panels["Storage"] = panel_storage
 
     def show_panel(name):
         for panel_name, panel in panels.items():
@@ -1204,7 +1213,133 @@ def main_page(keycloak_openid, current_state):
     draw_ai(panel_ai, current_state)
     draw_harvester(panel_harvester, current_state)
     draw_history(panel_history, current_state)
+    if panel_storage is not None:
+        draw_storage(panel_storage, current_state)
     show_panel("Harvester")
+
+def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
+    """Раздел «Хранилище»: список записей персистентного кэша (SAVE→storage) с метаданными,
+    предпросмотром, скачиванием и удалением. Только администраторам (fullmaster/storage_admin)."""
+    try:
+        interface_container.clear()
+        lang = current_state.get("lang", DEFAULT_LANGUAGE)
+        tr = lambda key, **kw: translate(key, lang, **kw)
+        roles = current_state.get("roles") or []
+        if not any(r in roles for r in ("fullmaster", "storage_admin")):
+            with interface_container:
+                ui.label(tr("storage.no_role"))
+            return False, "no storage_admin role", currentFuncName(), None
+
+        theme = current_state.get("aggrid_theme", "ag-theme-balham-dark")
+
+        with interface_container:
+            ui.label(tr("storage.title")).style("color: var(--title-color); font-weight:700;")
+            with ui.row().classes('gap-2 items-center flex-wrap'):
+                ui.button(tr("storage.btn.refresh"), icon='refresh').props('flat').on_click(lambda: refresh_storage_grid())
+                ui.button(tr("storage.btn.preview"), icon='visibility').props('outline').on_click(lambda: preview_entry())
+                fmt_select = ui.select(["json_in_zip", "csv_in_zip", "xlsx"], value="json_in_zip",
+                                       label=tr("storage.download_fmt")).props('dense').style('min-width: 140px')
+                ui.button(tr("storage.btn.download"), icon='download').props('outline').on_click(lambda: download_entry())
+                ui.button(tr("storage.btn.delete"), icon='delete', color='negative').props('outline').on_click(lambda: delete_entry())
+            grid_storage = ui.aggrid({}).classes('w-full').style('height: 62vh')
+
+            def refresh_storage_grid():
+                result = storage_list(current_state)
+                rows = []
+                if result[0]:
+                    for e in result[3]:
+                        rows.append({
+                            "id": e["id"],
+                            "owner": e["owner"],
+                            "created": e["created_ts"],
+                            "updated": e["updated_ts"],
+                            "ttl": (tr("storage.ttl.never") if e["ttl"] == "" else e["ttl"]),
+                            "rows": e["rows"],
+                            "size": e["size_bytes"],
+                            "status": tr("storage.status.expired") if e["expired"] else tr("storage.status.active"),
+                        })
+                else:
+                    ui.notify(tr("settings.common.error", error=result[1]), type="negative")
+                grid_storage.options["columnDefs"] = [
+                    {"headerName": tr("storage.col.key"), "field": "id", "filter": True, "sortable": True, "resizable": True, "minWidth": 160},
+                    {"headerName": tr("storage.col.owner"), "field": "owner", "filter": True, "sortable": True, "resizable": True, "minWidth": 120},
+                    {"headerName": tr("storage.col.created"), "field": "created", "filter": True, "sortable": True, "resizable": True, "minWidth": 190},
+                    {"headerName": tr("storage.col.updated"), "field": "updated", "filter": True, "sortable": True, "resizable": True, "minWidth": 190},
+                    {"headerName": tr("storage.col.ttl"), "field": "ttl", "filter": True, "sortable": True, "resizable": True, "minWidth": 100},
+                    {"headerName": tr("storage.col.rows"), "field": "rows", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                    {"headerName": tr("storage.col.size"), "field": "size", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
+                    {"headerName": tr("storage.col.status"), "field": "status", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
+                ]
+                grid_storage.options["rowData"] = rows
+                grid_storage.options["rowSelection"] = "single"
+                grid_storage.options["defaultColDef"] = {"filter": True, "sortable": True, "resizable": True, "minWidth": 100}
+                grid_storage.options["enableCellTextSelection"] = True
+                grid_storage.options["enableBrowserTooltips"] = True
+                grid_storage.options["domLayout"] = "normal"
+                grid_storage.update()
+
+            async def _selected_key():
+                row = (await grid_storage.get_selected_row()) or {}
+                return row.get("id")
+
+            async def _load_selected_data():
+                key = await _selected_key()
+                if not key:
+                    ui.notify(tr("storage.pick"), type="warning")
+                    return None, None
+                load_result = storage_load(key, current_state)
+                if not load_result[0] or load_result[3] is None:
+                    ui.notify(load_result[1] if not load_result[0] else tr("storage.gone", key=key), type="negative")
+                    return key, None
+                return key, (load_result[3].get("data") or [])
+
+            async def preview_entry():
+                key, data = await _load_selected_data()
+                if data is None:
+                    return
+                with ui.dialog() as preview_dialog, ui.card().classes('w-full max-w-5xl'):
+                    ui.label(tr("storage.preview_title", key=key)).style("font-weight:700; color: var(--title-color);")
+                    if data:
+                        ui.aggrid(records_to_aggrid_options(data, theme)).classes('w-full').style('height: 60vh')
+                    else:
+                        ui.markdown(tr("storage.preview_empty"))
+                    ui.button(tr("settings.btn.close"), on_click=preview_dialog.close).classes('hover-glow')
+                preview_dialog.open()
+
+            async def download_entry():
+                key, data = await _load_selected_data()
+                if data is None:
+                    return
+                try:
+                    content, filename, media_type = records_to_download({key: data}, fmt_select.value, key)
+                except BaseException as download_error:
+                    ui.notify(str(download_error), type="negative")
+                    return
+                try:
+                    ui.download(content, filename, media_type)
+                except TypeError:
+                    ui.download(content, filename)
+
+            async def delete_entry():
+                key = await _selected_key()
+                if not key:
+                    ui.notify(tr("storage.pick"), type="warning")
+                    return
+                result = storage_delete(key, current_state)
+                if not result[0]:
+                    ui.notify(tr("settings.common.error", error=result[1]), type="negative")
+                    return
+                ui.notify(tr("storage.deleted", key=key), type="positive")
+                refresh_storage_grid()
+
+            refresh_storage_grid()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        error_message = f"fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), None
+
 
 def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
     """Раздел Settings. Этап 1 — «Внешний вид»: тема, шрифты и размеры интерфейса/таблиц.
