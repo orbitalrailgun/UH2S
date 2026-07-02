@@ -757,6 +757,71 @@ class TestGetLoadCache(unittest.TestCase):
         self.assertNotIn("load_cache", c)
 
 
+class TestApplyParallel(unittest.TestCase):
+    """run_apply_command исполняет строки параллельно, но сохраняет порядок вывода и applied_*.
+    Работает офлайн: function_object подменяется фейком, process_injections — реальный."""
+
+    def _make_command(self, function_object, rows, max_threads=4):
+        return {
+            "command": "GET", "source": "fakesrc", "data_name": "out",
+            "source_object": {"json": {"max_threads": max_threads}},
+            "function_object": function_object,
+            "parameters": {"target": "%(ip)s"},
+            "apply": {"data": "hosts", "columns": [{"column": "ip", "as": "ip"}], "unique": []},
+        }, {"hosts": rows}
+
+    def test_order_preserved_and_applied(self):
+        import time, threading
+        from app.engine import run_apply_command
+        calls = {"n": 0}
+        lock = threading.Lock()
+
+        def fake(parameters, source_json, data_map, current_state):
+            with lock:
+                calls["n"] += 1
+            # переменная задержка, чтобы спровоцировать внеочередное завершение
+            time.sleep(0.02 if parameters["target"].endswith("0") else 0.001)
+            return True, "1", "fake", [{"echo": parameters["target"]}]
+
+        rows = [{"ip": f"10.0.0.{i}"} for i in range(8)]
+        command, data_map = self._make_command(fake, rows)
+        ok, msg, func, data = run_apply_command(command, data_map, CS)
+        self.assertTrue(ok, msg)
+        self.assertEqual(len(data), 8)
+        self.assertEqual(calls["n"], 8)                      # вызвано на каждую строку
+        self.assertEqual([d["echo"] for d in data], [f"10.0.0.{i}" for i in range(8)])   # порядок сохранён
+        self.assertEqual([d["applied_ip"] for d in data], [f"10.0.0.{i}" for i in range(8)])
+
+    def test_per_source_semaphore_ok(self):
+        from app.engine import run_apply_command
+        import threading
+
+        def fake(parameters, source_json, data_map, current_state):
+            return True, "1", "fake", [{"echo": parameters["target"]}]
+
+        rows = [{"ip": f"10.0.0.{i}"} for i in range(5)]
+        command, data_map = self._make_command(fake, rows)
+        state = dict(CS)
+        state["_source_semaphores"] = {"fakesrc": threading.Semaphore(1)}   # лимит 1 не ломает корректность
+        ok, msg, func, data = run_apply_command(command, data_map, state)
+        self.assertTrue(ok, msg)
+        self.assertEqual([d["echo"] for d in data], [f"10.0.0.{i}" for i in range(5)])
+
+    def test_row_error_fails_apply(self):
+        from app.engine import run_apply_command
+
+        def fake(parameters, source_json, data_map, current_state):
+            if parameters["target"].endswith("3"):
+                return False, "boom", "fake", {}
+            return True, "1", "fake", [{"echo": parameters["target"]}]
+
+        rows = [{"ip": f"10.0.0.{i}"} for i in range(6)]
+        command, data_map = self._make_command(fake, rows)
+        ok, msg, func, data = run_apply_command(command, data_map, CS)
+        self.assertFalse(ok)
+        self.assertIn("3 iteration error", msg)
+
+
 class TestAnalyzer(unittest.TestCase):
     def _state(self):
         return {"app_name": "test", "app_version": "0", "username": "tester",

@@ -2,6 +2,8 @@ import re
 import json
 import multiprocessing
 import syslog
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from app.logging import get_log_message, logger_log, currentFuncName
 #from app.validation import json_validate
 from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, run_load_command, run_save_storage_command, get_variable_type, get_notifier_function, execute_calc
@@ -257,6 +259,40 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
             command["dependency"] = deps
             last_token[key] = command["data_name"]
 
+    # по-источниковые семафоры: ограничивают число одновременных обращений к одному источнику.
+    # Лимит — max_threads из source-объекта (если задан), иначе глобальный processes.
+    default_workers = max(1, int(current_state.get("processes", 4) or 4))
+    source_semaphores = {}
+    for command in commands:
+        if command["command"] == "GET" and "source_object" in command and command.get("source"):
+            name = command["source"]
+            if name not in source_semaphores:
+                try:
+                    n = int((command["source_object"].get("json") or {}).get("max_threads") or default_workers)
+                except (TypeError, ValueError):
+                    n = default_workers
+                source_semaphores[name] = threading.Semaphore(max(1, n))
+    current_state["_source_semaphores"] = source_semaphores
+
+    # диспетчеризация одного шага (для стадийного пула); исключение нормализуем в кортеж-ошибку,
+    # чтобы падение шага не роняло весь пул
+    def _dispatch_step(executed_command, current_data_map):
+        try:
+            kind = executed_command["command"]
+            if kind == "LOAD":
+                return run_load_command(executed_command, current_state)
+            if kind == "SAVE":
+                return run_save_storage_command(executed_command, current_data_map, variables, current_state)
+            if executed_command.get("is_script"):
+                if "apply" in executed_command:
+                    return run_apply_script_command(executed_command, current_data_map, current_state)
+                return run_script_command(executed_command, current_data_map, current_state)
+            if "apply" in executed_command:
+                return run_apply_command(executed_command, current_data_map, current_state)
+            return run_command(executed_command, current_data_map, current_state)
+        except BaseException as step_exception:
+            return False, f"crashed: {step_exception}", currentFuncName(), {}
+
     # запуск и поэтапное выполнение согласно зависимостям
 
     result_map = {}
@@ -280,59 +316,34 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
             # выходим из цикла выполнять больше нечего
             break
         
-        # with multiprocessing.Pool(current_state["processes"]) as pool:
-        #     for executed_command in stage_execute_commands:
-        #         current_data_map = {key: result_map[key][3] for key in executed_command["dependency"]}
-        #         results = {}
-        #         print(executed_command)
-        #         if "apply" in executed_command:
-        #             results[executed_command["data_name"]] = pool.apply_async(run_apply_command, (executed_command, current_data_map, current_state))
-        #         else:
-        #             results[executed_command["data_name"]] = pool.apply_async(run_command, (executed_command, current_data_map, current_state))
-                
-        #         for r in results.keys():
-        #             result_map[r] = results[r].get()
-
+        # параллельное исполнение независимых команд стадии (потоки — исполнитель уже в run.io_bound;
+        # общий result_map пишется только здесь, после сбора futures). data_map каждой команды строится
+        # до сабмита (зависимости уже в result_map с прошлых стадий).
+        pool_size = max(1, int(current_state.get("processes", 4) or 4))
         for executed_command in stage_execute_commands:
-            current_data_map = {key: result_map[key][3] for key in executed_command["dependency"]}
-            results = {}
-            # компактная отметка о старте шага БЕЗ параметров и source_object: последний содержит
-            # уже подставленный секрет (key.value) — его нельзя писать в лог. Только тип/источник/имя.
             logger_log(syslog.LOG_DEBUG, get_log_message(
                 f"exec {executed_command.get('command', '?')} "
                 f"{executed_command.get('source', '')}:{executed_command.get('function', '')} "
                 f"-> {executed_command.get('data_name', '?')}", currentFuncName(), current_state))
             if executed_command.get("_status") == "pending":
                 executed_command["_status"] = "running"
-            # любое НЕперехваченное исключение шага (а не аккуратный кортеж) раньше пролетало мимо
-            # установки терминального статуса -> шаг навсегда «running» в UI. Перехватываем здесь,
-            # помечаем шаг error с текстом исключения и аккуратно завершаем выполнение.
-            try:
-                if executed_command["command"] == "LOAD":
-                    results[executed_command["data_name"]] = run_load_command(executed_command, current_state)
-                elif executed_command["command"] == "SAVE":
-                    results[executed_command["data_name"]] = run_save_storage_command(executed_command, current_data_map, variables, current_state)
-                elif executed_command.get("is_script"):
-                    if "apply" in executed_command:
-                        results[executed_command["data_name"]] = run_apply_script_command(executed_command, current_data_map, current_state)
-                    else:
-                        results[executed_command["data_name"]] = run_script_command(executed_command, current_data_map, current_state)
-                elif "apply" in executed_command:
-                    results[executed_command["data_name"]] = run_apply_command(executed_command, current_data_map, current_state)
-                else:
-                    results[executed_command["data_name"]] = run_command(executed_command, current_data_map, current_state)
-            except BaseException as step_exception:
-                error_message = f"step '{executed_command.get('data_name', '?')}' crashed: {step_exception}"
-                if "_status" in executed_command:
-                    executed_command["_status"] = "error"
-                    executed_command["_info"] = str(step_exception)
-                logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-                return False, error_message, currentFuncName(), commands
 
-            for r in results.keys():
-                result_map[r] = results[r]
-            step_result = results[executed_command["data_name"]]
-            # прогресс (UI): статус шага по результату (warning -> при наличии предупреждения, напр. незаполненные DEF скрипта)
+        stage_data_maps = {
+            c["data_name"]: {key: result_map[key][3] for key in c["dependency"]}
+            for c in stage_execute_commands
+        }
+        with ThreadPoolExecutor(max_workers=pool_size) as pool:
+            futures = {
+                c["data_name"]: pool.submit(_dispatch_step, c, stage_data_maps[c["data_name"]])
+                for c in stage_execute_commands
+            }
+
+        # сбор строго в порядке стадии; статусы шагов; прогон останавливается на первой ошибке
+        # (стадия при этом уже доработала — детерминированные статусы)
+        first_error = None
+        for executed_command in stage_execute_commands:
+            step_result = futures[executed_command["data_name"]].result()
+            result_map[executed_command["data_name"]] = step_result
             if "_status" in executed_command:
                 if step_result[0]:
                     executed_command["_status"] = "warning" if executed_command.get("_warning") else "done"
@@ -340,11 +351,11 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                 else:
                     executed_command["_status"] = "error"
                     executed_command["_info"] = step_result[1]
-            # прерываем выполнение при ошибке шага: последующие шаги не должны запускаться
-            if not step_result[0]:
-                error_message = f"step '{executed_command.get('data_name', '?')}' failed: {step_result[1]}"
-                logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-                return False, error_message, currentFuncName(), commands
+            if not step_result[0] and first_error is None:
+                first_error = f"step '{executed_command.get('data_name', '?')}' failed: {step_result[1]}"
+        if first_error is not None:
+            logger_log(syslog.LOG_ERR, get_log_message(first_error, currentFuncName(), current_state))
+            return False, first_error, currentFuncName(), commands
 
 
     # SAVE→storage теперь исполняется в основном цикле (как планируемый шаг, с учётом порядка

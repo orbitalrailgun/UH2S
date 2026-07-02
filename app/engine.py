@@ -2,6 +2,8 @@ import re
 import json
 import syslog
 import time
+import contextlib
+from concurrent.futures import ThreadPoolExecutor
 from app.logging import get_log_message, logger_log, currentFuncName
 from app.validation import json_validate
 
@@ -1595,6 +1597,21 @@ def process_injections(node, parameters:dict, current_state:dict):
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), {}
     
+@contextlib.contextmanager
+def _acquire_source(current_state, source_name):
+    """Ограничивает одновременные обращения к одному источнику (по-источниковый семафор из
+    current_state['_source_semaphores']). Если семафора нет — no-op."""
+    semaphore = (current_state.get("_source_semaphores") or {}).get(source_name)
+    if semaphore is None:
+        yield
+        return
+    semaphore.acquire()
+    try:
+        yield
+    finally:
+        semaphore.release()
+
+
 def _cache_envelope_expired(envelope):
     """Истёк ли конверт кэша (ttl=None -> никогда)."""
     ttl = envelope.get("ttl")
@@ -1664,7 +1681,9 @@ def run_command(command, data_map, current_state):
                     return True, str(len(data)), currentFuncName(), data
                 # истёк без флага -> падаем на источник (не удаляем: свежий результат перезапишет)
 
-    result = command["function_object"](command["parameters"], command["source_object"]['json'], data_map, current_state)
+    # вызов источника — под по-источниковым семафором (контроль нагрузки на источник)
+    with _acquire_source(current_state, command.get("source")):
+        result = command["function_object"](command["parameters"], command["source_object"]['json'], data_map, current_state)
     if not result[0]:
         error_message = f"{currentFuncName()} error: {result[1]}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
@@ -1693,37 +1712,46 @@ def run_apply_command(command, data_map, current_state):
         for column in command['apply']['columns']:
             if column['column'] not in line:
                 return False, f"there is not column {column['column']} in {i} line of {command['apply']['data']}", currentFuncName(), []
-     # выполнение
-    data = []
-    for i, line in enumerate(applyed_data): 
-        # выделяем параметры из данных
-        variables = {}
-        for column in command['apply']['columns']:
-            variables[column["as"]] = line[column['column']]
-        # инъектируем параметры
-        variables2command_injection_result = process_injections(command["parameters"], variables, current_state)
-        if variables2command_injection_result[0] == False:
-            error_message = f"apply var injection error: {variables2command_injection_result[1]}"
-            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-            return False, error_message, currentFuncName(), []
-        current_parameters = variables2command_injection_result[3]
+    # fan-out по строкам — параллельно (ограничено по-источниковым семафором), с сохранением порядка.
+    # число воркеров: max_threads источника (если задан) либо глобальный processes.
+    try:
+        workers = int(command.get("source_object", {}).get("json", {}).get("max_threads")
+                      or current_state.get("processes", 4))
+    except (TypeError, ValueError):
+        workers = 4
+    workers = max(1, workers)
 
-        shard_result = command["function_object"](current_parameters, command["source_object"]['json'], data_map, current_state)
+    def _run_row(i, line):
+        row_variables = {column["as"]: line[column['column']] for column in command['apply']['columns']}
+        injection = process_injections(command["parameters"], row_variables, current_state)
+        if injection[0] == False:
+            return i, (False, f"apply var injection error: {injection[1]}", currentFuncName(), [])
+        with _acquire_source(current_state, command.get("source")):
+            shard_result = command["function_object"](injection[3], command["source_object"]['json'], data_map, current_state)
+        return i, shard_result
+
+    shard_by_index = [None] * len(applyed_data)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for i, shard_result in pool.map(lambda args: _run_row(*args), list(enumerate(applyed_data))):
+            shard_by_index[i] = shard_result
+
+    # сбор в порядке строк; первая ошибка (в порядке строк) -> прогон падает
+    data = []
+    for i, shard_result in enumerate(shard_by_index):
         if not shard_result[0]:
             error_message = f"{currentFuncName()} {i} iteration error: {shard_result[1]}"
             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
             return False, error_message, currentFuncName(), {}
-        # добавляем applied_ к данным
+        line = applyed_data[i]
         for shard_line in shard_result[3]:
             for column in command['apply']['columns']:
-                shard_line[f"applied_{column["as"]}"] = line[column['column']]
-
+                shard_line[f"applied_{column['as']}"] = line[column['column']]
         data = data + shard_result[3]
     # дедубликация при необходимости
     if "unique" in command["apply"]:
         if len(command["apply"]["unique"]) > 0:
             data = pandas.DataFrame(data).drop_duplicates(command["apply"]["unique"]).to_dict('records')
-    
+
     #data_map[command['data_name']] = data
     return True, str(len(data)), currentFuncName(), data
 
