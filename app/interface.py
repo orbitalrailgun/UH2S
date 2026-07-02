@@ -1235,12 +1235,12 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
         with interface_container:
             ui.label(tr("storage.title")).style("color: var(--title-color); font-weight:700;")
             with ui.row().classes('gap-2 items-center flex-wrap'):
-                ui.button(tr("storage.btn.refresh"), icon='refresh').props('flat').on_click(lambda: refresh_storage_grid())
-                ui.button(tr("storage.btn.preview"), icon='visibility').props('outline').on_click(lambda: preview_entry())
+                ui.button(tr("storage.btn.refresh"), icon='refresh').on_click(lambda: refresh_storage_grid())
+                ui.button(tr("storage.btn.preview"), icon='visibility').on_click(lambda: preview_entry())
                 fmt_select = ui.select(["json_in_zip", "csv_in_zip", "xlsx"], value="json_in_zip",
                                        label=tr("storage.download_fmt")).props('dense').style('min-width: 140px')
-                ui.button(tr("storage.btn.download"), icon='download').props('outline').on_click(lambda: download_entry())
-                ui.button(tr("storage.btn.delete"), icon='delete', color='negative').props('outline').on_click(lambda: delete_entry())
+                ui.button(tr("storage.btn.download"), icon='download').on_click(lambda: download_entry())
+                ui.button(tr("storage.btn.delete"), icon='delete', color='negative').on_click(lambda: delete_entry())
             grid_storage = ui.aggrid({}).classes('w-full').style('height: 62vh')
 
             def refresh_storage_grid():
@@ -1289,7 +1289,7 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     return None, None
                 load_result = storage_load(key, current_state)
                 if not load_result[0] or load_result[3] is None:
-                    ui.notify(load_result[1] if not load_result[0] else tr("storage.gone", key=key), type="negative")
+                    ui.notify(load_result[1] if not load_result[0] else tr("storage.gone", name=key), type="negative")
                     return key, None
                 return key, (load_result[3].get("data") or [])
 
@@ -1298,7 +1298,7 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 if data is None:
                     return
                 with ui.dialog() as preview_dialog, ui.card().classes('w-full max-w-5xl'):
-                    ui.label(tr("storage.preview_title", key=key)).style("font-weight:700; color: var(--title-color);")
+                    ui.label(tr("storage.preview_title", name=key)).style("font-weight:700; color: var(--title-color);")
                     if data:
                         ui.aggrid(records_to_aggrid_options(data, theme)).classes('w-full').style('height: 60vh')
                     else:
@@ -1329,7 +1329,7 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 if not result[0]:
                     ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                     return
-                ui.notify(tr("storage.deleted", key=key), type="positive")
+                ui.notify(tr("storage.deleted", name=key), type="positive")
                 refresh_storage_grid()
 
             refresh_storage_grid()
@@ -2488,7 +2488,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             # SAVE→storage исполняется движком (commands_executor), не как файловая выгрузка:
             # статус/сообщение уже проставлены, здесь только показываем результат.
             if command.get("save_is_storage"):
-                info = command.get("_info") or tr("harv.save.stored", key=command.get("storage_key", "?"))
+                info = command.get("_info") or tr("harv.save.stored", name=command.get("storage_key", "?"))
                 ui.markdown(f"*SAVE storage: {_md_escape(info)}*")
                 return command.get("_status") != "error"
 

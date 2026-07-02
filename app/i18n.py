@@ -35,9 +35,9 @@ TRANSLATIONS = {
         "storage.col.size": "Size (bytes)", "storage.col.status": "Status",
         "storage.ttl.never": "∞", "storage.status.active": "active", "storage.status.expired": "expired",
         "storage.pick": "Select an entry in the table.",
-        "storage.gone": "Entry '{key}' no longer exists.",
-        "storage.preview_title": "Preview: {key}", "storage.preview_empty": "*(empty dataset)*",
-        "storage.deleted": "Deleted '{key}'.",
+        "storage.gone": "Entry '{name}' no longer exists.",
+        "storage.preview_title": "Preview: {name}", "storage.preview_empty": "*(empty dataset)*",
+        "storage.deleted": "Deleted '{name}'.",
         # Settings: язык
         "settings.language.title": "Language", "settings.language.label": "Interface language",
         "settings.language.apply": "Apply", "settings.language.saved": "Language saved",
@@ -179,7 +179,7 @@ TRANSLATIONS = {
         "harv.show.bad_type": "unknown type «{type}» (table | matplotlib)",
         "harv.save.no_data": "no table data: {tables}", "harv.save.no_tables": "no tables specified",
         "harv.save.downloading": "💾 Downloading **{filename}** ({tables} tbl., {rows} rows)",
-        "harv.save.stored": "stored to '{key}'",
+        "harv.save.stored": "stored to '{name}'",
         # History
         "history.title": "Run history", "history.refresh": "Refresh", "history.search": "Search by script text",
         "history.script_label": "Script",
@@ -214,9 +214,9 @@ TRANSLATIONS = {
         "storage.col.size": "Размер (байт)", "storage.col.status": "Статус",
         "storage.ttl.never": "∞", "storage.status.active": "активна", "storage.status.expired": "истекла",
         "storage.pick": "Выберите запись в таблице.",
-        "storage.gone": "Записи '{key}' больше нет.",
-        "storage.preview_title": "Предпросмотр: {key}", "storage.preview_empty": "*(пустой набор)*",
-        "storage.deleted": "Удалено '{key}'.",
+        "storage.gone": "Записи '{name}' больше нет.",
+        "storage.preview_title": "Предпросмотр: {name}", "storage.preview_empty": "*(пустой набор)*",
+        "storage.deleted": "Удалено '{name}'.",
         # Settings: язык
         "settings.language.title": "Язык", "settings.language.label": "Язык интерфейса",
         "settings.language.apply": "Применить", "settings.language.saved": "Язык сохранён",
@@ -358,7 +358,7 @@ TRANSLATIONS = {
         "harv.show.bad_type": "неизвестный тип «{type}» (table | matplotlib)",
         "harv.save.no_data": "нет табличных данных: {tables}", "harv.save.no_tables": "не указаны таблицы",
         "harv.save.downloading": "💾 Скачивание **{filename}** ({tables} табл., {rows} строк)",
-        "harv.save.stored": "сохранено в '{key}'",
+        "harv.save.stored": "сохранено в '{name}'",
         # History
         "history.title": "История запусков", "history.refresh": "Обновить", "history.search": "Поиск по тексту скрипта",
         "history.script_label": "Скрипт",
