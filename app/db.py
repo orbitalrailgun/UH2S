@@ -2,6 +2,7 @@ import syslog
 import sqlite3
 import base64
 import json
+import time
 from app.logging import get_log_message, logger_log, currentFuncName, currentTimestamp
 from app.crptgrphy import decrypt, encrypt
 
@@ -1183,6 +1184,100 @@ def create_execution(execution_id, owner, status, json_object, current_state):
         cursor.close()
         connection.close()
         return True, "Ok", currentFuncName(), execution_id
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# storage — персистентный кэш данных DSL (SAVE→storage / LOAD / GET LOAD).
+# Кэш ОБЩИЙ: ключ (id) глобальный, фильтр только по id; owner пишется для аудита.
+# Данные хранятся JSON-конвертом в колонке json: {"created_ts", "ttl", "data"}.
+# ────────────────────────────────────────────────────────────────────────────
+def storage_save(key, records, ttl, current_state):
+    """Сохранить таблицу (list-of-dicts) в storage под ключом key. Перезапись = DELETE+INSERT
+    (одна транзакция; работает и в sqlite3, и в postgresql). ttl=None -> не истекает."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        envelope = {"created_ts": int(time.time()),
+                    "ttl": (int(ttl) if ttl is not None else None),
+                    "data": records}
+        owner = current_state.get("username", "")
+        execution = current_state.get("main_session_id", "")
+
+        cursor = connection.cursor()
+        cursor.execute(f"DELETE FROM storage WHERE id = {placeholder};", (key,))
+        cursor.execute(
+            f"INSERT INTO storage (id, owner, execution, json) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder});",
+            (key, owner, execution, json.dumps(envelope, ensure_ascii=False)))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), key
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def storage_load(key, current_state):
+    """Прочитать конверт из storage по ключу. Возврат (ok, msg, func, envelope|None):
+    отсутствие ключа -> (True, "Ok", .., None); битый/некорректный json -> (False, ..)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"SELECT json FROM storage WHERE id = {placeholder};", (key,))
+        row = cursor.fetchone()
+        cursor.close()
+        connection.close()
+
+        if not row:
+            return True, "Ok", currentFuncName(), None
+        try:
+            envelope = json.loads(row[0]) if row[0] else None
+        except BaseException:
+            return False, f"storage '{key}' corrupt json envelope", currentFuncName(), None
+        if not isinstance(envelope, dict) or "data" not in envelope:
+            return False, f"storage '{key}' invalid envelope shape", currentFuncName(), None
+        return True, "Ok", currentFuncName(), envelope
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def storage_delete(key, current_state):
+    """Удалить строку storage по ключу. Идемпотентно (удаление отсутствующего ключа — ок)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"DELETE FROM storage WHERE id = {placeholder};", (key,))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), key
 
     except BaseException as e:
         if 'connection' in locals():

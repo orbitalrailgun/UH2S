@@ -647,6 +647,116 @@ class TestSqlDependencies(unittest.TestCase):
         self.assertEqual(deps, ["src_a", "src_b"])
 
 
+class TestSaveStorage(unittest.TestCase):
+    """SAVE(dataname, storage[, ttl]) AS key — разбор storage-варианта (исполнение требует БД)."""
+
+    def test_storage_no_ttl(self):
+        c = one("SAVE(alerts, storage) AS cache_key")
+        self.assertTrue(c["parsed"], c.get("parsed_comment"))
+        self.assertTrue(c["save_is_storage"])
+        self.assertEqual(c["storage_dataname"], "alerts")
+        self.assertEqual(c["storage_key"], "cache_key")
+        self.assertIsNone(c["storage_ttl"])
+
+    def test_storage_with_ttl(self):
+        c = one("SAVE(alerts, storage, 3600) AS cache_key")
+        self.assertTrue(c["parsed"], c.get("parsed_comment"))
+        self.assertEqual(c["storage_ttl"], 3600)
+
+    def test_storage_requires_as(self):
+        c = one("SAVE(alerts, storage)")
+        self.assertFalse(c["parsed"])
+        self.assertIn("dataname_id", c["parsed_comment"])
+
+    def test_storage_single_table_only(self):
+        c = one("SAVE([a,b], storage) AS k")
+        self.assertFalse(c["parsed"])
+        self.assertIn("one dataname", c["parsed_comment"])
+
+    def test_storage_ttl_must_be_int(self):
+        c = one("SAVE(alerts, storage, notanint) AS k")
+        self.assertFalse(c["parsed"])
+        self.assertIn("integer", c["parsed_comment"])
+
+    def test_file_save_unaffected(self):
+        c = one("SAVE(alerts, xlsx) AS report")
+        self.assertTrue(c["parsed"], c.get("parsed_comment"))
+        self.assertFalse(c["save_is_storage"])
+        self.assertEqual(c["save_format"], "xlsx")
+
+
+class TestLoad(unittest.TestCase):
+    """LOAD(dataname_id[, ttl_ignore]) AS name."""
+
+    def test_basic(self):
+        c = one("LOAD(cache_key) AS current")
+        self.assertTrue(c["parsed"], c.get("parsed_comment"))
+        self.assertEqual(c["command"], "LOAD")
+        self.assertEqual(c["load_id"], "cache_key")
+        self.assertFalse(c["load_ttl_ignore"])
+        self.assertEqual(c["data_name"], "current")
+
+    def test_ttl_ignore_true(self):
+        c = one("LOAD(cache_key, true) AS current")
+        self.assertTrue(c["load_ttl_ignore"])
+
+    def test_ttl_ignore_false(self):
+        c = one("LOAD(cache_key, false) AS current")
+        self.assertFalse(c["load_ttl_ignore"])
+
+    def test_missing_as(self):
+        c = one("LOAD(cache_key)")
+        self.assertFalse(c["parsed"])
+
+    def test_missing_id(self):
+        c = one("LOAD() AS current")
+        self.assertFalse(c["parsed"])
+        self.assertIn("dataname_id", c["parsed_comment"])
+
+    def test_bad_flag(self):
+        c = one("LOAD(cache_key, maybe) AS current")
+        self.assertFalse(c["parsed"])
+        self.assertIn("true or false", c["parsed_comment"])
+
+
+class TestGetLoadCache(unittest.TestCase):
+    """GET LOAD(id[, ttl_flag]):refresh:<int> | :not_refresh  source:func(...) AS name."""
+
+    def test_refresh(self):
+        c = one("GET LOAD(k):refresh:600 source:func(a=1) AS out")
+        self.assertTrue(c["parsed"], c.get("parsed_comment"))
+        self.assertEqual(c["load_cache"], {"id": "k", "ttl_ignore": False, "refresh": True, "refresh_ttl": 600})
+        self.assertEqual(c["source"], "source")
+        self.assertEqual(c["function"], "func")
+        self.assertEqual(c["parameters"], {"a": "1"})
+        self.assertEqual(c["data_name"], "out")
+
+    def test_not_refresh(self):
+        c = one("GET LOAD(k):not_refresh source:func(a=1) AS out")
+        self.assertTrue(c["parsed"], c.get("parsed_comment"))
+        self.assertFalse(c["load_cache"]["refresh"])
+        self.assertIsNone(c["load_cache"]["refresh_ttl"])
+
+    def test_ttl_flag(self):
+        c = one("GET LOAD(k, true):refresh:60 source:func() AS out")
+        self.assertTrue(c["load_cache"]["ttl_ignore"])
+
+    def test_bad_spec(self):
+        c = one("GET LOAD(k):refresh source:func() AS out")
+        self.assertFalse(c["parsed"])
+        self.assertIn(":refresh:<int>", c["parsed_comment"])
+
+    def test_combo_with_apply(self):
+        c = one("GET LOAD(k):not_refresh APPLY:d(x AS x):[] source:func(q=%(x)s) AS out")
+        self.assertTrue(c["parsed"], c.get("parsed_comment"))
+        self.assertIn("load_cache", c)
+        self.assertIn("apply", c)
+
+    def test_plain_get_has_no_cache(self):
+        c = one("GET source:func() AS out")
+        self.assertNotIn("load_cache", c)
+
+
 class TestAnalyzer(unittest.TestCase):
     def _state(self):
         return {"app_name": "test", "app_version": "0", "username": "tester",

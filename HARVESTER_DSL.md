@@ -189,6 +189,44 @@ SAVE(alerts, xlsx)
 SAVE([alerts, by_sev], json_in_zip) AS soc_dump
 ```
 
+### SAVE → storage — персистентный кэш (с TTL)
+```
+SAVE(<таблица>, storage[, <ttl_сек>]) AS <ключ>
+```
+Сохраняет таблицу в БД под стабильным `<ключ>` (перезапись по ключу, с новым TTL). Без `ttl` — не истекает.
+Кэш **общий** для всех пользователей (ключ глобальный). Требуется `AS <ключ>` и ровно одна таблица.
+```
+GET irp_thehive:get_alerts(...) AS alerts
+| SAVE(alerts, storage, 3600) AS alerts_cache
+```
+
+### LOAD — загрузка из storage
+```
+LOAD(<ключ>[, <ttl_ignore true|false>]) AS <данные>
+```
+- ключа нет → ошибка (прогон останавливается);
+- TTL истёк, без `ttl_ignore` → данные **удаляются**, ошибка «expired and deleted»;
+- TTL истёк, `ttl_ignore=true` → данные возвращаются, шаг помечается **предупреждением**;
+- валидны → возвращаются.
+```
+LOAD(alerts_cache) AS alerts
+LOAD(alerts_cache, true) AS alerts   /* использовать даже просроченные */
+```
+
+### GET LOAD — кэш поверх источника (read-through)
+```
+GET LOAD(<ключ>[, <ttl_flag>]):refresh:<ttl_сек> <source:func(...)> AS <данные>
+GET LOAD(<ключ>[, <ttl_flag>]):not_refresh <source:func(...)> AS <данные>
+```
+Если в кэше есть валидные данные (или просроченные при `ttl_flag=true`) — берутся они, **источник не вызывается**.
+Иначе выполняется обращение к источнику; при `:refresh:<ttl>` результат **теневой перезаписью** сохраняется
+в `<ключ>` с этим TTL (только при успехе источника), при `:not_refresh` — не сохраняется.
+```
+GET LOAD(alerts_cache):refresh:600 irp_thehive:get_alerts(since=%(since)s) AS alerts
+GET LOAD(alerts_cache, true):not_refresh irp_thehive:get_alerts(...) AS alerts
+```
+Порядок в одном запуске: `SAVE(k)` выше по скрипту виден `LOAD(k)`/`GET LOAD(k)` ниже (чтение-после-записи).
+
 ### NOTIFY — уведомление
 ```
 NOTIFY <notifier_object>("текст сообщения")

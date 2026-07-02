@@ -462,6 +462,10 @@ def execute_script_api(script_text, current_state):
                     text_parts.append(records_to_markdown(data))
 
             elif kind == "SAVE":
+                # SAVE→storage уже исполнен движком (запись в БД) — не паковать в файл, только статус
+                if command.get("save_is_storage"):
+                    text_parts.append(f"*SAVE storage: {command.get('_info', 'stored')}*")
+                    continue
                 tables = command.get("save_tables") or []
                 fmt = (command.get("save_format") or "").strip().strip('"\'').lower()
                 tables_data = {}
@@ -498,8 +502,11 @@ def _step_label(command):
         if kind == "VALIDATE":
             return "Валидация скрипта"
         if kind == "GET":
+            cache = "CACHE " if command.get("load_cache") else ""
             prefix = "APPLY " if "apply" in command else ""
-            return f"{prefix}GET {command.get('source', '?')}:{command.get('function', '?')} → {command.get('data_name', '?')}"
+            return f"{cache}{prefix}GET {command.get('source', '?')}:{command.get('function', '?')} → {command.get('data_name', '?')}"
+        if kind == "LOAD":
+            return f"LOAD {command.get('load_id', '?')} → {command.get('data_name', '?')}"
         if kind == "DEF":
             return f"DEF {command.get('variable_name', '?')}"
         if kind == "PRINT":
@@ -2343,6 +2350,13 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 return False
 
         def _render_save(command, variables, result_map):
+            # SAVE→storage исполняется движком (commands_executor), не как файловая выгрузка:
+            # статус/сообщение уже проставлены, здесь только показываем результат.
+            if command.get("save_is_storage"):
+                info = command.get("_info") or tr("harv.save.stored", key=command.get("storage_key", "?"))
+                ui.markdown(f"*SAVE storage: {_md_escape(info)}*")
+                return command.get("_status") != "error"
+
             tables = command.get("save_tables") or []
             fmt = (command.get("save_format") or "").strip().strip('"\'').lower()
             save_filename = command.get("save_filename")

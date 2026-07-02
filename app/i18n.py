@@ -165,6 +165,7 @@ TRANSLATIONS = {
         "harv.show.bad_type": "unknown type «{type}» (table | matplotlib)",
         "harv.save.no_data": "no table data: {tables}", "harv.save.no_tables": "no tables specified",
         "harv.save.downloading": "💾 Downloading **{filename}** ({tables} tbl., {rows} rows)",
+        "harv.save.stored": "stored to '{key}'",
         # History
         "history.title": "Run history", "history.refresh": "Refresh", "history.search": "Search by script text",
         "history.script_label": "Script",
@@ -329,6 +330,7 @@ TRANSLATIONS = {
         "harv.show.bad_type": "неизвестный тип «{type}» (table | matplotlib)",
         "harv.save.no_data": "нет табличных данных: {tables}", "harv.save.no_tables": "не указаны таблицы",
         "harv.save.downloading": "💾 Скачивание **{filename}** ({tables} табл., {rows} строк)",
+        "harv.save.stored": "сохранено в '{key}'",
         # History
         "history.title": "История запусков", "history.refresh": "Обновить", "history.search": "Поиск по тексту скрипта",
         "history.script_label": "Скрипт",

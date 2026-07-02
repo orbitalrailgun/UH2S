@@ -4,7 +4,7 @@ import multiprocessing
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
 #from app.validation import json_validate
-from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, get_variable_type, get_notifier_function, execute_calc
+from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, run_load_command, run_save_storage_command, get_variable_type, get_notifier_function, execute_calc
 from app.db import get_actual_object_by_name, get_secret, get_source_threads_pool, get_user_by_username
 
 
@@ -219,7 +219,14 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
             
             command["source_object"] = source_object
 
-    # считаем зависимости по apply/ожидаем выполнение
+    # считаем зависимости по apply/ожидаем выполнение.
+    # storage-команды (SAVE→storage / LOAD / GET LOAD) линеаризуются по ключу в порядке скрипта,
+    # чтобы работало чтение-после-записи в одном запуске: SAVE(k) выше -> виден LOAD(k)/GET LOAD(k) ниже.
+    last_token = {}   # storage key -> data_name последнего писателя (SAVE-storage или GET LOAD refresh)
+    save_storage_index = 0
+    # имена, которые реально появятся в result_map (результаты GET/LOAD) — чтобы SAVE зависел от них;
+    # если таблица SAVE — это DEF-переменная, зависимость не добавляем (она доступна сразу)
+    produced_names = {c.get("data_name") for c in commands if c["command"] in ("GET", "LOAD") and c.get("data_name")}
     for command in commands:
         if command["command"] == "GET":
             get_command_dependency_result = get_command_dependency(command, current_state)
@@ -228,6 +235,27 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                 logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                 return False, error_message, currentFuncName(), {}
             command["dependency"] = get_command_dependency_result[3]
+            cache = command.get("load_cache")
+            if cache:
+                key = cache["id"]
+                if key in last_token:
+                    command["dependency"] = command["dependency"] + [last_token[key]]
+                if cache.get("refresh"):
+                    last_token[key] = command["data_name"]   # GET LOAD refresh пишет ключ
+        elif command["command"] == "LOAD":
+            key = command["load_id"]
+            command["dependency"] = [last_token[key]] if key in last_token else []
+        elif command["command"] == "SAVE" and command.get("save_is_storage"):
+            key = command["storage_key"]
+            command["data_name"] = f"__save__{key}__{save_storage_index}"   # синтетический токен
+            save_storage_index += 1
+            deps = []
+            if command["storage_dataname"] in produced_names:   # таблица-результат GET/LOAD
+                deps.append(command["storage_dataname"])
+            if key in last_token:                               # порядок относительно прежней записи
+                deps.append(last_token[key])
+            command["dependency"] = deps
+            last_token[key] = command["data_name"]
 
     # запуск и поэтапное выполнение согласно зависимостям
 
@@ -237,7 +265,9 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
         # выделяем такие задачи, для которых зависимостей нет или они все доступны, и при этом они ещё не были выполнены
         stage_execute_commands = []
         for command in commands:
-            if command["command"] == "GET" and command["data_name"] not in result_map:
+            schedulable = command["command"] in ("GET", "LOAD") or \
+                (command["command"] == "SAVE" and command.get("save_is_storage"))
+            if schedulable and command["data_name"] not in result_map:
                 dependency_available = True
                 for depend in command["dependency"]:
                     if depend not in result_map:
@@ -278,7 +308,11 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
             # установки терминального статуса -> шаг навсегда «running» в UI. Перехватываем здесь,
             # помечаем шаг error с текстом исключения и аккуратно завершаем выполнение.
             try:
-                if executed_command.get("is_script"):
+                if executed_command["command"] == "LOAD":
+                    results[executed_command["data_name"]] = run_load_command(executed_command, current_state)
+                elif executed_command["command"] == "SAVE":
+                    results[executed_command["data_name"]] = run_save_storage_command(executed_command, current_data_map, variables, current_state)
+                elif executed_command.get("is_script"):
                     if "apply" in executed_command:
                         results[executed_command["data_name"]] = run_apply_script_command(executed_command, current_data_map, current_state)
                     else:
@@ -313,12 +347,8 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                 return False, error_message, currentFuncName(), commands
 
 
-    # тут есть данные
-    # обработка SAVE
-    for command in commands:
-        if command["command"] == "SAVE":
-            # сохранение данных в storage
-            pass
+    # SAVE→storage теперь исполняется в основном цикле (как планируемый шаг, с учётом порядка
+    # относительно LOAD по тому же ключу). Файловый SAVE рендерится в UI/API.
 
     # надо сделать системную переменную с результатом работы _execution_result_
     # Уведомления делаются в последнюю очередь

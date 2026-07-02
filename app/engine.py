@@ -1,6 +1,7 @@
 import re
 import json
 import syslog
+import time
 from app.logging import get_log_message, logger_log, currentFuncName
 from app.validation import json_validate
 
@@ -1249,6 +1250,27 @@ def command_parser(text:str, current_state:dict):
                 continue
 
             case "GET":
+                # read-through кэш: префикс LOAD(id[, ttl_flag]):refresh:<int> | :not_refresh
+                # (аналог APPLY: — снимается до основного разбора source:func(...))
+                load_prefix = re.match(
+                    r"^\s*LOAD\(\s*([^,\)]+?)\s*(?:,\s*(true|false)\s*)?\)\s*:\s*"
+                    r"(?:(refresh)\s*:\s*(\d+)|(not_refresh))\s+",
+                    command["line"], flags=re.IGNORECASE)
+                if load_prefix:
+                    is_refresh = load_prefix.group(3) is not None
+                    command["load_cache"] = {
+                        "id": load_prefix.group(1).strip().strip('"\''),
+                        "ttl_ignore": (load_prefix.group(2) is not None and load_prefix.group(2).lower() == "true"),
+                        "refresh": is_refresh,
+                        "refresh_ttl": (int(load_prefix.group(4)) if is_refresh else None),
+                    }
+                    command["line"] = command["line"][load_prefix.end():]
+                elif re.match(r"^\s*LOAD\(", command["line"]):
+                    # похоже на GET LOAD, но спецификатор refresh/not_refresh некорректен
+                    command["parsed"] = False
+                    command["parsed_comment"] = "GET LOAD: expected :refresh:<int> or :not_refresh"
+                    continue
+
                 # ищем возможный apply
                 match = re.search(r"^APPLY:([^\()]+)\(([^\)]+)\):(\[[^\]]*\])\s+", command["line"])
                 if match:
@@ -1370,6 +1392,55 @@ def command_parser(text:str, current_state:dict):
                         if not command["save_tables"]:
                             command["parsed"] = False
                             command["parsed_comment"] = "SAVE: empty table list"
+                        # storage-вариант: SAVE(dataname, storage[, ttl_sec]) AS dataname_id
+                        command["save_is_storage"] = (command["save_format"].strip().lower() == "storage")
+                        if command["save_is_storage"]:
+                            if len(command["save_tables"]) != 1:
+                                command["parsed"] = False
+                                command["parsed_comment"] = "SAVE storage: exactly one dataname required"
+                            elif not command.get("save_filename"):
+                                command["parsed"] = False
+                                command["parsed_comment"] = "SAVE storage: AS dataname_id (storage key) required"
+                            else:
+                                command["storage_key"] = command["save_filename"]
+                                command["storage_dataname"] = command["save_tables"][0]
+                                command["storage_ttl"] = None
+                                if len(save_args) >= 3:
+                                    ttl_raw = save_args[2].strip().strip('"\'')
+                                    if ttl_raw != "":
+                                        if not re.fullmatch(r"-?\d+", ttl_raw):
+                                            command["parsed"] = False
+                                            command["parsed_comment"] = "SAVE storage: ttl_seconds must be an integer"
+                                        else:
+                                            command["storage_ttl"] = int(ttl_raw)
+            case "LOAD":
+                # LOAD(dataname_id[, ttl_ignore true/false]) AS data_name
+                load_line = command["line"].strip()
+                as_match = re.search(r'^(.*\))\s+(?:as|AS|As|aS)\s+(\S+)\s*$', load_line, flags=re.DOTALL)
+                if not as_match:
+                    command["parsed"] = False
+                    command["parsed_comment"] = "LOAD format: LOAD(dataname_id[, ttl_ignore]) AS data_name"
+                else:
+                    command["data_name"] = as_match.group(2).strip()
+                    inner = re.search(r"^\((.*)\)$", as_match.group(1).strip(), flags=re.DOTALL)
+                    if not inner:
+                        command["parsed"] = False
+                        command["parsed_comment"] = "LOAD format: LOAD(dataname_id[, ttl_ignore]) AS data_name"
+                    else:
+                        load_args = [a.strip() for a in split_top_level(inner.group(1), ',') if a.strip() != ""]
+                        if len(load_args) < 1:
+                            command["parsed"] = False
+                            command["parsed_comment"] = "LOAD: missing dataname_id"
+                        else:
+                            command["load_id"] = load_args[0].strip('"\'')
+                            command["load_ttl_ignore"] = False
+                            if len(load_args) >= 2:
+                                flag = load_args[1].strip('"\'').lower()
+                                if flag not in ("true", "false"):
+                                    command["parsed"] = False
+                                    command["parsed_comment"] = "LOAD: ttl_ignore must be true or false"
+                                else:
+                                    command["load_ttl_ignore"] = (flag == "true")
             case "SHOW":
                 # SHOW(table_name, type, [optional_params])
                 #   type=table       -> интерактивная таблица (aggrid: фильтры/сортировки)
@@ -1524,14 +1595,93 @@ def process_injections(node, parameters:dict, current_state:dict):
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), {}
     
+def _cache_envelope_expired(envelope):
+    """Истёк ли конверт кэша (ttl=None -> никогда)."""
+    ttl = envelope.get("ttl")
+    created_ts = envelope.get("created_ts")
+    if ttl is None or created_ts is None:
+        return False
+    return (int(time.time()) - int(created_ts)) > int(ttl)
+
+
+def run_load_command(command, current_state):
+    """LOAD(id[, ttl_ignore]) AS name — чтение из storage с обработкой TTL.
+    Истёк без ttl_ignore -> удаляем строку и возвращаем ошибку; истёк с ttl_ignore -> _warning
+    + данные; отсутствует/битый -> ошибка. Возврат (ok, str(len)|msg, func, records|{})."""
+    from app.db import storage_load, storage_delete
+    key = command["load_id"]
+    load_result = storage_load(key, current_state)
+    if not load_result[0]:
+        return False, load_result[1], currentFuncName(), {}
+    envelope = load_result[3]
+    if envelope is None:
+        return False, f"data '{key}' not found in storage", currentFuncName(), {}
+    data = envelope.get("data")
+    if not isinstance(data, list):
+        return False, f"data '{key}' corrupt: envelope has no record list", currentFuncName(), {}
+    if _cache_envelope_expired(envelope):
+        if not command.get("load_ttl_ignore"):
+            storage_delete(key, current_state)
+            return False, f"data '{key}' expired and deleted", currentFuncName(), {}
+        command["_warning"] = f"data '{key}' expired by ttl (kept via ttl_ignore)"
+    return True, str(len(data)), currentFuncName(), data
+
+
+def run_save_storage_command(command, data_map, variables, current_state):
+    """SAVE(dataname, storage[, ttl]) AS key — сохранить таблицу в storage. Возврат сентинела
+    (ok, msg, func, key); данные результата не используются другими шагами как таблица.
+    Таблица берётся из результатов GET/LOAD (data_map), иначе из переменных DEF (variables)."""
+    from app.db import storage_save
+    key = command["storage_key"]
+    dataname = command["storage_dataname"]
+    records = data_map.get(dataname)
+    if not isinstance(records, list) and isinstance(variables, dict) and isinstance(variables.get(dataname), list):
+        records = variables.get(dataname)
+    if not isinstance(records, list):
+        return False, f"SAVE storage: no table data '{dataname}'", currentFuncName(), {}
+    save_result = storage_save(key, records, command.get("storage_ttl"), current_state)
+    if not save_result[0]:
+        return False, f"SAVE storage error: {save_result[1]}", currentFuncName(), {}
+    return True, f"stored '{key}' ({len(records)} rows, ttl={command.get('storage_ttl')})", currentFuncName(), key
+
+
 def run_command(command, data_map, current_state):
+    # read-through кэш (GET LOAD): сперва пробуем storage; валидный хит -> источник не зовём
+    cache = command.get("load_cache")
+    if cache:
+        from app.db import storage_load, storage_save
+        key = cache["id"]
+        load_result = storage_load(key, current_state)
+        if load_result[0] and load_result[3] is not None:
+            envelope = load_result[3]
+            data = envelope.get("data")
+            if isinstance(data, list):
+                expired = _cache_envelope_expired(envelope)
+                if not expired:
+                    return True, f"cache hit '{key}' ({len(data)} rows)", currentFuncName(), data
+                if cache.get("ttl_ignore"):
+                    command["_warning"] = f"cache '{key}' expired by ttl (used via ttl_flag)"
+                    return True, str(len(data)), currentFuncName(), data
+                # истёк без флага -> падаем на источник (не удаляем: свежий результат перезапишет)
+
     result = command["function_object"](command["parameters"], command["source_object"]['json'], data_map, current_state)
     if not result[0]:
         error_message = f"{currentFuncName()} error: {result[1]}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), {}
-    #data_map[command['data_name']] = result[3]
-    return True, str(len(result[3])), currentFuncName(), result[3]
+    records = result[3]
+
+    # теневая перезапись кэша только при успехе источника и только при :refresh
+    info = str(len(records))
+    if cache:
+        if cache.get("refresh") and isinstance(records, list):
+            from app.db import storage_save
+            storage_save(cache["id"], records, cache.get("refresh_ttl"), current_state)
+            info = f"cache miss '{cache['id']}' → source fetched, refreshed ({len(records)} rows, ttl={cache.get('refresh_ttl')})"
+        else:
+            info = f"cache miss '{cache['id']}' → source fetched (not_refresh)"
+    #data_map[command['data_name']] = records
+    return True, info, currentFuncName(), records
 
 def run_apply_command(command, data_map, current_state):
     import pandas
