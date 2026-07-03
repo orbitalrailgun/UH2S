@@ -327,12 +327,17 @@ def create_new_object_version(name, type, roles, json_object, current_state):
             return False, error_message, currentFuncName(), None
 
         connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
 
-        query = f"""INSERT INTO objects (name, roles, version, timestamp, type, owner, json) 
-        VALUES ('{name}','{json.dumps(roles, indent=0, ensure_ascii=False)}', (SELECT MAX(version) FROM objects WHERE name='{name}') + 1, '{currentTimestamp()}', '{type}',
-        '{current_state.get("username", "unknown")}', '{json.dumps(json_object, indent=0, ensure_ascii=False)}');"""
+        # параметризованно: json/roles могут содержать одинарные кавычки (напр. SQL LIKE '123')
+        query = (f"INSERT INTO objects (name, roles, version, timestamp, type, owner, json) "
+                 f"VALUES ({placeholder}, {placeholder}, (SELECT MAX(version) FROM objects WHERE name = {placeholder}) + 1, "
+                 f"{placeholder}, {placeholder}, {placeholder}, {placeholder});")
         cursor = connection.cursor()
-        cursor.execute(query)
+        cursor.execute(query, (
+            name, json.dumps(roles, indent=0, ensure_ascii=False), name,
+            currentTimestamp(), type, current_state.get("username", "unknown"),
+            json.dumps(json_object, indent=0, ensure_ascii=False)))
         cursor.close()
         connection.commit()
         connection.close()
@@ -354,12 +359,16 @@ def create_new_object(name, type, roles, json_object, current_state):
             return False, error_message, currentFuncName(), None
 
         connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
 
-        query = f"""INSERT INTO objects (name, roles, version, timestamp, type, owner, json) 
-        VALUES ('{name}','{json.dumps(roles, indent=0, ensure_ascii=False)}', 1, '{currentTimestamp()}', '{type}',
-        '{current_state.get("username", "unknown")}', '{json.dumps(json_object, indent=0, ensure_ascii=False)}');"""
+        # параметризованно: json/roles могут содержать одинарные кавычки (напр. SQL LIKE '123')
+        query = (f"INSERT INTO objects (name, roles, version, timestamp, type, owner, json) "
+                 f"VALUES ({placeholder}, {placeholder}, 1, {placeholder}, {placeholder}, {placeholder}, {placeholder});")
         cursor = connection.cursor()
-        cursor.execute(query)
+        cursor.execute(query, (
+            name, json.dumps(roles, indent=0, ensure_ascii=False),
+            currentTimestamp(), type, current_state.get("username", "unknown"),
+            json.dumps(json_object, indent=0, ensure_ascii=False)))
         cursor.close()
         connection.commit()
         connection.close()

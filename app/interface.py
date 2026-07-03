@@ -1281,6 +1281,11 @@ def draw_schedules(interface_container: ui.card, current_state: dict) -> Tuple[b
             grid = ui.aggrid({}).classes('w-full').style('height: 58vh')
 
             def refresh_grid():
+                # обновляем и список доступных script-объектов (новые скрипты появляются в выборе)
+                objs = get_all_actual_objects(current_state)
+                if objs[0]:
+                    script_select.options = sorted([o["name"] for o in objs[3] if o.get("type") == "script"])
+                    script_select.update()
                 result = list_schedules(current_state)   # админ видит все
                 now = _datetime.datetime.now().astimezone()
                 rows = []
