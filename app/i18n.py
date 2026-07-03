@@ -173,6 +173,7 @@ TRANSLATIONS = {
         "objects.done": "Done",
         # AI
         "ai.check": "Check", "ai.refresh": "Refresh", "ai.send": "Send", "ai.clear": "Clear",
+        "ai.stop": "Stop", "ai.stop_requested": "Stop requested — will halt after the current step",
         "ai.not_selected": "No LLM selected", "ai.checking": "🔄 checking readiness…",
         "ai.context_suffix": " · context: {n} tok.",
         "ai.empty_chat": "_The dialog is empty. Type a request — for example: “fetch alerts from thehive and enrich them with netbox data”._",
@@ -384,6 +385,7 @@ TRANSLATIONS = {
         "objects.done": "Готово",
         # AI
         "ai.check": "Проверить", "ai.refresh": "Обновить", "ai.send": "Отправить", "ai.clear": "Очистить",
+        "ai.stop": "Стоп", "ai.stop_requested": "Запрошена остановка — прервётся после текущего шага",
         "ai.not_selected": "LLM не выбрана", "ai.checking": "🔄 проверка готовности…",
         "ai.context_suffix": " · контекст: {n} ток.",
         "ai.empty_chat": "_Диалог пуст. Напишите запрос — например: «нужно получить алерты из thehive и обогатить данными из netbox»._",

@@ -3253,7 +3253,17 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
 
                 # окно чата с агентом
                 ui.separator()
-                conversation = []  # список реплик {role, content} текущей сессии (panel persistent)
+                # история чата переживает перезагрузку страницы (per-user storage nicegui)
+                try:
+                    conversation = list(app.storage.user.get("ai_conversation", []) or [])
+                except BaseException:
+                    conversation = []
+
+                def persist_conversation():
+                    try:
+                        app.storage.user["ai_conversation"] = list(conversation)
+                    except BaseException:
+                        pass
                 # сессионные счётчики (в памяти панели): действия агента и приблизительные токены
                 session_state = {"actions": 0, "tokens": 0, "cancel": False}
                 counters_label = ui.label("").classes('text-xs opacity-70')
@@ -3290,6 +3300,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                                 who = tr("ai.who.agent")
                             ui.markdown(f"{who}\n\n{content}", extras=['tables', 'fenced-code-blocks'])
                     render_final_actions()
+                    persist_conversation()
 
                 def _current_final_script():
                     """Скрипт из последнего блока ```harvester``` последнего ответа агента (для кнопок)."""
@@ -3570,7 +3581,20 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     ai_chat_input = ui.input(tr("ai.input_placeholder")).classes('grow')
                     ai_chat_input.on('keydown.enter', lambda: send_message())
                     ui.button(tr("ai.send"), icon='send').on_click(send_message)
-                    ui.button(tr("ai.clear"), icon='delete').on_click(lambda: (conversation.clear(), render_chat()))
+
+                    def stop_agent():
+                        session_state["cancel"] = True
+                        ui.notify(tr("ai.stop_requested"), type="warning")
+
+                    def clear_chat():
+                        conversation.clear()
+                        session_state["actions"] = 0
+                        session_state["tokens"] = 0
+                        render_chat()
+                        update_counters()
+
+                    ui.button(tr("ai.stop"), icon='stop', color='negative').on_click(stop_agent)
+                    ui.button(tr("ai.clear"), icon='delete').on_click(clear_chat)
                 render_chat()
                 update_counters()
 
