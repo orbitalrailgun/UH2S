@@ -1973,7 +1973,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         with ui.expansion(tr("settings.section.ai"), icon='smart_toy', value=False).classes('w-full'):
 
                             ui.label(tr("settings.ai.limits")).style("color: var(--accent-color);")
-                            max_iter_value = get_setting("global", "agent_max_iterations", 10, current_state)[3] or 10
+                            max_iter_value = get_setting("global", "agent_max_iterations", 25, current_state)[3] or 25
                             session_actions_value = get_setting("global", "agent_session_max_actions", 40, current_state)[3] or 40
                             session_tokens_value = get_setting("global", "agent_session_token_budget", 200000, current_state)[3] or 200000
                             with ui.row().classes('items-end gap-2 flex-wrap'):
@@ -1986,9 +1986,9 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                                 def save_ai_limits():
                                     try:
-                                        val = int(agent_iter_input.value or 10)
+                                        val = int(agent_iter_input.value or 25)
                                     except BaseException:
-                                        val = 10
+                                        val = 25
                                     val = max(1, min(val, 100))
                                     result = set_setting("global", "agent_max_iterations", val, current_state)
                                     if not result[0]:
@@ -3299,7 +3299,8 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                                 who = tr("ai.who.you")
                             else:
                                 who = tr("ai.who.agent")
-                            ui.markdown(f"{who}\n\n{content}", extras=['tables', 'fenced-code-blocks'])
+                            # code-friendly: '_' в именах (get_source_functions, source_object) не даёт курсив
+                            ui.markdown(f"{who}\n\n{content}", extras=['tables', 'fenced-code-blocks', 'code-friendly'])
                     render_final_actions()
                     persist_conversation()
 
@@ -3537,9 +3538,9 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                         context_window = llm_context_window(selected["json"])
                         # лимит цикла «ответ -> действие -> ответ» — глобальная настройка (Settings → AI)
                         try:
-                            max_iterations = int(get_setting("global", "agent_max_iterations", 10, current_state)[3] or 10)
+                            max_iterations = int(get_setting("global", "agent_max_iterations", 25, current_state)[3] or 25)
                         except BaseException:
-                            max_iterations = 10
+                            max_iterations = 25
                         max_iterations = max(1, min(max_iterations, 100))
                         max_actions, token_budget = _session_limits()
                         for iteration in range(max_iterations):
@@ -3583,9 +3584,9 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             if status is not None:
                                 status.set_text(tr("ai.thinking"))
                         else:
-                            # лимит действий исчерпан — просим финальный вариант без действий
+                            # лимит ИТЕРАЦИЙ на это сообщение исчерпан — просим финальный вариант без действий
                             conversation.append({"role": "user", "content":
-                                "Достигнут лимит действий. Приведи лучший финальный вариант скрипта в блоке "
+                                "Достигнут лимит итераций на это сообщение. Приведи лучший финальный вариант скрипта в блоке "
                                 "```harvester и краткий итог (что получилось, что осталось проверить вручную). Без действий."})
                             if not session_state["cancel"]:
                                 system_prompt = build_agent_system_prompt()
