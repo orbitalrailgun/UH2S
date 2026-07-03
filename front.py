@@ -485,6 +485,22 @@ def main():
         ssl_kwargs = {"ssl_certfile": args.ssl_certfile, "ssl_keyfile": args.ssl_keyfile}
     # show=True открывает браузер (локально). В контейнере выключаем через UH2S_SHOW=false.
     show_browser = os.environ.get("UH2S_SHOW", "true").lower() not in ("0", "false", "no")
+
+    # планировщик расписаний — только в web-процессе (mcp его не запускает), один инстанс.
+    # Отключается UH2S_SCHEDULER=off. Фоновый daemon-поток; base_state несёт секреты/конфиг.
+    if os.environ.get("UH2S_SCHEDULER", "on").lower() not in ("0", "off", "false", "no"):
+        try:
+            import threading
+            from app.scheduler import run_scheduler
+            scheduler_base_state = {
+                "app_name": APP_NAME, "app_version": APP_VERSION, "processes": args.processes,
+                "main_session_id": main_session_id, "username": "scheduler", "roles": [],
+                "master_key": MASTER_KEY, "db_conf": args.db_conf_object,
+            }
+            threading.Thread(target=run_scheduler, args=(scheduler_base_state,), daemon=True).start()
+        except BaseException as scheduler_error:
+            logger_log(syslog.LOG_ERR, get_log_message(f"scheduler start fail: {scheduler_error}", currentFuncName(), current_state))
+
     ui.run(host=args.host, storage_secret=NICEGUI_STORAGE_KEY, port=args.port, favicon="favicon.ico",
            title=APP_NAME, reload=False, show=show_browser, **ssl_kwargs)
 

@@ -96,6 +96,12 @@ python front.py --host 127.0.0.1 --port 8082
 - БД: sqlite-файл (путь `db_path` внутри `db_conf`; в Docker — `/data/app.db`, том) или внешняя PostgreSQL.
 - Сессии nicegui: каталог `.nicegui/` (в Docker — том на `/app/.nicegui`).
 
+## Планировщик (cron)
+
+Раздел «Расписания» (админам `fullmaster`/`schedules_admin`) запускает сохранённые script-объекты по cron.
+Фоновый планировщик работает в web-процессе; переключатель `UH2S_SCHEDULER` (деф. `on`). Cron — локальное
+время сервера, один web-инстанс (см. [DOCKER.md](DOCKER.md)).
+
 ## Тесты
 
 Парсер DSL покрыт офлайн-тестами (без БД и сторонних пакетов):

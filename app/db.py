@@ -137,6 +137,7 @@ def db_init(current_state):
         cursor.execute("CREATE TABLE IF NOT EXISTS settings (scope TEXT, key TEXT, value TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS ai_log (timestamp TEXT, username TEXT, model TEXT, provider TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER, duration_ms INTEGER, ok INTEGER);")
         cursor.execute("CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT, owner TEXT, comment TEXT, enabled BOOLEAN, created_at TEXT, created_by TEXT, expires_at TEXT);")
+        cursor.execute("CREATE TABLE IF NOT EXISTS schedules (id TEXT, name TEXT, owner TEXT, script_name TEXT, cron TEXT, enabled BOOLEAN, last_run TEXT, last_status INTEGER, created_at TEXT, created_by TEXT, json TEXT);")
         connection.commit()
         # лёгкая миграция: дочиняем недостающие колонки api_keys в уже существующих БД
         for column_def in ("created_at TEXT", "created_by TEXT", "expires_at TEXT"):
@@ -1360,6 +1361,175 @@ def storage_list(current_state):
         entries.sort(key=lambda e: e["updated_ts"], reverse=True)
         return True, "Ok", currentFuncName(), entries
 
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# schedules — расписания запуска сохранённых script-объектов по cron.
+# ────────────────────────────────────────────────────────────────────────────
+def create_schedule(schedule_id, name, owner, script_name, cron, enabled, created_by, current_state):
+    """Создать расписание. Возврат (ok, msg, func, schedule_id)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+        cursor = connection.cursor()
+        cursor.execute(
+            f"INSERT INTO schedules (id, name, owner, script_name, cron, enabled, last_run, last_status, created_at, created_by, json) "
+            f"VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder});",
+            (schedule_id, name, owner, script_name, cron, bool(enabled), "", None, currentTimestamp(), created_by, "{}"))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), schedule_id
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def _schedule_rows(rows):
+    columns = ["id", "name", "owner", "script_name", "cron", "enabled", "last_run", "last_status", "created_at", "created_by", "json"]
+    return [dict(zip(columns, row)) for row in (rows or [])]
+
+
+def list_schedules(current_state, owner=None):
+    """Список расписаний (owner=None -> все, для админа). Возврат (ok, msg, func, list)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+        cursor = connection.cursor()
+        base = "SELECT id, name, owner, script_name, cron, enabled, last_run, last_status, created_at, created_by, json FROM schedules"
+        if owner is None:
+            cursor.execute(base + " ORDER BY name;")
+            rows = cursor.fetchall()
+        else:
+            cursor.execute(base + f" WHERE owner = {placeholder} ORDER BY name;", (owner,))
+            rows = cursor.fetchall()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), _schedule_rows(rows)
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def get_schedule(schedule_id, current_state):
+    """Одно расписание по id. Возврат (ok, msg, func, dict|None)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+        cursor = connection.cursor()
+        cursor.execute(
+            f"SELECT id, name, owner, script_name, cron, enabled, last_run, last_status, created_at, created_by, json FROM schedules WHERE id = {placeholder};",
+            (schedule_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        connection.close()
+        rows = _schedule_rows([row]) if row else []
+        return True, "Ok", currentFuncName(), (rows[0] if rows else None)
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def update_schedule(schedule_id, name, script_name, cron, enabled, current_state):
+    """Обновить поля расписания. Возврат (ok, msg, func, schedule_id)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+        cursor = connection.cursor()
+        cursor.execute(
+            f"UPDATE schedules SET name = {placeholder}, script_name = {placeholder}, cron = {placeholder}, enabled = {placeholder} WHERE id = {placeholder};",
+            (name, script_name, cron, bool(enabled), schedule_id))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), schedule_id
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def set_schedule_enabled(schedule_id, enabled, current_state):
+    """Включить/выключить расписание."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+        cursor = connection.cursor()
+        cursor.execute(f"UPDATE schedules SET enabled = {placeholder} WHERE id = {placeholder};", (bool(enabled), schedule_id))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def delete_schedule(schedule_id, current_state):
+    """Удалить расписание по id."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+        cursor = connection.cursor()
+        cursor.execute(f"DELETE FROM schedules WHERE id = {placeholder};", (schedule_id,))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def set_schedule_last_run(schedule_id, timestamp, status, current_state):
+    """Отметить время и статус последнего запуска расписания."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+        cursor = connection.cursor()
+        cursor.execute(f"UPDATE schedules SET last_run = {placeholder}, last_status = {placeholder} WHERE id = {placeholder};",
+                       (timestamp, (None if status is None else int(status)), schedule_id))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), None
     except BaseException as e:
         if 'connection' in locals():
             connection.close()

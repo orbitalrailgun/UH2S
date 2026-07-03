@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled, storage_list, storage_load, storage_delete
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled, storage_list, storage_load, storage_delete, create_schedule, list_schedules, get_schedule, update_schedule, set_schedule_enabled, delete_schedule
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -1141,6 +1141,8 @@ def main_page(keycloak_openid, current_state):
 
     # раздел «Хранилище» — только администраторам (кэш общий, удаление влияет на всех)
     is_storage_admin = any(r in (current_state.get("roles") or []) for r in ("fullmaster", "storage_admin"))
+    # раздел «Расписания» — только администраторам
+    is_schedules_admin = any(r in (current_state.get("roles") or []) for r in ("fullmaster", "schedules_admin"))
 
     with ui.header(elevated=True) as top_panel:
         with ui.row().classes('items-center'):
@@ -1154,6 +1156,8 @@ def main_page(keycloak_openid, current_state):
             ]
             if is_storage_admin:
                 menu_items.append((tr("nav.storage"), tr("nav.storage.tip"), 'inventory_2', "Storage"))
+            if is_schedules_admin:
+                menu_items.append((tr("nav.schedules"), tr("nav.schedules.tip"), 'schedule', "Schedules"))
             menu_items.append((tr("nav.logout"), tr("nav.logout.tip"), 'logout', "__logout__"))
             for item, tooltip, icon, target in menu_items:
                 menu_item = ui.button(item, icon=icon).tooltip(tooltip)
@@ -1199,6 +1203,10 @@ def main_page(keycloak_openid, current_state):
     if is_storage_admin:
         panel_storage = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
         panels["Storage"] = panel_storage
+    panel_schedules = None
+    if is_schedules_admin:
+        panel_schedules = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
+        panels["Schedules"] = panel_schedules
 
     def show_panel(name):
         for panel_name, panel in panels.items():
@@ -1215,7 +1223,168 @@ def main_page(keycloak_openid, current_state):
     draw_history(panel_history, current_state)
     if panel_storage is not None:
         draw_storage(panel_storage, current_state)
+    if panel_schedules is not None:
+        draw_schedules(panel_schedules, current_state)
     show_panel("Harvester")
+
+def draw_schedules(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
+    """Раздел «Расписания»: запуск сохранённых script-объектов по cron. Только администраторам
+    (fullmaster/schedules_admin). Запуск идёт в контексте владельца расписания, пишется в историю."""
+    try:
+        import uuid as _uuid
+        import datetime as _datetime
+        from app.scheduler import run_schedule_now, next_run, validate_cron
+
+        interface_container.clear()
+        lang = current_state.get("lang", DEFAULT_LANGUAGE)
+        tr = lambda key, **kw: translate(key, lang, **kw)
+        roles = current_state.get("roles") or []
+        if not any(r in roles for r in ("fullmaster", "schedules_admin")):
+            with interface_container:
+                ui.label(tr("schedules.no_role"))
+            return False, "no schedules_admin role", currentFuncName(), None
+
+        current_user = current_state.get("username", "unknown")
+
+        with interface_container:
+            ui.label(tr("schedules.title")).style("color: var(--title-color); font-weight:700;")
+
+            # список доступных сохранённых script-объектов
+            script_names = []
+            objects_result = get_all_actual_objects(current_state)
+            if objects_result[0]:
+                script_names = sorted([o["name"] for o in objects_result[3] if o.get("type") == "script"])
+
+            with ui.row().classes('gap-2 items-end flex-wrap'):
+                name_input = ui.input(label=tr("schedules.col.name")).props('dense').style('min-width: 160px')
+                script_select = ui.select(script_names or [], label=tr("schedules.col.script")).props('dense').style('min-width: 180px')
+                cron_input = ui.input(label=tr("schedules.col.cron"), value="*/5 * * * *").props('dense').style('min-width: 150px')
+                enabled_switch = ui.switch(tr("schedules.col.enabled"), value=True)
+                cron_preview = ui.label("").classes('text-xs opacity-70')
+
+            def _refresh_cron_preview():
+                ok, msg = validate_cron(cron_input.value or "")
+                if not ok:
+                    cron_preview.set_text(tr("schedules.cron_invalid"))
+                    return
+                nxt = next_run(cron_input.value, _datetime.datetime.now().astimezone())
+                cron_preview.set_text(tr("schedules.cron_preview", next=(nxt.isoformat(timespec="minutes") if nxt else "—")))
+            cron_input.on("blur", lambda: _refresh_cron_preview())
+
+            with ui.row().classes('gap-2 flex-wrap'):
+                ui.button(tr("schedules.btn.create"), icon='add').on_click(lambda: create_action())
+                ui.button(tr("schedules.btn.toggle"), icon='power_settings_new').on_click(lambda: toggle_action())
+                ui.button(tr("schedules.btn.run_now"), icon='play_arrow').on_click(lambda: run_now_action())
+                ui.button(tr("schedules.btn.delete"), icon='delete', color='negative').on_click(lambda: delete_action())
+                ui.button(tr("schedules.btn.refresh"), icon='refresh').on_click(lambda: refresh_grid())
+
+            grid = ui.aggrid({}).classes('w-full').style('height: 58vh')
+
+            def refresh_grid():
+                result = list_schedules(current_state)   # админ видит все
+                now = _datetime.datetime.now().astimezone()
+                rows = []
+                if result[0]:
+                    for s in result[3]:
+                        enabled = s.get("enabled") in (True, 1, "1", "true", "True", "t")
+                        status = s.get("last_status")
+                        status_text = ("" if status is None else (tr("schedules.status.ok") if int(status) == 1 else tr("schedules.status.fail")))
+                        nxt = next_run(s.get("cron") or "", now) if enabled else None
+                        rows.append({
+                            "id": s["id"], "name": s.get("name", ""), "owner": s.get("owner", ""),
+                            "script": s.get("script_name", ""), "cron": s.get("cron", ""),
+                            "enabled": tr("schedules.yes") if enabled else tr("schedules.no"),
+                            "last_run": s.get("last_run") or "", "status": status_text,
+                            "next_run": (nxt.isoformat(timespec="minutes") if nxt else "—"),
+                        })
+                else:
+                    ui.notify(tr("settings.common.error", error=result[1]), type="negative")
+                grid.options["columnDefs"] = [
+                    {"headerName": tr("schedules.col.name"), "field": "name", "filter": True, "sortable": True, "resizable": True, "minWidth": 140},
+                    {"headerName": tr("schedules.col.owner"), "field": "owner", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
+                    {"headerName": tr("schedules.col.script"), "field": "script", "filter": True, "sortable": True, "resizable": True, "minWidth": 140},
+                    {"headerName": tr("schedules.col.cron"), "field": "cron", "filter": True, "sortable": True, "resizable": True, "minWidth": 120},
+                    {"headerName": tr("schedules.col.enabled"), "field": "enabled", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                    {"headerName": tr("schedules.col.last_run"), "field": "last_run", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
+                    {"headerName": tr("schedules.col.status"), "field": "status", "filter": True, "sortable": True, "resizable": True, "minWidth": 90},
+                    {"headerName": tr("schedules.col.next_run"), "field": "next_run", "filter": True, "sortable": True, "resizable": True, "minWidth": 180},
+                ]
+                grid.options["rowData"] = rows
+                grid.options["rowSelection"] = "single"
+                grid.options["defaultColDef"] = {"filter": True, "sortable": True, "resizable": True, "minWidth": 100}
+                grid.options["enableCellTextSelection"] = True
+                grid.options["domLayout"] = "normal"
+                grid.update()
+
+            async def _selected_id():
+                row = (await grid.get_selected_row()) or {}
+                return row.get("id")
+
+            def create_action():
+                name = (name_input.value or "").strip()
+                script = script_select.value
+                cron = (cron_input.value or "").strip()
+                if not name or not script:
+                    ui.notify(tr("schedules.need_name_script"), type="warning")
+                    return
+                ok, msg = validate_cron(cron)
+                if not ok:
+                    ui.notify(tr("schedules.cron_invalid"), type="negative")
+                    return
+                result = create_schedule(str(_uuid.uuid4()), name, current_user, script, cron,
+                                         enabled_switch.value, current_user, current_state)
+                if not result[0]:
+                    ui.notify(tr("settings.common.error", error=result[1]), type="negative")
+                    return
+                ui.notify(tr("schedules.created", name=name), type="positive")
+                name_input.value = ""
+                refresh_grid()
+
+            async def toggle_action():
+                sid = await _selected_id()
+                if not sid:
+                    ui.notify(tr("schedules.pick"), type="warning")
+                    return
+                cur = get_schedule(sid, current_state)
+                if not cur[0] or not cur[3]:
+                    ui.notify(tr("schedules.pick"), type="warning")
+                    return
+                enabled = cur[3].get("enabled") in (True, 1, "1", "true", "True", "t")
+                result = set_schedule_enabled(sid, not enabled, current_state)
+                if not result[0]:
+                    ui.notify(tr("settings.common.error", error=result[1]), type="negative")
+                    return
+                refresh_grid()
+
+            async def delete_action():
+                sid = await _selected_id()
+                if not sid:
+                    ui.notify(tr("schedules.pick"), type="warning")
+                    return
+                result = delete_schedule(sid, current_state)
+                if not result[0]:
+                    ui.notify(tr("settings.common.error", error=result[1]), type="negative")
+                    return
+                ui.notify(tr("schedules.deleted"), type="positive")
+                refresh_grid()
+
+            async def run_now_action():
+                sid = await _selected_id()
+                if not sid:
+                    ui.notify(tr("schedules.pick"), type="warning")
+                    return
+                ok, msg = run_schedule_now(sid, current_state)
+                ui.notify(tr("schedules.ran") if ok else msg, type=("positive" if ok else "warning"))
+                refresh_grid()
+
+            refresh_grid()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        error_message = f"fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), None
+
 
 def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
     """Раздел «Хранилище»: список записей персистентного кэша (SAVE→storage) с метаданными,
