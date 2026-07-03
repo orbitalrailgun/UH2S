@@ -133,8 +133,13 @@ def _log_llm_request(current_state, level, model, provider, url, prompt_tokens, 
         pass
 
 
+def _empty_usage():
+    return {"prompt_tokens": 0, "completion_tokens": 0}
+
+
 def llm_chat(llm_json, messages, current_state):
-    """Отправить чат-запрос к LLM. Возврат (ok: bool, content_or_error: str).
+    """Отправить чат-запрос к LLM. Возврат (ok: bool, content_or_error: str, usage: dict),
+    где usage = {prompt_tokens, completion_tokens} (для сессионного учёта; нули при ошибке).
 
     ollama -> POST {url}/api/chat (options.num_ctx = context_window);
     openai -> POST {url}/chat/completions (url уже включает /v1).
@@ -149,7 +154,7 @@ def llm_chat(llm_json, messages, current_state):
     headers = _llm_headers(llm_json, current_state)
 
     if not url:
-        return False, "в объекте llm не задан url"
+        return False, "в объекте llm не задан url", _empty_usage()
 
     start = time.monotonic()
     try:
@@ -160,7 +165,7 @@ def llm_chat(llm_json, messages, current_state):
             duration_ms = int((time.monotonic() - start) * 1000)
             if response.status_code not in (200, 201):
                 _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"http {response.status_code}")
-                return False, f"ollama chat http {response.status_code}: {response.text[:300]}"
+                return False, f"ollama chat http {response.status_code}: {response.text[:300]}", _empty_usage()
             payload = response.json()
             content = payload.get("message", {}).get("content", "")
             prompt_tokens = payload.get("prompt_eval_count")
@@ -172,7 +177,7 @@ def llm_chat(llm_json, messages, current_state):
             duration_ms = int((time.monotonic() - start) * 1000)
             if response.status_code not in (200, 201):
                 _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"http {response.status_code}")
-                return False, f"openai chat http {response.status_code}: {response.text[:300]}"
+                return False, f"openai chat http {response.status_code}: {response.text[:300]}", _empty_usage()
             payload = response.json()
             choices = payload.get("choices", [])
             content = choices[0].get("message", {}).get("content", "") if choices else ""
@@ -181,7 +186,7 @@ def llm_chat(llm_json, messages, current_state):
             completion_tokens = usage.get("completion_tokens")
 
         else:
-            return False, f"неизвестный тип llm '{provider}' (ollama | openai)"
+            return False, f"неизвестный тип llm '{provider}' (ollama | openai)", _empty_usage()
 
         # если сервер не вернул счётчики токенов — оцениваем (консервативно)
         if prompt_tokens is None:
@@ -190,12 +195,12 @@ def llm_chat(llm_json, messages, current_state):
             completion_tokens = llm_estimate_tokens(content)
 
         _log_llm_request(current_state, syslog.LOG_INFO, model, provider, url, prompt_tokens, completion_tokens, duration_ms)
-        return True, content
+        return True, content, {"prompt_tokens": prompt_tokens or 0, "completion_tokens": completion_tokens or 0}
 
     except Exception as e:
         duration_ms = int((time.monotonic() - start) * 1000)
         _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"fail: {str(e)}")
-        return False, f"llm chat fail: {str(e)}"
+        return False, f"llm chat fail: {str(e)}", _empty_usage()
 
 
 def _llm_resolve_key(llm_json, current_state):

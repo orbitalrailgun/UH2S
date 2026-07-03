@@ -1973,9 +1973,15 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                             ui.label(tr("settings.ai.limits")).style("color: var(--accent-color);")
                             max_iter_value = get_setting("global", "agent_max_iterations", 10, current_state)[3] or 10
-                            with ui.row().classes('items-end gap-2'):
+                            session_actions_value = get_setting("global", "agent_session_max_actions", 40, current_state)[3] or 40
+                            session_tokens_value = get_setting("global", "agent_session_token_budget", 200000, current_state)[3] or 200000
+                            with ui.row().classes('items-end gap-2 flex-wrap'):
                                 agent_iter_input = ui.number(label=tr("settings.ai.maxiter"),
-                                                             value=int(max_iter_value), min=1, max=100, step=1).classes('w-72')
+                                                             value=int(max_iter_value), min=1, max=100, step=1).classes('w-60')
+                                agent_session_actions_input = ui.number(label=tr("settings.ai.session_actions"),
+                                                             value=int(session_actions_value), min=1, max=1000, step=1).classes('w-60')
+                                agent_session_tokens_input = ui.number(label=tr("settings.ai.session_tokens"),
+                                                             value=int(session_tokens_value), min=0, step=1000).classes('w-60')
 
                                 def save_ai_limits():
                                     try:
@@ -1987,6 +1993,16 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                     if not result[0]:
                                         ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                                         return
+                                    try:
+                                        sa = max(1, min(int(agent_session_actions_input.value or 40), 1000))
+                                    except BaseException:
+                                        sa = 40
+                                    try:
+                                        st = max(0, int(agent_session_tokens_input.value or 0))
+                                    except BaseException:
+                                        st = 0
+                                    set_setting("global", "agent_session_max_actions", sa, current_state)
+                                    set_setting("global", "agent_session_token_budget", st, current_state)
                                     ui.notify(tr("settings.ai.limits_saved"), type="positive")
 
                                 ui.button(tr("settings.ai.save_limits"), icon='save', on_click=save_ai_limits).classes('hover-glow')
@@ -3238,6 +3254,26 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                 # окно чата с агентом
                 ui.separator()
                 conversation = []  # список реплик {role, content} текущей сессии (panel persistent)
+                # сессионные счётчики (в памяти панели): действия агента и приблизительные токены
+                session_state = {"actions": 0, "tokens": 0, "cancel": False}
+                counters_label = ui.label("").classes('text-xs opacity-70')
+
+                def _session_limits():
+                    try:
+                        max_actions = int(get_setting("global", "agent_session_max_actions", 40, current_state)[3] or 40)
+                    except BaseException:
+                        max_actions = 40
+                    try:
+                        token_budget = int(get_setting("global", "agent_session_token_budget", 200000, current_state)[3] or 0)
+                    except BaseException:
+                        token_budget = 0
+                    return max(1, max_actions), max(0, token_budget)
+
+                def update_counters():
+                    max_actions, token_budget = _session_limits()
+                    budget_text = str(token_budget) if token_budget > 0 else "∞"
+                    counters_label.set_text(tr("ai.counters", actions=session_state["actions"], max_actions=max_actions,
+                                               tokens=session_state["tokens"], budget=budget_text))
 
                 def render_chat():
                     chat_display.clear()
@@ -3414,6 +3450,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     user_text = (ai_chat_input.value or "").strip()
                     if not user_text:
                         return
+                    session_state["cancel"] = False   # новый запрос снимает флаг остановки
                     conversation.append({"role": "user", "content": user_text})
                     ai_chat_input.value = ""
                     render_chat()
@@ -3432,10 +3469,26 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                         except BaseException:
                             max_iterations = 10
                         max_iterations = max(1, min(max_iterations, 100))
+                        max_actions, token_budget = _session_limits()
                         for iteration in range(max_iterations):
+                            if session_state["cancel"]:
+                                conversation.append({"role": "assistant", "content": tr("ai.stopped")})
+                                render_chat()
+                                break
+                            # сессионные лимиты: действия и токены — жёсткая остановка без нового запроса
+                            if session_state["actions"] >= max_actions:
+                                conversation.append({"role": "assistant", "content": tr("ai.limit_actions", n=max_actions)})
+                                render_chat()
+                                break
+                            if token_budget and session_state["tokens"] >= token_budget:
+                                conversation.append({"role": "assistant", "content": tr("ai.limit_tokens", n=token_budget)})
+                                render_chat()
+                                break
                             system_prompt = build_agent_system_prompt()
                             messages = llm_build_messages(system_prompt, conversation, context_window)
-                            ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
+                            ok, reply, usage = await run.io_bound(llm_chat, selected["json"], messages, current_state)
+                            session_state["tokens"] += (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
+                            update_counters()
                             if not ok:
                                 conversation.append({"role": "assistant", "content": tr("ai.llm_error", error=reply)})
                                 render_chat()
@@ -3447,6 +3500,8 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             if not action:
                                 break  # финальный ответ (текст или ```harvester) — действий нет
 
+                            session_state["actions"] += 1
+                            update_counters()
                             if status is not None:
                                 status.set_text(tr("ai.agent_action", action=action))
                             action_result = await run.io_bound(dispatch_action, action, argument)
@@ -3460,11 +3515,14 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             conversation.append({"role": "user", "content":
                                 "Достигнут лимит действий. Приведи лучший финальный вариант скрипта в блоке "
                                 "```harvester и краткий итог (что получилось, что осталось проверить вручную). Без действий."})
-                            system_prompt = build_agent_system_prompt()
-                            messages = llm_build_messages(system_prompt, conversation, context_window)
-                            ok, reply = await run.io_bound(llm_chat, selected["json"], messages, current_state)
-                            conversation.append({"role": "assistant", "content": reply if ok else tr("ai.llm_error", error=reply)})
-                            render_chat()
+                            if not session_state["cancel"]:
+                                system_prompt = build_agent_system_prompt()
+                                messages = llm_build_messages(system_prompt, conversation, context_window)
+                                ok, reply, usage = await run.io_bound(llm_chat, selected["json"], messages, current_state)
+                                session_state["tokens"] += (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
+                                update_counters()
+                                conversation.append({"role": "assistant", "content": reply if ok else tr("ai.llm_error", error=reply)})
+                                render_chat()
                     except BaseException as e:
                         conversation.append({"role": "assistant", "content": tr("ai.error", error=str(e))})
                         render_chat()
@@ -3482,6 +3540,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     ui.button(tr("ai.send"), icon='send').on_click(send_message)
                     ui.button(tr("ai.clear"), icon='delete').on_click(lambda: (conversation.clear(), render_chat()))
                 render_chat()
+                update_counters()
 
     except BaseException as e:
         error_message = f"fail: {str(e)}"

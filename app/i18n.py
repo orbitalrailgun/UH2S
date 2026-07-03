@@ -116,7 +116,8 @@ TRANSLATIONS = {
         "settings.users.create": "Create user", "settings.users.username": "Username", "settings.users.password": "Password",
         "settings.users.name_rule": "Name: at least 3 characters, latin/digits/._-", "settings.users.created": "User created: {name}",
         # AI
-        "settings.ai.limits": "Limits", "settings.ai.maxiter": "Max agent actions per session",
+        "settings.ai.limits": "Limits", "settings.ai.maxiter": "Max agent iterations per message",
+        "settings.ai.session_actions": "Max actions per session", "settings.ai.session_tokens": "Session token budget (0 = ∞)",
         "settings.ai.limits_saved": "AI limits saved", "settings.ai.save_limits": "Save limits",
         "settings.ai.log": "AI log — token consumption",
         "settings.ai.log_hint": "Per-user summary and request details (column filters: user, model, time).",
@@ -185,6 +186,10 @@ TRANSLATIONS = {
         "ai.save.title": "Save script object", "ai.save.name": "Object name", "ai.save.return": "return (result variable)",
         "ai.save.roles": "Roles (JSON array)", "ai.save.need_name": "Object name is required",
         "ai.save.roles_too_high": "Roles exceed your own", "ai.save.saved": "Saved '{name}'", "ai.save.save": "Save",
+        "ai.counters": "actions {actions}/{max_actions} · tokens ~{tokens}/{budget}",
+        "ai.stopped": "⏹ Stopped by user.",
+        "ai.limit_actions": "⏹ Session action limit reached ({n}).",
+        "ai.limit_tokens": "⏹ Session token budget reached ({n}).",
         # Harvester
         "harv.tab.scripts": "Scripts", "harv.tab.datavars": "Data/Variables", "harv.tab.analysis": "Analysis",
         "harv.script": "Script", "harv.steps": "Execution steps", "harv.execute": "Execute",
@@ -316,7 +321,8 @@ TRANSLATIONS = {
         "settings.users.create": "Создать пользователя", "settings.users.username": "Имя пользователя", "settings.users.password": "Пароль",
         "settings.users.name_rule": "Имя: минимум 3 символа, латиница/цифры/._-", "settings.users.created": "Пользователь создан: {name}",
         # AI
-        "settings.ai.limits": "Лимиты", "settings.ai.maxiter": "Макс. действий агента за сессию",
+        "settings.ai.limits": "Лимиты", "settings.ai.maxiter": "Макс. итераций агента на сообщение",
+        "settings.ai.session_actions": "Макс. действий за сессию", "settings.ai.session_tokens": "Бюджет токенов сессии (0 = ∞)",
         "settings.ai.limits_saved": "Лимиты AI сохранены", "settings.ai.save_limits": "Сохранить лимиты",
         "settings.ai.log": "Журнал AI — потребление токенов",
         "settings.ai.log_hint": "Сводка по пользователям и детализация запросов (фильтры по колонкам: пользователь, модель, время).",
@@ -385,6 +391,10 @@ TRANSLATIONS = {
         "ai.save.title": "Сохранить script-объект", "ai.save.name": "Имя объекта", "ai.save.return": "return (переменная результата)",
         "ai.save.roles": "Роли (JSON-массив)", "ai.save.need_name": "Нужно имя объекта",
         "ai.save.roles_too_high": "Роли выше ваших", "ai.save.saved": "Сохранено '{name}'", "ai.save.save": "Сохранить",
+        "ai.counters": "действия {actions}/{max_actions} · токены ~{tokens}/{budget}",
+        "ai.stopped": "⏹ Остановлено пользователем.",
+        "ai.limit_actions": "⏹ Достигнут лимит действий сессии ({n}).",
+        "ai.limit_tokens": "⏹ Достигнут лимит токенов сессии ({n}).",
         # Harvester
         "harv.tab.scripts": "Скрипты", "harv.tab.datavars": "Данные/Переменные", "harv.tab.analysis": "Анализ выполнения",
         "harv.script": "Скрипт", "harv.steps": "Шаги выполнения", "harv.execute": "Выполнить",
