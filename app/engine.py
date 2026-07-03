@@ -1502,19 +1502,17 @@ def get_command_dependency(command, current_state):
 
         if 'parameters' in command:
             if command["source_type"] in ["sqlite3_im", "duckdb_im"]:
-                sql_dependency = []
-                sql_with_statement = []
-                sql_created_tables = []
                 query_string = json.dumps(command['parameters'])
 
-                for sql_depend in re.findall(r"(FROM|JOIN)\s+([^\s;)]+)",query_string):
-                    sql_dependency.append(sql_depend[1])
-                for sql_with in re.findall(r"(WITH|\),)\s+([^\s;]+)\s+AS\s+\(",query_string):
-                    sql_with_statement.append(sql_with[1])
+                # захватываем ТОЛЬКО идентификатор таблицы ([\w.]+) — иначе в JSON-строке regex цеплял
+                # хвост `alerts"]}` и зависимость никогда не совпадала с произведённым `alerts` (зависание).
+                sql_dependency = re.findall(r"\b(?:FROM|JOIN)\s+([\w.]+)", query_string, flags=re.IGNORECASE)
+                sql_with_statement = re.findall(r"(?:WITH|\),)\s+([\w.]+)\s+AS\s+\(", query_string, flags=re.IGNORECASE)
                 # таблицы/представления, создаваемые ВНУТРИ того же запроса (CREATE [TEMP] TABLE/VIEW),
                 # — не внешние зависимости: их нельзя ждать из другого GET, иначе шаг зависнет в pending
-                for sql_created in re.findall(r"CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?(?:TABLE|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)", query_string, flags=re.IGNORECASE):
-                    sql_created_tables.append(sql_created)
+                sql_created_tables = re.findall(
+                    r"CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?(?:TABLE|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.]+)",
+                    query_string, flags=re.IGNORECASE)
                 for sql_dependency_candidate in sql_dependency:
                     if sql_dependency_candidate not in sql_with_statement and sql_dependency_candidate not in sql_created_tables:
                         dependency.append(sql_dependency_candidate)

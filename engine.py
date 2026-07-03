@@ -249,7 +249,10 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                 error_message = f"{get_command_dependency_result[1]}"
                 logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                 return False, error_message, currentFuncName(), {}
-            command["dependency"] = get_command_dependency_result[3]
+            # оставляем только зависимости, которые РЕАЛЬНО производит какой-то шаг (GET/LOAD).
+            # Имена из FROM/JOIN, которых никто не создаёт (базовые таблицы/опечатки), не должны
+            # блокировать шаг навсегда — иначе он «зависает» в pending (см. duckdb_im/sqlite3_im).
+            command["dependency"] = [d for d in get_command_dependency_result[3] if d in produced_names]
             cache = command.get("load_cache")
             if cache:
                 key = cache["id"]
@@ -370,6 +373,20 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
             logger_log(syslog.LOG_ERR, get_log_message(first_error, currentFuncName(), current_state))
             return False, first_error, currentFuncName(), commands
 
+    # страховка: если после цикла остались незапущенные планируемые шаги (недостижимая/циклическая
+    # зависимость) — это ошибка, а не молчаливый успех (иначе PRINT/SHOW отработают по пустым данным).
+    for command in commands:
+        schedulable = command["command"] in ("GET", "LOAD") or \
+            (command["command"] == "SAVE" and command.get("save_is_storage"))
+        if schedulable and command.get("data_name") not in result_map:
+            missing = [d for d in command.get("dependency", []) if d not in result_map]
+            error_message = (f"step '{command.get('data_name', '?')}' not executed: "
+                             f"unresolved dependency {missing}")
+            if "_status" in command:
+                command["_status"] = "error"
+                command["_info"] = error_message
+            logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), commands
 
     # SAVE→storage теперь исполняется в основном цикле (как планируемый шаг, с учётом порядка
     # относительно LOAD по тому же ключу). Файловый SAVE рендерится в UI/API.

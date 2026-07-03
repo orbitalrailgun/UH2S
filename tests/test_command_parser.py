@@ -646,6 +646,17 @@ class TestSqlDependencies(unittest.TestCase):
         ])
         self.assertEqual(deps, ["src_a", "src_b"])
 
+    def test_from_table_is_last_token(self):
+        # FROM alerts в конце запроса не должно давать мусорную зависимость alerts"]} (зависание)
+        self.assertEqual(self._dep(["SELECT DISTINCT ip FROM alerts"]), ["alerts"])
+
+    def test_lowercase_from_join(self):
+        self.assertEqual(self._dep(["select a.* from alerts a join nb_result n on a.ip=n.ip"]),
+                         ["alerts", "nb_result"])
+
+    def test_schema_qualified(self):
+        self.assertEqual(self._dep(["SELECT * FROM main.alerts"]), ["main.alerts"])
+
 
 class TestSaveStorage(unittest.TestCase):
     """SAVE(dataname, storage[, ttl]) AS key — разбор storage-варианта (исполнение требует БД)."""
