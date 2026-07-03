@@ -12,6 +12,7 @@ from app.logging import get_log_message, logger_log, currentFuncName, currentTim
 from typing import Dict, Any, Tuple
 from engine import commands_executor
 from app.engine import command_parser, list_source_types, describe_source_functions
+from app.ai_pipeline import AGENT_ACTIONS, extract_action, extract_final_harvester, parse_save_object
 from app.i18n import translate, resolve_language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE
 from app.analyzer import build_execution_mermaid
 from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE, REGEX_USERNAME_RULE
@@ -1214,6 +1215,9 @@ def main_page(keycloak_openid, current_state):
                 panel.classes(remove='uh-panel-offscreen')
             else:
                 panel.classes(add='uh-panel-offscreen')
+
+    # хук для перехода между разделами из обработчиков draw_* (напр. AI → Harvester)
+    current_state["ui_show_panel"] = show_panel
 
     draw_settings(panel_settings, current_state)
     draw_secrets(panel_secrets, current_state)
@@ -2988,6 +2992,13 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         # область результатов (горизонтальный скролл — для широких таблиц; вертикальный — на всю панель)
                         card_results = ui.element('div').classes('w-full').style('overflow-x: auto; padding: 8px; border: 1px solid var(--panel-bg)')
 
+                    # хуки для AI-раздела: предзаполнить редактор скриптом и/или запустить его
+                    def _harvester_load(script_text):
+                        codemirror_script.value = script_text or ""
+                        harvester_panels.set_value('Scripts')
+                    current_state["ui_harvester_load"] = _harvester_load
+                    current_state["ui_harvester_run"] = button_script_click
+
                     with ui.tab_panel(tab_datavars):
                         grid_datavars = ui.aggrid({}).classes('w-full').style('height: 60vh')
                         codemirror_datavar = make_codemirror(current_state).classes('w-full')
@@ -3004,19 +3015,6 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
         logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
         return False, error_message, currentFuncName(), None
     
-AGENT_ACTIONS = ("run", "list_sources", "get_source_functions", "list_objects", "search_objects", "get_object")
-
-
-def _extract_action(text):
-    """Найти первый блок-действие агента ```<action> ...```; вернуть (action, argument) или (None, None).
-    Блок ```harvester``` действием НЕ является (финальный ответ)."""
-    import re
-    match = re.search(r"```(" + "|".join(AGENT_ACTIONS) + r")\b[ \t]*\n?(.*?)```", text or "", flags=re.DOTALL)
-    if not match:
-        return None, None
-    return match.group(1), match.group(2).strip()
-
-
 def run_agent_script(script_text, current_state):
     """Выполнить сгенерированный агентом скрипт и вернуть компактную сводку результата (для LLM).
     Запуск идёт от имени текущего пользователя (по его ролям); пишется в историю с пометкой agent."""
@@ -3255,6 +3253,79 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             else:
                                 who = tr("ai.who.agent")
                             ui.markdown(f"{who}\n\n{content}", extras=['tables', 'fenced-code-blocks'])
+                    render_final_actions()
+
+                def _current_final_script():
+                    """Скрипт из последнего блока ```harvester``` последнего ответа агента (для кнопок)."""
+                    for message in reversed(conversation):
+                        if message.get("role") == "assistant":
+                            return extract_final_harvester(message.get("content", ""))
+                    return None
+
+                def save_script_dialog(script_text, default_name=""):
+                    """Диалог сохранения скрипта как script-объекта (создать/новая версия)."""
+                    with ui.dialog() as dialog, ui.card().classes('w-[40rem] max-w-full'):
+                        ui.label(tr("ai.save.title")).style("font-weight:700; color: var(--title-color);")
+                        name_input = ui.input(tr("ai.save.name"), value=default_name).classes('w-full')
+                        return_input = ui.input(tr("ai.save.return"), value="").classes('w-full')
+                        roles_input = ui.input(tr("ai.save.roles"), value='["fullmaster"]').classes('w-full')
+
+                        def do_save():
+                            name = (name_input.value or "").strip()
+                            if not name:
+                                ui.notify(tr("ai.save.need_name"), type="warning")
+                                return
+                            if not json_validate(roles_input.value or "[]"):
+                                ui.notify(tr("settings.roles.array"), type="negative")
+                                return
+                            roles = json.loads(roles_input.value or "[]")
+                            if not isinstance(roles, list):
+                                ui.notify(tr("settings.roles.array_strings"), type="negative")
+                                return
+                            if not _role_allowed(roles):
+                                ui.notify(tr("ai.save.roles_too_high"), type="negative")
+                                return
+                            obj_json = {"script": script_text, "return": (return_input.value or "").strip()}
+                            existing = get_actual_object_by_name(name, "('script')", current_state)
+                            if existing[0] and existing[3]:
+                                result = create_new_object_version(name, "script", roles, obj_json, current_state)
+                            else:
+                                result = create_new_object(name, "script", roles, obj_json, current_state)
+                            if not result[0]:
+                                ui.notify(tr("settings.common.error", error=result[1]), type="negative")
+                                return
+                            ui.notify(tr("ai.save.saved", name=name), type="positive")
+                            dialog.close()
+
+                        with ui.row().classes('gap-2'):
+                            ui.button(tr("ai.save.save"), icon='save', on_click=do_save)
+                            ui.button(tr("settings.btn.close"), on_click=dialog.close).props('flat')
+                    dialog.open()
+
+                def render_final_actions():
+                    final_actions.clear()
+                    script = _current_final_script()
+                    if not script:
+                        return
+                    with final_actions:
+                        ui.label(tr("ai.final.label")).classes('text-xs opacity-70')
+                        with ui.row().classes('gap-2 flex-wrap'):
+                            ui.button(tr("ai.final.open"), icon='rocket_launch').props('size=sm').on_click(lambda: open_in_harvester(script, run=False))
+                            ui.button(tr("ai.final.run"), icon='play_arrow').props('size=sm').on_click(lambda: open_in_harvester(script, run=True))
+                            ui.button(tr("ai.final.save"), icon='save').props('size=sm').on_click(lambda: save_script_dialog(script))
+
+                async def open_in_harvester(script_text, run=False):
+                    load = current_state.get("ui_harvester_load")
+                    show = current_state.get("ui_show_panel")
+                    if load is None or show is None:
+                        ui.notify(tr("ai.final.no_harvester"), type="warning")
+                        return
+                    load(script_text)
+                    show("Harvester")
+                    if run:
+                        run_fn = current_state.get("ui_harvester_run")
+                        if run_fn is not None:
+                            await run_fn()
 
                 def _role_allowed(object_roles):
                     roles = current_state.get("roles", [])
@@ -3372,7 +3443,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             conversation.append({"role": "assistant", "content": reply})
                             render_chat()
 
-                            action, argument = _extract_action(reply)
+                            action, argument = extract_action(reply)
                             if not action:
                                 break  # финальный ответ (текст или ```harvester) — действий нет
 
@@ -3404,6 +3475,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             status.set_text("")
 
                 chat_display = ui.element('div').classes('w-full').style('flex: 1 1 auto; min-height: 30vh; overflow-y: auto; padding: 4px 8px; border: 1px solid var(--panel-bg)')
+                final_actions = ui.element('div').classes('w-full').style('padding: 2px 8px')
                 with ui.row().classes('w-full items-center'):
                     ai_chat_input = ui.input(tr("ai.input_placeholder")).classes('grow')
                     ai_chat_input.on('keydown.enter', lambda: send_message())
