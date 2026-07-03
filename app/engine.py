@@ -3,7 +3,8 @@ import json
 import syslog
 import time
 import contextlib
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.logging import get_log_message, logger_log, currentFuncName
 from app.validation import json_validate
 
@@ -1730,10 +1731,21 @@ def run_apply_command(command, data_map, current_state):
             shard_result = command["function_object"](injection[3], command["source_object"]['json'], data_map, current_state)
         return i, shard_result
 
-    shard_by_index = [None] * len(applyed_data)
+    total = len(applyed_data)
+    shard_by_index = [None] * total
+    # живой прогресс fan-out: обновляем command["_info"] = "k/total" по мере готовности строк
+    # (панель шагов читает _info по таймеру). Порядок вывода сохраняем через shard_by_index.
+    progress = {"done": 0}
+    progress_lock = threading.Lock()
+    command["_info"] = f"0/{total}"
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for i, shard_result in pool.map(lambda args: _run_row(*args), list(enumerate(applyed_data))):
+        futures = [pool.submit(_run_row, i, line) for i, line in enumerate(applyed_data)]
+        for future in as_completed(futures):
+            i, shard_result = future.result()
             shard_by_index[i] = shard_result
+            with progress_lock:
+                progress["done"] += 1
+                command["_info"] = f"{progress['done']}/{total}"
 
     # сбор в порядке строк; первая ошибка (в порядке строк) -> прогон падает
     data = []

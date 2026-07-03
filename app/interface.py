@@ -2561,7 +2561,8 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 for command in steps:
                     state = command.get("_status", "pending")
                     info = command.get("_info", "")
-                    suffix = f" — {info}" if (state in ("done", "error", "warning") and info) else ""
+                    # info показываем и в running (напр. прогресс APPLY «k/total»)
+                    suffix = f" — {info}" if (state in ("done", "error", "warning", "running") and info) else ""
                     with ui.row().classes('items-center gap-2 no-wrap'):
                         if state == "running":
                             ui.spinner(size='sm')

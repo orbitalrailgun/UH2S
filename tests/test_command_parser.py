@@ -791,6 +791,7 @@ class TestApplyParallel(unittest.TestCase):
         self.assertEqual(calls["n"], 8)                      # вызвано на каждую строку
         self.assertEqual([d["echo"] for d in data], [f"10.0.0.{i}" for i in range(8)])   # порядок сохранён
         self.assertEqual([d["applied_ip"] for d in data], [f"10.0.0.{i}" for i in range(8)])
+        self.assertEqual(command["_info"], "8/8")            # живой счётчик прогресса дошёл до конца
 
     def test_per_source_semaphore_ok(self):
         from app.engine import run_apply_command
