@@ -603,7 +603,8 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                 "unrequired":{
                     "sort":{"_fields":[{"_createdAt":"desc"}]},
                     "extra_data":[],
-                    "flatten":False
+                    "flatten":False,
+                    "regroup":True    # при flatten=True: tags_N -> `tags` (список), customFields_N_* -> <name>=<value>
                 },
                 "functions":{
                     "query": execute_thehive_get_alerts,
