@@ -24,7 +24,7 @@ from app.sources.youtrack import execute_youtrack_project_finder, execute_youtra
 from app.sources.gitlab import execute_gitlab_namespace_owner_request, execute_gitlab_search_request
 from app.sources.iris import execute_function_iris_get_alerts
 from app.sources.thehive import execute_thehive_get_alerts
-from app.sources.jira_sm import execute_jira_search_issues, execute_jira_get_issue, execute_jira_get_issue_changelog, execute_jira_get_issue_comments, execute_jira_get_issue_worklogs, execute_jira_get_issue_attachments, execute_jira_get_issue_issuelinks, execute_jira_search_cmdb
+from app.sources.jira_sm import execute_jira_search_issues, execute_jira_get_issue, execute_jira_get_issue_changelog, execute_jira_get_issue_comments, execute_jira_get_issue_worklogs, execute_jira_get_issue_attachments, execute_jira_get_issue_issuelinks, execute_jira_search_cmdb, execute_jira_search_cmdb_freetext
 #from app.sources.teleport import execute_function_get_hosts_teleport
 from app.sources.dns import execute_dns_resolve
 from app.sources.mysql import execute_mysql
@@ -576,6 +576,21 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                 },
                 "functions":{
                     "query": execute_jira_search_cmdb,
+                    #"converter": lambda: None
+                }
+            },
+            "search_cmdb_freetext":{
+                "required":{
+                    "freetext":"192.168.0.1"     # свободный текст: ищет по всем атрибутам объектов CMDB
+                },
+                "unrequired":{
+                    "object_type":"",             # (опц.) ограничить типом объекта, напр. "Host"
+                    "limit":50,
+                    "cmdb_path":"/rest/insight/1.0/iql/objects",
+                    "flatten":False
+                },
+                "functions":{
+                    "query": execute_jira_search_cmdb_freetext,
                     #"converter": lambda: None
                 }
             }

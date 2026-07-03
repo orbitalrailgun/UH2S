@@ -481,3 +481,35 @@ def execute_jira_search_cmdb(parameters, source_object, data_map, current_state)
         error_message = f"jira search_cmdb fail: {str(e)}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
+
+
+def _build_freetext_iql(freetext, object_type=None):
+    """Собрать IQL со свободнотекстовым поиском Insight/Assets: строка в кавычках ("термин") ищет
+    по всем атрибутам объектов; опционально ограничивается типом объекта. Кавычки в тексте экранируются."""
+    freetext = str(freetext or "").strip()
+    if not freetext:
+        return None
+    escaped = freetext.replace('"', '\\"')
+    iql = f'"{escaped}"'
+    object_type = (str(object_type).strip() if object_type else "")
+    if object_type:
+        iql = f'objectType = "{object_type.replace(chr(34), chr(92) + chr(34))}" AND {iql}'
+    return iql
+
+
+def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, current_state):
+    """Свободнотекстовый поиск в CMDB JSM (Assets/Insight) через механизм FREETEXT.
+
+    Строит IQL вида `"<freetext>"` (поиск по всем атрибутам), опционально в связке с
+    `objectType = "<object_type>"`, и переиспользует обычный CMDB-запрос (execute_jira_search_cmdb).
+    Параметры: freetext -- искомый текст (обяз.); object_type -- (опц.) ограничить типом объекта;
+    limit -- максимум объектов; cmdb_path -- (опц.) путь эндпоинта; flatten -- (опц.) уплощить."""
+    query = parameters
+    iql = _build_freetext_iql(query.get("freetext"), query.get("object_type"))
+    if not iql:
+        error_message = "jira search_cmdb_freetext: freetext is required"
+        logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), []
+    delegated = dict(query)
+    delegated["aql"] = iql
+    return execute_jira_search_cmdb(delegated, source_object, data_map, current_state)
