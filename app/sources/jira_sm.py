@@ -483,33 +483,80 @@ def execute_jira_search_cmdb(parameters, source_object, data_map, current_state)
         return False, error_message, currentFuncName(), []
 
 
-def _build_freetext_iql(freetext, object_type=None):
-    """Собрать IQL со свободнотекстовым поиском Insight/Assets: строка в кавычках ("термин") ищет
-    по всем атрибутам объектов; опционально ограничивается типом объекта. Кавычки в тексте экранируются."""
-    freetext = str(freetext or "").strip()
-    if not freetext:
-        return None
-    escaped = freetext.replace('"', '\\"')
-    iql = f'"{escaped}"'
-    object_type = (str(object_type).strip() if object_type else "")
-    if object_type:
-        iql = f'objectType = "{object_type.replace(chr(34), chr(92) + chr(34))}" AND {iql}'
-    return iql
+def _extract_cmdb_entries(payload):
+    """Вытащить список объектов из ответа Insight-поиска (форма ответа зависит от версии):
+    список -> как есть; dict -> первый непустой список под известными ключами."""
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("objectEntries", "results", "objects", "entries", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+    return []
 
 
 def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, current_state):
-    """Свободнотекстовый поиск в CMDB JSM (Assets/Insight) через механизм FREETEXT.
+    """Свободнотекстовый поиск в CMDB JSM (Insight) через механизм FREETEXT.
 
-    Строит IQL вида `"<freetext>"` (поиск по всем атрибутам), опционально в связке с
-    `objectType = "<object_type>"`, и переиспользует обычный CMDB-запрос (execute_jira_search_cmdb).
-    Параметры: freetext -- искомый текст (обяз.); object_type -- (опц.) ограничить типом объекта;
-    limit -- максимум объектов; cmdb_path -- (опц.) путь эндпоинта; flatten -- (опц.) уплощить."""
-    query = parameters
-    iql = _build_freetext_iql(query.get("freetext"), query.get("object_type"))
-    if not iql:
-        error_message = "jira search_cmdb_freetext: freetext is required"
-        logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+    Использует эндпоинт Insight: GET {search_path}?criteria=<freetext>&criteriaType=FREETEXT
+    &schema=<id>&attributes=<list>&offset=N&limit=... (search_path по умолчанию /rest/insight-am/1/search).
+    Параметры: freetext -- искомый текст (обяз.); schema -- (опц.) id схемы Insight; attributes -- (опц.)
+    список/строка возвращаемых атрибутов; limit -- максимум объектов; search_path -- (опц.) путь эндпоинта;
+    flatten -- (опц.) уплощить. Возврат: list of dict."""
+    import requests
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
+        query = parameters
+        source = source_object
+
+        freetext = str(query.get("freetext") or "").strip()
+        if not freetext:
+            error_message = "jira search_cmdb_freetext: freetext is required"
+            logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), []
+        try:
+            limit = int(query["limit"]) if query.get("limit") else 50
+        except (TypeError, ValueError):
+            limit = 50
+        schema = query.get("schema") if query.get("schema") not in (None, "") else source.get("insight_schema")
+        attributes = query.get("attributes") or source.get("insight_attributes") or "Key,Object Type,Label"
+        if isinstance(attributes, list):
+            attributes = ",".join(str(a) for a in attributes)
+        search_path = query.get("search_path") or source.get("insight_search_path") or "/rest/insight-am/1/search"
+        flatten_flag = _as_bool(query.get("flatten", False))
+
+        verify = source["verify"] if "verify" in source else True
+        timeout = source["timeout"] if "timeout" in source else 60
+        url = source["url"].rstrip("/")
+        headers = _jira_headers(source)
+
+        data = []
+        offset = 0
+        page_size = min(limit, 100)
+        while len(data) < limit:
+            request_params = {"criteria": freetext, "criteriaType": "FREETEXT",
+                              "attributes": attributes, "offset": offset, "limit": page_size}
+            if schema not in (None, ""):
+                request_params["schema"] = schema
+            response = requests.get(f"{url}{search_path}", headers=headers, params=request_params, verify=verify, timeout=timeout)
+            if response.status_code != 200:
+                return False, f"jira search_cmdb_freetext http {response.status_code} ({response.text[:512]})", currentFuncName(), []
+            entries = _extract_cmdb_entries(response.json())
+            if not entries:
+                break
+            for obj in entries:
+                data.append(flatten_data(obj) if flatten_flag else obj)
+                if len(data) >= limit:
+                    break
+            if len(entries) < page_size:
+                break
+            offset += len(entries)
+
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(data)} objects", currentFuncName(), current_state))
+        return True, str(len(data)), currentFuncName(), data
+
+    except Exception as e:
+        error_message = f"jira search_cmdb_freetext fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
-    delegated = dict(query)
-    delegated["aql"] = iql
-    return execute_jira_search_cmdb(delegated, source_object, data_map, current_state)

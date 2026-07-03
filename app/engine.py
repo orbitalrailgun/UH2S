@@ -581,12 +581,13 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             },
             "search_cmdb_freetext":{
                 "required":{
-                    "freetext":"192.168.0.1"     # свободный текст: ищет по всем атрибутам объектов CMDB
+                    "freetext":"***REMOVED***"    # свободный текст (criteriaType=FREETEXT): поиск по атрибутам CMDB
                 },
                 "unrequired":{
-                    "object_type":"",             # (опц.) ограничить типом объекта, напр. "Host"
+                    "schema":1,                   # id схемы Insight (из URL ?schema=)
+                    "attributes":"Key,Object Type,Label",   # какие атрибуты вернуть (строка или список)
                     "limit":50,
-                    "cmdb_path":"/rest/insight/1.0/iql/objects",
+                    "search_path":"/rest/insight-am/1/search",
                     "flatten":False
                 },
                 "functions":{

@@ -1,26 +1,23 @@
-"""Тесты сборки FREETEXT-IQL для CMDB jira_sm (app/sources/jira_sm._build_freetext_iql) — офлайн."""
+"""Тесты FREETEXT-поиска CMDB jira_sm (парсинг ответа Insight) — офлайн."""
 import unittest
 
-from app.sources.jira_sm import _build_freetext_iql
+from app.sources.jira_sm import _extract_cmdb_entries
 
 
-class TestFreetextIQL(unittest.TestCase):
-    def test_freetext_only(self):
-        self.assertEqual(_build_freetext_iql("192.168.0.1"), '"192.168.0.1"')
+class TestExtractCmdbEntries(unittest.TestCase):
+    def test_plain_list(self):
+        self.assertEqual(_extract_cmdb_entries([{"a": 1}]), [{"a": 1}])
 
-    def test_with_object_type(self):
-        self.assertEqual(_build_freetext_iql("laptop", "Host"), 'objectType = "Host" AND "laptop"')
+    def test_object_entries_key(self):
+        self.assertEqual(_extract_cmdb_entries({"objectEntries": [{"id": 1}]}), [{"id": 1}])
 
-    def test_quotes_escaped(self):
-        self.assertEqual(_build_freetext_iql('say "hi"', "Server"), 'objectType = "Server" AND "say \\"hi\\""')
+    def test_results_key(self):
+        self.assertEqual(_extract_cmdb_entries({"results": [{"id": 2}]}), [{"id": 2}])
 
-    def test_empty_freetext_none(self):
-        self.assertIsNone(_build_freetext_iql(""))
-        self.assertIsNone(_build_freetext_iql("   "))
-        self.assertIsNone(_build_freetext_iql(None, "Host"))   # freetext обязателен
-
-    def test_strips(self):
-        self.assertEqual(_build_freetext_iql("  db01  "), '"db01"')
+    def test_no_list(self):
+        self.assertEqual(_extract_cmdb_entries({"total": 0}), [])
+        self.assertEqual(_extract_cmdb_entries(None), [])
+        self.assertEqual(_extract_cmdb_entries("x"), [])
 
 
 if __name__ == "__main__":
