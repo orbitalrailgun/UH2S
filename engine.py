@@ -36,7 +36,20 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
     for command in commands:
         if command["command"] == "DEF":
             if command['variable_name'] not in injected_variables:
-                variables[command['variable_name']] = command['variable_value']
+                def_value = command['variable_value']
+                # инъекция %(name)X в значение DEF из уже определённых переменных (порядок важен:
+                # ссылаться можно на переменные, объявленные выше по скрипту)
+                if "%(" in json.dumps(def_value, ensure_ascii=False):
+                    def_injection = process_injections({"__def__": def_value}, variables, current_state)
+                    if def_injection[0] == False:
+                        error_message = f"DEF var injection error: {def_injection[1]}"
+                        if "_status" in command:
+                            command["_status"] = "error"
+                            command["_info"] = error_message
+                        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+                        return False, error_message, currentFuncName(), {}
+                    def_value = def_injection[3]["__def__"]
+                variables[command['variable_name']] = def_value
         if command["command"] == "CALC":
             calc_result = execute_calc(command, variables, current_state)
             if not calc_result[0]:

@@ -757,6 +757,36 @@ class TestGetLoadCache(unittest.TestCase):
         self.assertNotIn("load_cache", c)
 
 
+class TestDefInjection(unittest.TestCase):
+    """DEF поддерживает инъекцию %(name)X из ранее объявленных переменных."""
+
+    def _run(self, script):
+        from engine import commands_executor
+        cmds = command_parser(script, CS)
+        ok, msg, func, payload = commands_executor(cmds, CS, {})
+        return ok, (payload[0] if ok else msg)
+
+    def test_string_injection(self):
+        ok, variables = self._run('DEF "prod" AS env | DEF "logs-%(env)s-*" AS index')
+        self.assertTrue(ok, variables)
+        self.assertEqual(variables["index"], "logs-prod-*")
+
+    def test_int_in_string(self):
+        ok, variables = self._run('DEF 5 AS n | DEF "page-%(n)i" AS label')
+        self.assertTrue(ok, variables)
+        self.assertEqual(variables["label"], "page-5")
+
+    def test_whole_value_typed(self):
+        ok, variables = self._run('DEF "prod" AS env | DEF "%(env)s" AS whole')
+        self.assertTrue(ok, variables)
+        self.assertEqual(variables["whole"], "prod")
+
+    def test_no_markers_unchanged(self):
+        ok, variables = self._run('DEF "plain text" AS t')
+        self.assertTrue(ok, variables)
+        self.assertEqual(variables["t"], "plain text")
+
+
 class TestApplyParallel(unittest.TestCase):
     """run_apply_command исполняет строки параллельно, но сохраняет порядок вывода и applied_*.
     Работает офлайн: function_object подменяется фейком, process_injections — реальный."""
