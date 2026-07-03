@@ -3350,6 +3350,34 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             ui.button(tr("ai.final.run"), icon='play_arrow').props('size=sm').on_click(lambda: open_in_harvester(script, run=True))
                             ui.button(tr("ai.final.save"), icon='save').props('size=sm').on_click(lambda: save_script_dialog(script))
 
+                async def handle_save_object(argument):
+                    """Действие агента save_object: разбор + подтверждение пользователем + запись объекта.
+                    Возврат — текст результата для агента (продолжает цикл)."""
+                    ok, err, norm = parse_save_object(argument)
+                    if not ok:
+                        return tr("ai.saveobj.rejected", reason=err)
+                    if not _role_allowed(norm["roles"]):
+                        return tr("ai.saveobj.rejected", reason=tr("ai.save.roles_too_high"))
+                    with ui.dialog() as confirm_dialog, ui.card().classes('w-[44rem] max-w-full'):
+                        ui.label(tr("ai.saveobj.title")).style("font-weight:700; color: var(--title-color);")
+                        ui.markdown(tr("ai.saveobj.preview", name=norm["name"], roles=json.dumps(norm["roles"], ensure_ascii=False),
+                                       ret=norm["json"].get("return") or "—"))
+                        ui.markdown("```\n" + norm["json"]["script"] + "\n```", extras=['fenced-code-blocks'])
+                        with ui.row().classes('gap-2'):
+                            ui.button(tr("ai.saveobj.confirm"), icon='save', on_click=lambda: confirm_dialog.submit('confirm'))
+                            ui.button(tr("ai.saveobj.reject"), on_click=lambda: confirm_dialog.submit('reject')).props('flat')
+                    decision = await confirm_dialog
+                    if decision != 'confirm':
+                        return tr("ai.saveobj.user_rejected")
+                    existing = get_actual_object_by_name(norm["name"], "('script')", current_state)
+                    if existing[0] and existing[3]:
+                        result = create_new_object_version(norm["name"], "script", norm["roles"], norm["json"], current_state)
+                    else:
+                        result = create_new_object(norm["name"], "script", norm["roles"], norm["json"], current_state)
+                    if not result[0]:
+                        return tr("ai.saveobj.rejected", reason=result[1])
+                    return tr("ai.saveobj.done", name=norm["name"])
+
                 async def open_in_harvester(script_text, run=False):
                     load = current_state.get("ui_harvester_load")
                     show = current_state.get("ui_show_panel")
@@ -3504,7 +3532,11 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             update_counters()
                             if status is not None:
                                 status.set_text(tr("ai.agent_action", action=action))
-                            action_result = await run.io_bound(dispatch_action, action, argument)
+                            if action == "save_object":
+                                # запись объекта — с подтверждением пользователя (нужен await UI)
+                                action_result = await handle_save_object(argument)
+                            else:
+                                action_result = await run.io_bound(dispatch_action, action, argument)
                             action_result = llm_truncate_to_tokens(action_result, max(512, context_window // 4))
                             conversation.append({"role": "user", "content": f"РЕЗУЛЬТАТ ДЕЙСТВИЯ [{action}]:\n{action_result}"})
                             render_chat()
