@@ -52,6 +52,21 @@ class TestCronMatches(unittest.TestCase):
         self.assertFalse(cron_matches("0 0 15 * 1", dt(2026, 7, 3, 0, 0))) # ни день, ни dow
 
 
+class TestHasMeaningfulData(unittest.TestCase):
+    """ALERT о результате шлётся только если данные реально есть (не [], не [{}])."""
+
+    def test_empty(self):
+        from app.scheduler import _has_meaningful_data
+        for empty in (None, [], [{}], [{}, {}], "x", 5):
+            self.assertFalse(_has_meaningful_data(empty), repr(empty))
+
+    def test_has_data(self):
+        from app.scheduler import _has_meaningful_data
+        self.assertTrue(_has_meaningful_data([{"a": 1}]))
+        self.assertTrue(_has_meaningful_data([{}, {"a": 1}]))
+        self.assertTrue(_has_meaningful_data(["x"]))
+
+
 class TestNextRun(unittest.TestCase):
     def test_next_matches(self):
         base = dt(2026, 7, 3, 9, 31)

@@ -7,6 +7,7 @@
 """
 
 import time
+import json
 import uuid
 import syslog
 import datetime
@@ -113,6 +114,19 @@ def _truthy(value):
     return value in (True, 1, "1", "true", "True", "t", "yes")
 
 
+def _has_meaningful_data(data):
+    """Есть ли в результате реальные данные (не [], не [{}], не список пустых dict)."""
+    if not isinstance(data, list) or len(data) == 0:
+        return False
+    for row in data:
+        if isinstance(row, dict):
+            if len(row) > 0:
+                return True
+        elif row not in (None, ""):
+            return True
+    return False
+
+
 def fire_schedule(schedule, base_state):
     """Выполнить один запуск расписания в контексте владельца и записать в историю (executions)."""
     from app.db import get_user_by_username, get_actual_object_by_name, create_execution, set_schedule_last_run
@@ -153,9 +167,11 @@ def fire_schedule(schedule, base_state):
         set_schedule_last_run(schedule_id, currentTimestamp(), 0, state)
         return
 
+    fired_ts = currentTimestamp()
     started = time.monotonic()
     ok = False
     message = ""
+    executor_result = None
     try:
         parsed = command_parser(script_text, state)
         executor_result = commands_executor(parsed, state)
@@ -164,6 +180,26 @@ def fire_schedule(schedule, base_state):
     except BaseException as run_error:
         message = f"scheduled run crashed: {run_error}"
         logger_log(syslog.LOG_ERR, get_log_message(message, currentFuncName(), state))
+
+    # ALERT с результатом: если скрипт вернул НЕпустые данные (по полю `return` объекта) —
+    # логируем время запуска, имя скрипта и сами данные (для мониторинга зашедуленных прогонов)
+    if ok and isinstance(executor_result[3], tuple):
+        variables, result_map = executor_result[3]
+        return_name = (object_result[3].get("json") or {}).get("return")
+        result_data = None
+        if return_name:
+            if return_name in result_map and result_map[return_name][0]:
+                result_data = result_map[return_name][3]
+            elif return_name in variables:
+                result_data = variables[return_name]
+        if _has_meaningful_data(result_data):
+            payload = json.dumps(result_data, ensure_ascii=False, default=str)
+            if len(payload) > 20000:
+                payload = payload[:20000] + "…(truncated)"
+            logger_log(syslog.LOG_ALERT, get_log_message(
+                f"scheduled script result | time={fired_ts} | "
+                f"script='{schedule.get('name')}' ({schedule['script_name']}) | data={payload}",
+                currentFuncName(), state))
 
     create_execution(str(uuid.uuid4()), owner, 1 if ok else 0, {
         "script": script_text,
