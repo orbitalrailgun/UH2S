@@ -233,6 +233,15 @@ dev-стенда; интерактивный вариант закомменти
   `custom_<name>` = `<value>` (префикс `custom_` исключает перезатирание штатных полей; группы без
   `name` пропускаются; сырые `customFields_N_*` удаляются). +5 офлайн-тестов.
 
+## 0.18. FREETEXT-поиск CMDB (jira_sm) в `v0.11.2`
+
+- **`jira_sm:search_cmdb_freetext`** — свободнотекстовый поиск по CMDB Insight через эндпоинт
+  `GET /rest/insight-am/1/search?criteria=<text>&criteriaType=FREETEXT&schema=<id>&attributes=<list>&offset&limit`.
+  Параметры: `freetext` (обяз.), `schema`, `attributes` (строка/список), `limit`, `search_path`,
+  `timeout` (override), `flatten`. Пагинация по `offset`, устойчивый разбор ответа
+  (`_extract_cmdb_entries`). Размер страницы 50, WARNING при отсутствии `schema` (иначе скан всех схем
+  → таймаут). +4 офлайн-теста.
+
 ## 1. Текущее состояние (на момент составления)
 
 ### Работает (проверено на стенде)
