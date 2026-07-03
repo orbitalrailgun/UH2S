@@ -527,13 +527,23 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
         flatten_flag = _as_bool(query.get("flatten", False))
 
         verify = source["verify"] if "verify" in source else True
-        timeout = source["timeout"] if "timeout" in source else 60
+        # таймаут можно поднять на вызов (FREETEXT-поиск CMDB тяжелее обычного search)
+        try:
+            timeout = int(query["timeout"]) if query.get("timeout") else (source["timeout"] if "timeout" in source else 60)
+        except (TypeError, ValueError):
+            timeout = 60
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
 
+        # без schema FREETEXT сканирует все схемы -> частые таймауты; предупреждаем
+        if schema in (None, ""):
+            logger_log(syslog.LOG_WARNING, get_log_message(
+                "search_cmdb_freetext without 'schema' may be slow/time out — pass schema=<id>",
+                currentFuncName(), current_state))
+
         data = []
         offset = 0
-        page_size = min(limit, 100)
+        page_size = min(limit, 50)   # FREETEXT тяжелее обычного search — меньшая страница безопаснее
         while len(data) < limit:
             request_params = {"criteria": freetext, "criteriaType": "FREETEXT",
                               "attributes": attributes, "offset": offset, "limit": page_size}

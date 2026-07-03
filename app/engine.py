@@ -584,10 +584,11 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                     "freetext":"***REMOVED***"    # свободный текст (criteriaType=FREETEXT): поиск по атрибутам CMDB
                 },
                 "unrequired":{
-                    "schema":1,                   # id схемы Insight (из URL ?schema=)
+                    "schema":1,                   # id схемы Insight (из URL ?schema=); без него поиск медленный
                     "attributes":"Key,Object Type,Label",   # какие атрибуты вернуть (строка или список)
                     "limit":50,
                     "search_path":"/rest/insight-am/1/search",
+                    "timeout":60,                 # можно поднять для тяжёлого CMDB-поиска
                     "flatten":False
                 },
                 "functions":{
