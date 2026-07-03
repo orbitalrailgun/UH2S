@@ -12,8 +12,8 @@ _CF_RE = re.compile(r"^customFields_(\d+)_(.+)$")
 def regroup_thehive_alert(record):
     """Пересобрать уплощённую запись алерта TheHive:
       - столбцы tags_0, tags_1, ... -> один столбец `tags` = текстовый список значений (JSON);
-      - группы customFields_N_(_id|name|type|value|order) -> столбцы <name> = <value>
-        (исходные customFields_N_* удаляются).
+      - группы customFields_N_(_id|name|type|value|order) -> столбцы custom_<name> = <value>
+        (префикс custom_ исключает перезатирание штатных полей; исходные customFields_N_* удаляются).
     Остальные поля переносятся как есть."""
     result = {}
     tag_values = {}          # index -> значение тега
@@ -35,8 +35,8 @@ def regroup_thehive_alert(record):
     for index in sorted(cf_groups):
         group = cf_groups[index]
         name = group.get("name")
-        if name:                          # столбец = имя кастомного поля, значение = его value
-            result[str(name)] = group.get("value")
+        if name:                          # столбец = custom_<имя поля> (префикс от коллизий), значение = value
+            result[f"custom_{name}"] = group.get("value")
     return result
 
 

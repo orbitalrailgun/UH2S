@@ -23,8 +23,8 @@ class TestTheHiveRegroup(unittest.TestCase):
 
     def test_customfields_to_named_columns(self):
         out = regroup_thehive_alert(flatten_data(self._alert()))
-        self.assertEqual(out["source_ip"], "10.0.0.5")
-        self.assertEqual(out["risk_score"], 87)
+        self.assertEqual(out["custom_source_ip"], "10.0.0.5")
+        self.assertEqual(out["custom_risk_score"], 87)
 
     def test_raw_columns_removed_and_others_kept(self):
         out = regroup_thehive_alert(flatten_data(self._alert()))
