@@ -187,18 +187,28 @@ def fire_schedule(schedule, base_state):
         variables, result_map = executor_result[3]
         return_name = (object_result[3].get("json") or {}).get("return")
         result_data = None
+        result_source = return_name
+        # 1) явный return скрипта
         if return_name:
             if return_name in result_map and result_map[return_name][0]:
                 result_data = result_map[return_name][3]
             elif return_name in variables:
                 result_data = variables[return_name]
+        # 2) фолбэк: если return не задан/пуст — последняя произведённая непустая таблица (факт. вывод)
+        if not _has_meaningful_data(result_data):
+            for key in reversed(list(result_map.keys())):
+                entry = result_map[key]
+                if entry and entry[0] and _has_meaningful_data(entry[3]):
+                    result_data, result_source = entry[3], key
+                    break
         if _has_meaningful_data(result_data):
             payload = json.dumps(result_data, ensure_ascii=False, default=str)
             if len(payload) > 20000:
                 payload = payload[:20000] + "…(truncated)"
             logger_log(syslog.LOG_ALERT, get_log_message(
                 f"scheduled script result | time={fired_ts} | "
-                f"script='{schedule.get('name')}' ({schedule['script_name']}) | data={payload}",
+                f"script='{schedule.get('name')}' ({schedule['script_name']}) | "
+                f"table='{result_source}' | data={payload}",
                 currentFuncName(), state))
 
     create_execution(str(uuid.uuid4()), owner, 1 if ok else 0, {
