@@ -1,12 +1,13 @@
 from app.login import try_login
 from app.validation import check_current_user_status
 from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled, storage_list, storage_load, storage_delete, create_schedule, list_schedules, get_schedule, update_schedule, set_schedule_enabled, delete_schedule
-from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_truncate_to_tokens
+from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_chat_stream, llm_truncate_to_tokens
 import syslog
 import asyncio
 import json
 import uuid
 import time
+import threading
 from nicegui import ui, app, Client, run
 from app.logging import get_log_message, logger_log, currentFuncName, currentTimestamp
 from typing import Dict, Any, Tuple
@@ -3481,6 +3482,38 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     except BaseException as e:
                         return f"ошибка действия {action}: {str(e)}"
 
+                async def stream_reply(llm_json, messages):
+                    """Ответ LLM с живым показом (стриминг); фолбэк на обычный llm_chat. -> (ok, reply, usage).
+                    Реплика ассистента добавляется в conversation и наполняется по мере генерации."""
+                    holder = {"text": ""}
+                    holder_lock = threading.Lock()
+                    conversation.append({"role": "assistant", "content": ""})
+                    render_chat()
+
+                    def on_chunk(delta):
+                        with holder_lock:
+                            holder["text"] += delta
+
+                    def flush():
+                        with holder_lock:
+                            conversation[-1]["content"] = holder["text"]
+                        render_chat()
+
+                    stream_timer = ui.timer(0.2, flush)
+                    try:
+                        ok, reply, usage = await run.io_bound(llm_chat_stream, llm_json, messages, current_state, on_chunk)
+                    finally:
+                        try:
+                            stream_timer.cancel()
+                        except BaseException:
+                            pass
+                    if not ok and not holder["text"]:
+                        # стрим ничего не дал -> фолбэк на обычный запрос
+                        ok, reply, usage = await run.io_bound(llm_chat, llm_json, messages, current_state)
+                    conversation[-1]["content"] = reply if ok else tr("ai.llm_error", error=reply)
+                    render_chat()
+                    return ok, reply, usage
+
                 async def send_message():
                     selected = current_state.get("ui_selected_llm")
                     if not selected or not selected.get("json"):
@@ -3525,15 +3558,11 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                                 break
                             system_prompt = build_agent_system_prompt()
                             messages = llm_build_messages(system_prompt, conversation, context_window)
-                            ok, reply, usage = await run.io_bound(llm_chat, selected["json"], messages, current_state)
+                            ok, reply, usage = await stream_reply(selected["json"], messages)
                             session_state["tokens"] += (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
                             update_counters()
                             if not ok:
-                                conversation.append({"role": "assistant", "content": tr("ai.llm_error", error=reply)})
-                                render_chat()
-                                break
-                            conversation.append({"role": "assistant", "content": reply})
-                            render_chat()
+                                break  # ошибка уже показана в ответе ассистента
 
                             action, argument = extract_action(reply)
                             if not action:
@@ -3561,11 +3590,9 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             if not session_state["cancel"]:
                                 system_prompt = build_agent_system_prompt()
                                 messages = llm_build_messages(system_prompt, conversation, context_window)
-                                ok, reply, usage = await run.io_bound(llm_chat, selected["json"], messages, current_state)
+                                ok, reply, usage = await stream_reply(selected["json"], messages)
                                 session_state["tokens"] += (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
                                 update_counters()
-                                conversation.append({"role": "assistant", "content": reply if ok else tr("ai.llm_error", error=reply)})
-                                render_chat()
                     except BaseException as e:
                         conversation.append({"role": "assistant", "content": tr("ai.error", error=str(e))})
                         render_chat()

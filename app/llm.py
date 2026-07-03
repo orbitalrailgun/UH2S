@@ -206,6 +206,89 @@ def llm_chat(llm_json, messages, current_state):
         return False, f"llm chat fail: {str(e)}", _empty_usage()
 
 
+def llm_chat_stream(llm_json, messages, current_state, on_chunk):
+    """Стриминговый чат: вызывает on_chunk(delta) по мере генерации. Возврат (ok, full_content, usage).
+    ollama -> /api/chat NDJSON (message.content, done); openai -> /chat/completions SSE (choices[].delta.content).
+    При любой ошибке возвращает (False, error, usage) — вызывающий код делает фолбэк на llm_chat."""
+    import requests
+    import json as _json
+    import time
+    provider = (llm_json.get("type") or "ollama").strip().lower()
+    url = (llm_json.get("url") or "").rstrip("/")
+    model = llm_json.get("model", "")
+    timeout = llm_json.get("request_timeout", 120)
+    verify = llm_json.get("verify", True)
+    headers = _llm_headers(llm_json, current_state)
+    if not url:
+        return False, "в объекте llm не задан url", _empty_usage()
+
+    start = time.monotonic()
+    content_parts = []
+    prompt_tokens = completion_tokens = None
+    try:
+        if provider == "ollama":
+            body = {"model": model, "messages": messages, "stream": True,
+                    "options": {"num_ctx": llm_context_window(llm_json)}}
+            endpoint = f"{url}/api/chat"
+        elif provider in ("openai", "openai_compatible"):
+            body = {"model": model, "messages": messages, "stream": True}
+            endpoint = f"{url}/chat/completions"
+        else:
+            return False, f"неизвестный тип llm '{provider}' (ollama | openai)", _empty_usage()
+
+        with requests.post(endpoint, json=body, headers=headers, verify=verify, timeout=timeout, stream=True) as response:
+            if response.status_code not in (200, 201):
+                duration_ms = int((time.monotonic() - start) * 1000)
+                _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"http {response.status_code}")
+                return False, f"{provider} stream http {response.status_code}: {response.text[:300]}", _empty_usage()
+            for raw_line in response.iter_lines(decode_unicode=True):
+                if not raw_line:
+                    continue
+                line = raw_line.strip()
+                if provider in ("openai", "openai_compatible"):
+                    if line.startswith("data:"):
+                        line = line[5:].strip()
+                    if line == "[DONE]":
+                        break
+                try:
+                    chunk = _json.loads(line)
+                except BaseException:
+                    continue
+                if provider == "ollama":
+                    delta = (chunk.get("message") or {}).get("content", "")
+                    if delta:
+                        content_parts.append(delta)
+                        on_chunk(delta)
+                    if chunk.get("done"):
+                        prompt_tokens = chunk.get("prompt_eval_count")
+                        completion_tokens = chunk.get("eval_count")
+                else:
+                    choices = chunk.get("choices") or []
+                    if choices:
+                        delta = (choices[0].get("delta") or {}).get("content", "")
+                        if delta:
+                            content_parts.append(delta)
+                            on_chunk(delta)
+                    usage = chunk.get("usage") or {}
+                    if usage:
+                        prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+                        completion_tokens = usage.get("completion_tokens", completion_tokens)
+
+        content = "".join(content_parts)
+        if prompt_tokens is None:
+            prompt_tokens = sum(llm_estimate_tokens(m.get("content", "")) for m in messages)
+        if completion_tokens is None:
+            completion_tokens = llm_estimate_tokens(content)
+        duration_ms = int((time.monotonic() - start) * 1000)
+        _log_llm_request(current_state, syslog.LOG_INFO, model, provider, url, prompt_tokens, completion_tokens, duration_ms, "stream")
+        return True, content, {"prompt_tokens": prompt_tokens or 0, "completion_tokens": completion_tokens or 0}
+
+    except Exception as e:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"stream fail: {str(e)}")
+        return False, f"llm stream fail: {str(e)}", _empty_usage()
+
+
 def _llm_resolve_key(llm_json, current_state):
     """Достать токен из секрета по llm_json['key'] = {system, account}; иначе пустая строка."""
     key = llm_json.get("key")
