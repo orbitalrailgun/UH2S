@@ -67,9 +67,29 @@ def datetime_to_timestamp(timestamp_string, format):
     except BaseException:
         return -1
 
+def _register_duckdb_udf(conn, pytz):
+    """Зарегистрировать кастомные UDF (regexp, ip_is_private, datetime_to_timestamp и др.).
+    Требует duckdb.typing (duckdb>=0.8); при отсутствии вызывающий код пропускает регистрацию."""
+    import duckdb.typing as ddt
+    conn.create_function('regexp', lambda x, y: 1 if re.search(x, y) else False,
+                         [ddt.VARCHAR, ddt.VARCHAR], ddt.BOOLEAN)
+    conn.create_function('regexp_substr', lambda x, y: str(re.findall(x, y)) if isinstance(x, str) and isinstance(y, str) else 'regexp_error',
+                         [ddt.VARCHAR, ddt.VARCHAR], ddt.VARCHAR)
+    conn.create_function('ip_is_private', lambda x: int(ipaddress.ip_address(str(x)).is_private) if validate_ip_address(str(x)) else False,
+                         [ddt.VARCHAR], ddt.BOOLEAN)
+    conn.create_function('unixtime_to_iso_timestamp',
+                         lambda x: str(datetime.datetime.fromtimestamp(float(x), pytz.timezone('UTC')).isoformat(sep='T', timespec='milliseconds')) if str(x).replace(".", "", 1).isdigit() else str(x),
+                         [ddt.VARCHAR], ddt.VARCHAR)
+    conn.create_function('bytes_to_string', lambda x: str(convert_size(x)), [ddt.INTEGER], ddt.VARCHAR)
+    conn.create_function('ip_port2ip', lambda x: x[:x.find(":")] if isinstance(x, str) else 'ip_port2ip_error',
+                         [ddt.VARCHAR], ddt.VARCHAR)
+    conn.create_function('validate_ip_address', lambda x: validate_ip_address(str(x)), [ddt.VARCHAR], ddt.BOOLEAN)
+    conn.create_function('datetime_to_timestamp', lambda x, y: datetime_to_timestamp(x, y),
+                         [ddt.VARCHAR, ddt.VARCHAR], ddt.DOUBLE)
+
+
 def execute_duckdb(parameters, source_object, data_map, current_state):
     import duckdb
-    import duckdb.typing
     import pytz
     import pandas
     # поскольку мы используем inmemory, то клиента к системе проверять не нужно
@@ -85,55 +105,13 @@ def execute_duckdb(parameters, source_object, data_map, current_state):
         # создаём подключение
         conn = duckdb.connect(':memory:')
         conn.execute("PRAGMA threads=8")  # Включение многопоточности
-        # добавляем regex функции и можно другие добавить тоже
-        conn.create_function(
-            'regexp', 
-            lambda x, y: 1 if re.search(x,y) else False,
-            [duckdb.typing.VARCHAR, duckdb.typing.VARCHAR],
-            duckdb.typing.BOOLEAN
-        )
-        conn.create_function(
-            'regexp_substr', 
-            lambda x, y: str(re.findall(x,y)) if isinstance(x,str) and isinstance(y,str) else 'regexp_error',
-            [duckdb.typing.VARCHAR, duckdb.typing.VARCHAR],
-            duckdb.typing.VARCHAR
-        )
-        conn.create_function(
-            'ip_is_private', 
-            lambda x: int(ipaddress.ip_address(str(x)).is_private) if validate_ip_address(str(x)) else False,
-            [duckdb.typing.VARCHAR],
-            duckdb.typing.BOOLEAN
-        )
-        conn.create_function(
-            'unixtime_to_iso_timestamp', 
-            lambda x: str(datetime.datetime.fromtimestamp(float(x), pytz.timezone('UTC')).isoformat(sep='T', timespec='milliseconds')) if str(x).replace(".", "", 1).isdigit() else str(x),
-            [duckdb.typing.VARCHAR],
-            duckdb.typing.VARCHAR
-        )
-        conn.create_function(
-            'bytes_to_string', 
-            lambda x: str(convert_size(x)),
-            [duckdb.typing.INTEGER],
-            duckdb.typing.VARCHAR
-        )
-        conn.create_function(
-            'ip_port2ip', 
-            lambda x: x[:x.find(":")] if isinstance(x,str) else 'ip_port2ip_error',
-            [duckdb.typing.VARCHAR],
-            duckdb.typing.VARCHAR
-        )
-        conn.create_function(
-            'validate_ip_address', 
-            lambda x: validate_ip_address(str(x)),
-            [duckdb.typing.VARCHAR],
-            duckdb.typing.BOOLEAN
-        )
-        conn.create_function(
-            'datetime_to_timestamp', 
-            lambda x, y: datetime_to_timestamp(x, y),
-            [duckdb.typing.VARCHAR, duckdb.typing.VARCHAR],
-            duckdb.typing.DOUBLE
-        )
+        # кастомные UDF требуют duckdb.typing (duckdb>=0.8). Если модуль недоступен — продолжаем
+        # без них (обычный SQL работает); падать из-за отсутствия хелперов не нужно.
+        try:
+            _register_duckdb_udf(conn, pytz)
+        except BaseException as udf_error:
+            logger_log(syslog.LOG_WARNING, get_log_message(
+                f"duckdb custom UDF unavailable (need duckdb>=0.8): {udf_error}", currentFuncName(), current_state))
 
         try:
             # теперь заполняем нашу БД таблицами из data_map
