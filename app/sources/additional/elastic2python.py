@@ -347,8 +347,22 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
 
     def post(body):
         resp = requests.post(url, json=body, headers=headers, verify=verify_certs, timeout=timeout)
+        if debug_flag:
+            print(resp, resp.status_code, dict(resp.json()))
         if resp.status_code in retry_statuses:
             raise RetryableError(f"status {resp.status_code}", resp.status_code)
+        # elastic может вернуть HTTP 200, но в теле {"error":..., "status": 4xx/5xx} — ловим это
+        try:
+            body_json = resp.json()
+        except BaseException:
+            body_json = None
+        if isinstance(body_json, dict) and "error" in body_json:
+            err = body_json.get("error")
+            reason = err.get("reason") if isinstance(err, dict) else str(err)
+            body_status = body_json.get("status")
+            if isinstance(body_status, int) and (body_status == 429 or body_status >= 500):
+                raise RetryableError(f"elastic body status {body_status}: {reason}", body_status)
+            raise ValueError(f"elastic error (status {body_status}): {reason}")
         return resp
 
     # сначала делаем первый запрос, получаем первый кусок данных
@@ -443,6 +457,18 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
                              headers=headers, verify=verify_certs, timeout=timeout)
         if resp.status_code in retry_statuses:
             raise RetryableError(f"status {resp.status_code}", resp.status_code)
+        # HTTP 200 с телом-ошибкой {"error":..., "status": 4xx/5xx}
+        try:
+            body_json = resp.json()
+        except BaseException:
+            body_json = None
+        if isinstance(body_json, dict) and "error" in body_json:
+            err = body_json.get("error")
+            reason = err.get("reason") if isinstance(err, dict) else str(err)
+            body_status = body_json.get("status")
+            if isinstance(body_status, int) and (body_status == 429 or body_status >= 500):
+                raise RetryableError(f"elastic body status {body_status}: {reason}", body_status)
+            raise ValueError(f"elastic error (status {body_status}): {reason}")
         return resp
 
     try:
