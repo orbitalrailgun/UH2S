@@ -63,6 +63,11 @@ PROJECT_DOC = """\
 - %(имя)X типизирует вставку: s=строка, i=int, f=float, b=bool, l=list, d=dict, x=сырьё без кавычек.
 - Объединять/фильтровать/агрегировать РАЗНЫЕ таблицы удобно in-memory SQL: sqlite3_im/duckdb_im — они видят
   ранее собранные таблицы по их именам (AS) как SQL-таблицы.
+- ВАЖНО (in-memory SQL): имена колонок часто содержат точки/дефисы/пробелы или спецсимволы
+  (например custom_host.ip, custom_source.ip после разбора вложенных полей). Такие имена ОБЯЗАТЕЛЬНО брать в
+  ДВОЙНЫЕ КАВЫЧКИ: "custom_host.ip". Без кавычек СУБД трактует точку как таблица.колонка и падает/возвращает
+  пустоту. Псевдонимы задавай простыми (AS ip), тогда дальше кавычки не нужны. Сначала посмотри реальные имена
+  колонок таблицы через ```run и только потом пиши SQL.
 
 ## Команды
 - DEF <значение> AS <имя> — переменная (int/float/"строка"/true/false/[список]/{словарь}); можно %(имя)X внутри.
@@ -87,6 +92,11 @@ GET netbox:search(...) AS hosts
 | GET APPLY:hosts(address AS ip):[] dns:query(target=%(ip)s) AS resolved
 3) Переменная с запятыми — через DEF + %(v)l:
 DEF ["a","b"] AS items | GET src:func(list=%(items)l) AS d
+4) Колонки с точками в имени — В ДВОЙНЫХ КАВЫЧКАХ + простой псевдоним:
+GET duckdb_im:query(queries=["SELECT ip FROM (
+    SELECT \\"custom_host.ip\\" AS ip FROM alerts WHERE \\"custom_host.ip\\" IS NOT NULL
+    UNION ALL SELECT \\"custom_source.ip\\" AS ip FROM alerts WHERE \\"custom_source.ip\\" IS NOT NULL
+) GROUP BY ip"], type="table") AS unique_ips
 """
 
 
