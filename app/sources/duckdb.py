@@ -3,7 +3,19 @@ import re
 import ipaddress
 import datetime
 import syslog
+import traceback
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
+
+
+def _err_detail(exc):
+    """Компактная диагностика исключения: тип + последний кадр traceback (файл:строка).
+    Помогает точечно найти место падения (например, какой именно запрос/строка), не заваливая лог."""
+    detail = f"{type(exc).__name__}: {exc}"
+    tb = traceback.extract_tb(exc.__traceback__)
+    if tb:
+        last = tb[-1]
+        detail += f" @ {last.filename.split('/')[-1]}:{last.lineno} in {last.name}()"
+    return detail
 
 
 
@@ -140,7 +152,7 @@ def execute_duckdb(parameters, source_object, data_map, current_state):
                     #input_df = pandas.DataFrame([{"status":"empty"}])
                     pass
         except BaseException as e:
-            error_message = f"duckdb data transfer to virtual db fail: {str(e)}"
+            error_message = f"duckdb data transfer to virtual db fail: {_err_detail(e)}"
             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
             return False, error_message, currentFuncName(), []
                 
@@ -157,22 +169,39 @@ def execute_duckdb(parameters, source_object, data_map, current_state):
         # # выполняем основной результирующий запрос, ожидается, что это SELECT из получившейся БД
         # output_df = conn.sql(query["final_query"]).df()     
 
+        # список запросов: все, кроме последнего — подготовительные, последний — результирующий SELECT
+        queries = query.get("queries")
+        if not isinstance(queries, list) or len(queries) == 0:
+            error_message = "duckdb fail: параметр queries должен быть непустым списком SQL-запросов"
+            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), []
+
         # сначала выполняем подготовительные запросы, если они нужны
         try:
-            for i, sql_query in enumerate(query["queries"]):
-                if len(query["queries"]) == i+1:
+            for i, sql_query in enumerate(queries):
+                if len(queries) == i+1:
                     break
                 conn.sql(sql_query)
         except BaseException as e:
-            error_message = f"preparatory query {i} fail: {str(e)}"
+            error_message = f"preparatory query {i} fail: {_err_detail(e)}"
             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
-            return False, error_message, currentFuncName(), [] 
-        
-        output_df = conn.sql(query["queries"][-1]).df()         
+            return False, error_message, currentFuncName(), []
+
+        # результирующий запрос (последний); при падении показываем сам запрос — так видно место ошибки
+        try:
+            final_query = queries[-1]
+            result = conn.sql(final_query)
+            if result is None:  # запрос без результирующего набора (CREATE/INSERT и т.п.)
+                return True, "OK", currentFuncName(), []
+            output_df = result.df()
+        except BaseException as e:
+            error_message = f"final query fail: {_err_detail(e)} | query={final_query!r}"
+            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), []
 
         return True, "OK", currentFuncName(), output_df.to_dict('records')
 
     except BaseException as e:
-        error_message = f"duckdb fail: {str(e)}"
+        error_message = f"duckdb fail: {_err_detail(e)}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
