@@ -196,8 +196,12 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                         f"-> {type(command['function_parameters'][parameter]).__name__}", currentFuncName(), current_state))
                     # дополнительная попытка переконвертации
                     get_variable_type_result = get_variable_type(command["parameters"][parameter], current_state)
-                    if not get_variable_type_result:
-                        error_message = f"recheck var type error for {parameter}"
+                    if not get_variable_type_result[0]:
+                        # раньше здесь молча подставлялся пустой [] / "" — реальная причина (например,
+                        # битый JSON из-за незаэкранированных кавычек) терялась. Теперь возвращаем её явно.
+                        hint = _function_hint(command["source_type"], command["function"], current_state)
+                        error_message = (f"не удалось разобрать параметр '{parameter}' для "
+                                         f"{command['source_type']}:{command['function']}: {get_variable_type_result[1]}. {hint}")
                         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                         return False, error_message, currentFuncName(), commands
                     if type(command["function_parameters"][parameter]) != type(get_variable_type_result[3][1]):

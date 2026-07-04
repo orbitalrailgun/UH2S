@@ -1070,13 +1070,15 @@ def get_variable_type(text:str, current_state:dict):
         if json_validate(text):
             return True, "empty", currentFuncName(),("list", json.loads(text))
         else:
-            return False, "incorrect json node", currentFuncName(),("list", [])
+            return False, ("невалидный JSON-список (частая причина — незаэкранированные двойные кавычки внутри "
+                           "строк, например SQL-идентификаторы; экранируйте их как \\\")"), currentFuncName(),("list", [])
     # dict
     if re.search(r"^\{.*\}$", text, flags=re.DOTALL):
         if json_validate(text):
             return True, "empty", currentFuncName(),("dict", json.loads(text))
         else:
-            return False, "incorrect json node", currentFuncName(),("dict", {})
+            return False, ("невалидный JSON-словарь (частая причина — незаэкранированные двойные кавычки внутри "
+                           "строк; экранируйте их как \\\")"), currentFuncName(),("dict", {})
         
     return False, "unknow data type", currentFuncName(),("string", "")
         
