@@ -25,6 +25,14 @@ services:
       # - ./crt.pem:/app/crt.pem:ro
       # - ./key.pem:/app/key.pem:ro
     restart: unless-stopped
+    # Liveness наследуется из Dockerfile (GET /healthz, HTTP→HTTPS). Дублируем здесь явно
+    # для наглядности; переопределить интервалы можно тут, не пересобирая образ.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8082/healthz || curl -fsSk https://127.0.0.1:8082/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
 
   # Outward-facing MCP-сервер (см. MCP.md). Тот же образ, другая команда.
   # Если MCP наружу не нужен — закомментируйте весь сервис.
@@ -41,6 +49,14 @@ services:
     volumes:
       - uh2s-data:/data             # тот же том БД, что и у веб-сервиса
     restart: unless-stopped
+    # У MCP (streamable-http, путь /mcp) нет отдельного health-эндпоинта: проверяем, что процесс
+    # принимает соединение (любой HTTP-ответ = живой). curl без -f => exit 0 даже на 4xx.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://127.0.0.1:8090/mcp || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
 volumes:
   uh2s-data:

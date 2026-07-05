@@ -48,6 +48,12 @@ USER appuser
 # Веб-интерфейс (front.py). MCP-сервер запускается отдельной командой (см. docker-compose.yml).
 EXPOSE 8082
 
+# Liveness: GET /healthz (без аутентификации). TLS опционален, поэтому пробуем HTTP, затем HTTPS
+# (-k: сертификат может быть самоподписанным). start-period даёт время на ленивые импорты и init БД.
+# Для MCP-сервиса проверка переопределяется в docker-compose.yml (другой порт/путь).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8082/healthz || curl -fsSk https://127.0.0.1:8082/healthz || exit 1
+
 # host 0.0.0.0 — слушать вне контейнера. TLS опционален: если в /app есть crt.pem и key.pem
 # (примонтированы томом) — будет HTTPS, иначе HTTP (TLS терминирует внешний reverse proxy).
 CMD ["python", "front.py", "--host", "0.0.0.0", "--port", "8082"]

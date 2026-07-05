@@ -384,6 +384,14 @@ def main():
     #         headers={"Content-Disposition": f"attachment; filename={api_scenario_launch_page_result[3]['filename']}"})
     
     ########################################
+    # Healthcheck (liveness) — без аутентификации, для Docker HEALTHCHECK / оркестратора.
+    # Намеренно НЕ трогает БД/секреты: цель — подтвердить, что процесс принимает HTTP.
+    ########################################
+    @app.get("/healthz")
+    async def healthz():
+        return {"status": "ok", "app": APP_NAME, "version": APP_VERSION}
+
+    ########################################
     # API: выполнение DSL-скрипта
     ########################################
     @app.post("/api/script")
