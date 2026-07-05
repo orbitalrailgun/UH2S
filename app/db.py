@@ -138,6 +138,9 @@ def db_init(current_state):
         cursor.execute("CREATE TABLE IF NOT EXISTS ai_log (timestamp TEXT, username TEXT, model TEXT, provider TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER, duration_ms INTEGER, ok INTEGER);")
         cursor.execute("CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT, owner TEXT, comment TEXT, enabled BOOLEAN, created_at TEXT, created_by TEXT, expires_at TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS schedules (id TEXT, name TEXT, owner TEXT, script_name TEXT, cron TEXT, enabled BOOLEAN, last_run TEXT, last_status INTEGER, created_at TEXT, created_by TEXT, json TEXT);")
+        # База знаний AI-агента (память): общая на всех (командная), как storage-кэш. Заметки —
+        # переиспользуемые выводы агента (рабочие приёмы, особенности источников, схемы полей).
+        cursor.execute("CREATE TABLE IF NOT EXISTS knowledge (id TEXT, owner TEXT, title TEXT, content TEXT, tags TEXT, created_at TEXT, updated_at TEXT);")
         connection.commit()
         # лёгкая миграция: дочиняем недостающие колонки api_keys в уже существующих БД
         for column_def in ("created_at TEXT", "created_by TEXT", "expires_at TEXT"):
@@ -1369,6 +1372,193 @@ def storage_list(current_state):
             })
         entries.sort(key=lambda e: e["updated_ts"], reverse=True)
         return True, "Ok", currentFuncName(), entries
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# knowledge — база знаний / память AI-агента. Общая на всех (командная), как storage.
+# Все запросы параметризованы. tags хранится как JSON-массив строк.
+# ────────────────────────────────────────────────────────────────────────────
+def knowledge_save(title, content, tags, current_state):
+    """Сохранить/обновить заметку памяти. Upsert по title (регистронезависимо): если заметка с таким
+    заголовком уже есть — обновляется content/tags/updated_at (created_at сохраняется). Возврат (ok, msg, func, id)."""
+    try:
+        import uuid
+        title = (title or "").strip()
+        content = (content or "").strip()
+        if not title or not content:
+            return False, "нужны непустые title и content", currentFuncName(), None
+        if not isinstance(tags, list):
+            tags = []
+        tags_json = json.dumps([str(t) for t in tags], ensure_ascii=False)
+
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+        owner = current_state.get("username", "")
+        now = currentTimestamp()
+
+        cursor = connection.cursor()
+        # ищем существующую заметку с тем же заголовком (регистронезависимо)
+        cursor.execute(f"SELECT id, created_at FROM knowledge WHERE lower(title) = lower({placeholder});", (title,))
+        existing = cursor.fetchone()
+        if existing:
+            note_id = existing[0]
+            created_at = existing[1] or now
+            cursor.execute(
+                f"UPDATE knowledge SET owner = {placeholder}, content = {placeholder}, tags = {placeholder}, updated_at = {placeholder} "
+                f"WHERE id = {placeholder};",
+                (owner, content, tags_json, now, note_id))
+        else:
+            note_id = str(uuid.uuid4())
+            cursor.execute(
+                f"INSERT INTO knowledge (id, owner, title, content, tags, created_at, updated_at) "
+                f"VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder});",
+                (note_id, owner, title, content, tags_json, now, now))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), note_id
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def _knowledge_row_to_dict(row):
+    """Строка knowledge -> dict; tags парсится из JSON (битое -> [])."""
+    note_id, owner, title, content, tags_raw, created_at, updated_at = row
+    try:
+        tags = json.loads(tags_raw) if tags_raw else []
+        if not isinstance(tags, list):
+            tags = []
+    except BaseException:
+        tags = []
+    return {"id": note_id, "owner": owner or "", "title": title or "", "content": content or "",
+            "tags": tags, "created_at": created_at or "", "updated_at": updated_at or ""}
+
+
+def knowledge_list(current_state):
+    """Все заметки памяти (новые сверху по updated_at). Возврат (ok, msg, func, list-of-dict)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+
+        cursor = connection.cursor()
+        cursor.execute("SELECT id, owner, title, content, tags, created_at, updated_at FROM knowledge;")
+        rows = cursor.fetchall()
+        cursor.close()
+        connection.close()
+
+        notes = [_knowledge_row_to_dict(row) for row in (rows or [])]
+        notes.sort(key=lambda n: n["updated_at"], reverse=True)
+        return True, "Ok", currentFuncName(), notes
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def knowledge_search(query, current_state, limit=50):
+    """Поиск заметок по подстроке в title/content/tags (параметризованный LIKE, регистронезависимо).
+    Возврат (ok, msg, func, list-of-dict). Пустой запрос -> пустой список."""
+    try:
+        query = (query or "").strip()
+        if not query:
+            return True, "Ok", currentFuncName(), []
+
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        like = f"%{query.lower()}%"
+        cursor = connection.cursor()
+        cursor.execute(
+            f"SELECT id, owner, title, content, tags, created_at, updated_at FROM knowledge "
+            f"WHERE lower(title) LIKE {placeholder} OR lower(content) LIKE {placeholder} OR lower(tags) LIKE {placeholder};",
+            (like, like, like))
+        rows = cursor.fetchall()
+        cursor.close()
+        connection.close()
+
+        notes = [_knowledge_row_to_dict(row) for row in (rows or [])]
+        notes.sort(key=lambda n: n["updated_at"], reverse=True)
+        return True, "Ok", currentFuncName(), notes[:int(limit)]
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def knowledge_get(id_or_title, current_state):
+    """Одна заметка по id либо по title (регистронезависимо). Возврат (ok, msg, func, dict|None)."""
+    try:
+        key = (id_or_title or "").strip()
+        if not key:
+            return False, "нужен id или title", currentFuncName(), None
+
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(
+            f"SELECT id, owner, title, content, tags, created_at, updated_at FROM knowledge "
+            f"WHERE id = {placeholder} OR lower(title) = lower({placeholder});",
+            (key, key))
+        row = cursor.fetchone()
+        cursor.close()
+        connection.close()
+
+        if not row:
+            return True, "Ok", currentFuncName(), None
+        return True, "Ok", currentFuncName(), _knowledge_row_to_dict(row)
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def knowledge_delete(id_or_title, current_state):
+    """Удалить заметку по id либо title (регистронезависимо). Идемпотентно. Возврат (ok, msg, func, key)."""
+    try:
+        key = (id_or_title or "").strip()
+        if not key:
+            return False, "нужен id или title", currentFuncName(), None
+
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"DELETE FROM knowledge WHERE id = {placeholder} OR lower(title) = lower({placeholder});", (key, key))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), key
 
     except BaseException as e:
         if 'connection' in locals():

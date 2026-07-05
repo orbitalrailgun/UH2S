@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled, storage_list, storage_load, storage_delete, create_schedule, list_schedules, get_schedule, update_schedule, set_schedule_enabled, delete_schedule
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled, storage_list, storage_load, storage_delete, create_schedule, list_schedules, get_schedule, update_schedule, set_schedule_enabled, delete_schedule, knowledge_save, knowledge_search, knowledge_list, knowledge_get, knowledge_delete
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_chat_stream, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -13,7 +13,7 @@ from app.logging import get_log_message, logger_log, currentFuncName, currentTim
 from typing import Dict, Any, Tuple
 from engine import commands_executor
 from app.engine import command_parser, list_source_types, describe_source_functions
-from app.ai_pipeline import AGENT_ACTIONS, extract_action, extract_final_harvester, parse_save_object
+from app.ai_pipeline import AGENT_ACTIONS, extract_action, extract_final_harvester, parse_save_object, parse_memory_save, rank_notes_by_query
 from app.i18n import translate, resolve_language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE
 from app.analyzer import build_execution_mermaid
 from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE, REGEX_USERNAME_RULE
@@ -1153,6 +1153,7 @@ def main_page(keycloak_openid, current_state):
                 (tr("nav.secrets"), tr("nav.secrets.tip"), 'key', "Secrets"),
                 (tr("nav.objects"), tr("nav.objects.tip"), 'source', "Objects"),
                 (tr("nav.ai"), tr("nav.ai.tip"), 'psychology', "AI"),
+                (tr("nav.knowledge"), tr("nav.knowledge.tip"), 'menu_book', "Knowledge"),
                 (tr("nav.harvester"), tr("nav.harvester.tip"), 'rocket_launch', "Harvester"),
                 (tr("nav.history"), tr("nav.history.tip"), 'history', "History"),
             ]
@@ -1195,11 +1196,12 @@ def main_page(keycloak_openid, current_state):
     panel_secrets = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
     panel_objects = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
     panel_ai = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
+    panel_knowledge = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
     panel_harvester = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
     panel_history = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
     panels = {
         "Settings": panel_settings, "Secrets": panel_secrets, "Objects": panel_objects,
-        "AI": panel_ai, "Harvester": panel_harvester, "History": panel_history,
+        "AI": panel_ai, "Knowledge": panel_knowledge, "Harvester": panel_harvester, "History": panel_history,
     }
     panel_storage = None
     if is_storage_admin:
@@ -1224,6 +1226,7 @@ def main_page(keycloak_openid, current_state):
     draw_secrets(panel_secrets, current_state)
     draw_objects(panel_objects, current_state)
     draw_ai(panel_ai, current_state)
+    draw_knowledge(panel_knowledge, current_state)
     draw_harvester(panel_harvester, current_state)
     draw_history(panel_history, current_state)
     if panel_storage is not None:
@@ -1512,6 +1515,149 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 refresh_storage_grid()
 
             refresh_storage_grid()
+        return True, "Ok", currentFuncName(), None
+
+    except BaseException as e:
+        error_message = f"fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), None
+
+
+def draw_knowledge(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
+    """Раздел «База знаний»: общая память AI-агента (таблица knowledge). Просмотр/поиск/добавление/
+    редактирование/удаление заметок. Видна всем (память командная, как её и пишет агент)."""
+    try:
+        interface_container.clear()
+        lang = current_state.get("lang", DEFAULT_LANGUAGE)
+        tr = lambda key, **kw: translate(key, lang, **kw)
+
+        with interface_container:
+            ui.label(tr("knowledge.title")).style("color: var(--title-color); font-weight:700;")
+            with ui.row().classes('gap-2 items-center flex-wrap'):
+                search_input = ui.input(tr("knowledge.search_placeholder")).props('dense clearable').style('min-width: 260px')
+                ui.button(tr("knowledge.btn.refresh"), icon='refresh').on_click(lambda: refresh_grid())
+                ui.button(tr("knowledge.btn.add"), icon='add').on_click(lambda: open_editor(None))
+                ui.button(tr("knowledge.btn.edit"), icon='edit').on_click(lambda: edit_selected())
+                ui.button(tr("knowledge.btn.preview"), icon='visibility').on_click(lambda: preview_selected())
+                ui.button(tr("knowledge.btn.delete"), icon='delete', color='negative').on_click(lambda: delete_selected())
+            grid = ui.aggrid({}).classes('w-full').style('height: 60vh')
+            search_input.on('keydown.enter', lambda: refresh_grid())
+
+            # кэш загруженных заметок по id — чтобы редактор/просмотр не били в БД повторно
+            notes_by_id = {}
+
+            def refresh_grid():
+                query = (search_input.value or "").strip()
+                if query:
+                    result = knowledge_search(query, current_state)
+                else:
+                    result = knowledge_list(current_state)
+                notes = result[3] if result[0] else []
+                if not result[0]:
+                    ui.notify(tr("settings.common.error", error=result[1]), type="negative")
+                notes_by_id.clear()
+                rows = []
+                for n in notes:
+                    notes_by_id[n["id"]] = n
+                    rows.append({
+                        "id": n["id"],
+                        "title": n["title"],
+                        "tags": ", ".join(n.get("tags") or []),
+                        "owner": n.get("owner", ""),
+                        "updated": n.get("updated_at", ""),
+                        "size": len(n.get("content") or ""),
+                    })
+                grid.options["columnDefs"] = [
+                    {"headerName": tr("knowledge.col.title"), "field": "title", "filter": True, "sortable": True, "resizable": True, "minWidth": 220},
+                    {"headerName": tr("knowledge.col.tags"), "field": "tags", "filter": True, "sortable": True, "resizable": True, "minWidth": 160},
+                    {"headerName": tr("knowledge.col.owner"), "field": "owner", "filter": True, "sortable": True, "resizable": True, "minWidth": 120},
+                    {"headerName": tr("knowledge.col.updated"), "field": "updated", "filter": True, "sortable": True, "resizable": True, "minWidth": 190},
+                    {"headerName": tr("knowledge.col.size"), "field": "size", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
+                ]
+                grid.options["rowData"] = rows
+                grid.options["rowSelection"] = "single"
+                grid.options["defaultColDef"] = {"filter": True, "sortable": True, "resizable": True, "minWidth": 100}
+                grid.options["enableCellTextSelection"] = True
+                grid.options["enableBrowserTooltips"] = True
+                grid.options["domLayout"] = "normal"
+                grid.update()
+
+            async def _selected_note():
+                row = (await grid.get_selected_row()) or {}
+                note_id = row.get("id")
+                if not note_id:
+                    ui.notify(tr("knowledge.pick"), type="warning")
+                    return None
+                return notes_by_id.get(note_id)
+
+            def open_editor(note):
+                """Диалог создания/редактирования. note=None -> новая заметка."""
+                is_edit = note is not None
+                with ui.dialog() as editor_dialog, ui.card().classes('w-full max-w-3xl'):
+                    ui.label(tr("knowledge.dialog.edit") if is_edit else tr("knowledge.dialog.add")).style(
+                        "font-weight:700; color: var(--title-color);")
+                    title_input = ui.input(tr("knowledge.field.title")).classes('w-full').props('dense')
+                    tags_input = ui.input(tr("knowledge.field.tags")).classes('w-full').props('dense')
+                    content_input = ui.textarea(tr("knowledge.field.content")).classes('w-full').props('outlined autogrow')
+                    if is_edit:
+                        title_input.value = note["title"]
+                        tags_input.value = ", ".join(note.get("tags") or [])
+                        content_input.value = note.get("content", "")
+
+                    def save():
+                        title = (title_input.value or "").strip()
+                        content = (content_input.value or "").strip()
+                        if not title or not content:
+                            ui.notify(tr("knowledge.need_fields"), type="warning")
+                            return
+                        tags = [t.strip() for t in (tags_input.value or "").split(",") if t.strip()]
+                        # если при редактировании заголовок изменился — удаляем старую запись (upsert по title
+                        # создаст новую), чтобы не плодить дубликат со старым названием.
+                        if is_edit and note["title"].strip().lower() != title.lower():
+                            knowledge_delete(note["id"], current_state)
+                        save_result = knowledge_save(title, content, tags, current_state)
+                        if not save_result[0]:
+                            ui.notify(tr("settings.common.error", error=save_result[1]), type="negative")
+                            return
+                        ui.notify(tr("knowledge.saved"), type="positive")
+                        editor_dialog.close()
+                        refresh_grid()
+
+                    with ui.row().classes('gap-2'):
+                        ui.button(tr("knowledge.btn.save"), icon='save').on_click(save)
+                        ui.button(tr("knowledge.btn.cancel"), on_click=editor_dialog.close)
+                editor_dialog.open()
+
+            async def edit_selected():
+                note = await _selected_note()
+                if note:
+                    open_editor(note)
+
+            async def preview_selected():
+                note = await _selected_note()
+                if not note:
+                    return
+                with ui.dialog() as preview_dialog, ui.card().classes('w-full max-w-3xl'):
+                    tags = ", ".join(note.get("tags") or [])
+                    ui.label(note["title"]).style("font-weight:700; color: var(--title-color);")
+                    if tags:
+                        ui.label(tags).classes('text-sm').style("opacity:0.8;")
+                    ui.markdown("```\n" + (note.get("content") or "") + "\n```")
+                    ui.button(tr("settings.btn.close"), on_click=preview_dialog.close).classes('hover-glow')
+                preview_dialog.open()
+
+            async def delete_selected():
+                note = await _selected_note()
+                if not note:
+                    return
+                result = knowledge_delete(note["id"], current_state)
+                if not result[0]:
+                    ui.notify(tr("settings.common.error", error=result[1]), type="negative")
+                    return
+                ui.notify(tr("knowledge.deleted", name=note["title"]), type="positive")
+                refresh_grid()
+
+            refresh_grid()
         return True, "Ok", currentFuncName(), None
 
     except BaseException as e:
@@ -3464,6 +3610,60 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                         header += f"\nпараметры (DEF с дефолтами): {_script_params_summary(obj.get('json', {}))}"
                     return header + "\n" + json.dumps(obj.get("json", {}), ensure_ascii=False, indent=2)
 
+                def action_memory_save(argument):
+                    """memory_save: разобрать JSON и записать заметку в общую базу знаний (без подтверждения)."""
+                    ok, err, norm = parse_memory_save(argument)
+                    if not ok:
+                        return f"не сохранено: {err}"
+                    save_result = knowledge_save(norm["title"], norm["content"], norm["tags"], current_state)
+                    if not save_result[0]:
+                        return f"ошибка сохранения заметки: {save_result[1]}"
+                    return f"заметка сохранена: «{norm['title']}» (id {save_result[3]})"
+
+                def action_memory_search(query):
+                    query = (query or "").strip()
+                    if not query:
+                        return "укажите текст поиска"
+                    search_result = knowledge_search(query, current_state)
+                    notes = search_result[3] if search_result[0] else []
+                    if not notes:
+                        return "заметок не найдено"
+                    lines = []
+                    for n in notes:
+                        snippet = " ".join(str(n.get("content") or "").split())[:200]
+                        tags = ", ".join(n.get("tags") or [])
+                        lines.append(f"- «{n['title']}»" + (f" [{tags}]" if tags else "") + f": {snippet}")
+                    return "\n".join(lines)
+
+                def action_memory_list():
+                    list_result = knowledge_list(current_state)
+                    notes = list_result[3] if list_result[0] else []
+                    if not notes:
+                        return "память пуста"
+                    return "\n".join(f"- «{n['title']}» (обновлено {n.get('updated_at', '?')})" for n in notes)
+
+                def action_memory_get(key):
+                    key = (key or "").strip()
+                    if not key:
+                        return "укажите title или id заметки"
+                    get_result = knowledge_get(key, current_state)
+                    if not get_result[0]:
+                        return f"ошибка: {get_result[1]}"
+                    note = get_result[3]
+                    if not note:
+                        return f"заметка «{key}» не найдена"
+                    tags = ", ".join(note.get("tags") or [])
+                    return f"«{note['title']}»" + (f" [{tags}]" if tags else "") + f"\n{note['content']}"
+
+                def action_memory_delete(key):
+                    key = (key or "").strip()
+                    if not key:
+                        return "укажите title или id заметки"
+                    delete_result = knowledge_delete(key, current_state)
+                    if not delete_result[0]:
+                        return f"ошибка удаления: {delete_result[1]}"
+                    return f"заметка «{key}» удалена (если существовала)"
+
                 def dispatch_action(action, argument):
                     """Выполнить действие агента и вернуть текст результата (sync; вызывается через io_bound)."""
                     try:
@@ -3479,6 +3679,16 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                             return action_search_objects(argument)
                         if action == "get_object":
                             return action_get_object(argument)
+                        if action == "memory_save":
+                            return action_memory_save(argument)
+                        if action == "memory_search":
+                            return action_memory_search(argument)
+                        if action == "memory_list":
+                            return action_memory_list()
+                        if action == "memory_get":
+                            return action_memory_get(argument)
+                        if action == "memory_delete":
+                            return action_memory_delete(argument)
                         return f"неизвестное действие: {action}"
                     except BaseException as e:
                         return f"ошибка действия {action}: {str(e)}"
@@ -3515,6 +3725,25 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                     render_chat()
                     return ok, reply, usage
 
+                def _recall_memory(query):
+                    """Подобрать релевантные заметки из общей памяти для авто-инъекции в промпт.
+                    Возврат — форматированный текст (топ-N, усечённый) либо None. Ошибки БД не роняют чат."""
+                    try:
+                        list_result = knowledge_list(current_state)
+                        if not list_result[0]:
+                            return None
+                        notes = rank_notes_by_query(list_result[3], query, limit=5)
+                        if not notes:
+                            return None
+                        lines = []
+                        for n in notes:
+                            snippet = " ".join(str(n.get("content") or "").split())[:400]
+                            tags = ", ".join(n.get("tags") or [])
+                            lines.append(f"- «{n['title']}»" + (f" [{tags}]" if tags else "") + f": {snippet}")
+                        return "\n".join(lines)
+                    except BaseException:
+                        return None
+
                 async def send_message():
                     selected = current_state.get("ui_selected_llm")
                     if not selected or not selected.get("json"):
@@ -3536,6 +3765,8 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                         status.set_text(tr("ai.thinking"))
                     try:
                         context_window = llm_context_window(selected["json"])
+                        # авто-инъекция памяти: релевантные заметки по теме запроса (один раз на сообщение)
+                        memory_context = await run.io_bound(_recall_memory, user_text)
                         # лимит цикла «ответ -> действие -> ответ» — глобальная настройка (Settings → AI)
                         try:
                             max_iterations = int(get_setting("global", "agent_max_iterations", 25, current_state)[3] or 25)
@@ -3557,7 +3788,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                                 conversation.append({"role": "assistant", "content": tr("ai.limit_tokens", n=token_budget)})
                                 render_chat()
                                 break
-                            system_prompt = build_agent_system_prompt()
+                            system_prompt = build_agent_system_prompt(memory_context)
                             messages = llm_build_messages(system_prompt, conversation, context_window)
                             ok, reply, usage = await stream_reply(selected["json"], messages)
                             session_state["tokens"] += (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
@@ -3589,7 +3820,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                                 "Достигнут лимит итераций на это сообщение. Приведи лучший финальный вариант скрипта в блоке "
                                 "```harvester и краткий итог (что получилось, что осталось проверить вручную). Без действий."})
                             if not session_state["cancel"]:
-                                system_prompt = build_agent_system_prompt()
+                                system_prompt = build_agent_system_prompt(memory_context)
                                 messages = llm_build_messages(system_prompt, conversation, context_window)
                                 ok, reply, usage = await stream_reply(selected["json"], messages)
                                 session_state["tokens"] += (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
