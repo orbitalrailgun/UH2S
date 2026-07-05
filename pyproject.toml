@@ -1,0 +1,86 @@
+# UH2S — манифест проекта и зависимости.
+#
+# Философия зависимостей сохранена: ядро нужно всегда, остальное — по мере использования
+# (см. requirements.txt с пояснениями). Здесь то же самое, но в виде групп optional-dependencies,
+# а точные версии всего дерева фиксируются в uv.lock (воспроизводимость + защита цепочки поставок).
+#
+# Установка:
+#   uv sync                      # только ядро (dependencies)
+#   uv sync --extra connectors   # ядро + коннекторы источников
+#   uv sync --all-extras         # всё, включая тяжёлый llama-cpp-python
+# Обновить lock после правки версий:
+#   uv lock
+# Экспорт пинов для pip/Docker (без uv в образе):
+#   uv export --frozen --no-hashes --extra connectors -o requirements.lock.txt
+
+[project]
+name = "uh2s"
+version = "0.13.0"                       # информационно; рантайм-версия берётся из git-тега/VERSION (app/version.py)
+description = "Universal Harvester 2 Scripted — NiceGUI/FastAPI web-app с DSL-движком сбора и обогащения данных"
+readme = "README.md"
+requires-python = ">=3.12"               # код использует match и f-строки с вложенными кавычками
+license = { text = "Proprietary" }
+
+# ── Ядро: нужно всегда, чтобы приложение стартовало ──────────────────────────
+dependencies = [
+    "nicegui",        # web/UI (тянет fastapi, starlette, uvicorn)
+    "cryptography",   # расшифровка db_conf/storage key при старте (app/crptgrphy.py)
+    "bcrypt",         # проверка пароля при логине (app/login.py)
+    "pwinput",        # интерактивный ввод master key при старте (если нет UH2S_MASTER_KEY)
+]
+
+[project.optional-dependencies]
+# Опциональные интеграции (включаются по конфигурации)
+sso = ["python-keycloak"]                # вход через Keycloak (SSO)
+mcp = ["fastmcp"]                        # outward-facing MCP-сервер (mcp_server.py)
+
+# Коннекторы источников/вывода — импортируются лениво; ставьте нужные
+connectors = [
+    "pandas",                  # pandas_im, дедуп в APPLY, вывод PRINT/SHOW
+    "numpy",                   # app/sources/pandas.py (dynamic_aggr)
+    "matplotlib",              # SHOW(table, matplotlib, {...})
+    "SciencePlots",            # научные стили для SHOW matplotlib
+    "openpyxl",                # SAVE(table, xlsx)
+    "requests",                # gitlab/youtrack/iris/manticore/ollama/netbox/notify
+    "pytz",                    # sqlite3_im, duckdb_im (время)
+    "duckdb",                  # duckdb_im (in-memory SQL)
+    "psycopg2-binary",         # backend PostgreSQL и источник postgresql
+    "pymssql",                 # источник mssql
+    "mysql-connector-python",  # источник mysql
+    "elasticsearch",           # источник elastic
+    "opensearch-py",           # источник opensearch
+    "dnspython",               # источник dns
+    "python-netbox",           # источник netbox
+    "pexpect",                 # источник teleport
+    "pyotp",                   # источник teleport (TOTP)
+]
+
+# Тяжёлый локальный LLM-инференс (источник `llama`); требует C/C++ тулчейн
+llama = ["llama-cpp-python"]
+
+# Инструменты разработки (линт для CI)
+dev = ["ruff"]
+
+# Всё сразу (кроме dev) — удобно для полной установки/локов
+all = [
+    "python-keycloak", "fastmcp",
+    "pandas", "numpy", "matplotlib", "SciencePlots", "openpyxl", "requests", "pytz", "duckdb",
+    "psycopg2-binary", "pymssql", "mysql-connector-python", "elasticsearch", "opensearch-py",
+    "dnspython", "python-netbox", "pexpect", "pyotp",
+    "llama-cpp-python",
+]
+
+[tool.uv]
+package = false   # UH2S запускается как приложение (front.py), не устанавливается как дистрибутив
+
+# ── Линтер ruff (для CI: линт + python -m unittest) ─────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 140
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+# Консервативный набор: реальные ошибки (F) и критичные предупреждения (E9).
+# Стиль (длина строк, bare-except и т.п.) в существующем коде намеренно не ужесточаем,
+# чтобы не плодить массовые правки; расширять набор — отдельным решением.
+select = ["F", "E9"]
