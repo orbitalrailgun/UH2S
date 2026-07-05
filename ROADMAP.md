@@ -320,7 +320,7 @@ dev-стенда; интерактивный вариант закомменти
 
 ### Не реализовано / техдолг
 - **`universal_harvester:local_scenario`** ссылается на отсутствующие модули; **`grafana`/`teleport`** отключены.
-- Нет **CI**, `pyproject.toml`/lock, Docker HEALTHCHECK.
+- Нет **CI** (линт + `python -m unittest`) — единственный оставшийся пункт Фазы 5.
 - Движок/коннекторы/UI покрыты тестами частично (нужен вынос чистых функций из `interface.py`).
 - TheHive — авто-пагинация и сущности cases/observables (бэклог).
 - Опечатки/мелочи: `crptgrphy.py`, `nane`, `dynamica_agg_dict`.
@@ -373,7 +373,8 @@ dev-стенда; интерактивный вариант закомменти
 
 ### Фаза 5. Эксплуатация и качество  🔶 частично
 - ✅ **Конфигурация без хардкода**: master key/конфиги — через env/аргументы/`pwinput`.
-- ✅ `Dockerfile`/compose; ⬜ `pyproject.toml`/lock, healthcheck, CI (линт + `python -m unittest`).
+- ✅ `Dockerfile`/compose; ✅ `pyproject.toml` + `uv.lock` (пиннинг → `requirements.lock.txt` в образе);
+  ✅ Docker HEALTHCHECK; ⬜ CI (линт + `python -m unittest`).
 - ✅ Наблюдаемость: структурные JSON-логи, тайминги шагов, авто-версия.
 - 🔶 Расширение тестов: парсер/cron/APPLY/DEF покрыты; движок/коннекторы/UI — частично (вынести чистые
   функции из `interface.py` в модуль без `nicegui` для тестируемости).

@@ -28,10 +28,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Сначала зависимости (кешируемый слой). Установка всех пакетов из requirements.txt
-# (включая llama-cpp-python — сборка долгая и требует памяти).
-COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# Сначала зависимости (кешируемый слой). Ставим ВОСПРОИЗВОДИМО из пиннинга requirements.lock.txt
+# (сгенерирован из uv.lock: `uv export ... -o requirements.lock.txt`) — точные версии всего дерева,
+# включая llama-cpp-python (сборка долгая, требует тулчейн). При правке зависимостей: обновите
+# pyproject.toml -> `uv lock` -> перегенерируйте requirements.lock.txt.
+COPY requirements.lock.txt ./
+RUN pip install --upgrade pip && pip install -r requirements.lock.txt
 
 # Затем код приложения.
 COPY . .

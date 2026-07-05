@@ -90,6 +90,27 @@ docker run -d --name uh2s -p 8082:8082 \
 срабатывания не догоняются. **Держите один web-инстанс**: при нескольких репликах без лидер-лока
 расписания сработают в каждой (двойные запуски).
 
+## Зависимости и воспроизводимость
+
+Канонический манифест — `pyproject.toml` (ядро + группы `optional-dependencies`: sso/mcp/connectors/
+llama/dev/all). Точные версии всего дерева зафиксированы в `uv.lock`. Образ ставится **воспроизводимо**
+из `requirements.lock.txt` (пиннинг, сгенерированный из lock), а не из «плавающего» `requirements.txt`.
+
+Обновление зависимостей:
+
+```bash
+# 1) поправить версии/пакеты в pyproject.toml, затем пересчитать lock:
+uv lock
+# 2) перегенерировать пиннинг для Docker (рантайм-экстры, без dev/ruff):
+uv export --frozen --no-hashes --no-emit-project \
+  --extra sso --extra mcp --extra connectors --extra llama -o requirements.lock.txt
+# 3) пересобрать образ:
+docker compose build
+```
+
+`requirements.txt` оставлен как быстрый/ручной путь установки и документация назначения пакетов;
+при расхождении верьте `pyproject.toml`/`uv.lock`.
+
 ## Заметки
 
 - Образ крупный из-за `llama-cpp-python` (компиляция) и драйверов БД; первая сборка длительная.
