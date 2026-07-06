@@ -335,6 +335,35 @@ def _build_auth_header(auth_type, auth_user, secret):
     raise ValueError(f"unknown elastic auth_type: {auth_type}")
 
 
+def _console_proxy_headers(user_agent, authorization):
+    """Заголовки для console-proxy. Anti-CSRF шлём в ОБОИХ вариантах: kbn-xsrf (Kibana) и osd-xsrf
+    (OpenSearch Dashboards) — путь /api/console/proxy идентичен, различается только требуемый xsrf-заголовок;
+    лишний заголовок другая система игнорирует, поэтому один конфиг работает и там, и там."""
+    return {
+        'user-agent': user_agent,
+        'content-type': 'application/json',
+        "x-elastic-internal-origin": "kibana",
+        "kbn-xsrf": "reporting",
+        "osd-xsrf": "true",
+        "Authorization": authorization,
+    }
+
+
+def _extract_body_error(body_json):
+    """Разобрать тело-ошибку elastic/opensearch -> (status:int|None, reason:str).
+    Учитывает оба формата: elastic {'error':{'reason':...},'status':4xx} и
+    OpenSearch Dashboards {'statusCode':4xx,'error':'Bad Request','message':...}."""
+    err = body_json.get("error")
+    reason = err.get("reason") if isinstance(err, dict) else str(err)
+    message = body_json.get("message")
+    if message and str(message) not in (reason or ""):
+        reason = f"{reason}: {message}" if reason else str(message)
+    status = body_json.get("status")
+    if not isinstance(status, int):
+        status = body_json.get("statusCode")  # OpenSearch Dashboards
+    return (status if isinstance(status, int) else None), reason
+
+
 def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, sort, fields, size, search_after_shift, limit, debug = False,
                        max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None, debug_log=None,
                        auth_type="api_key", auth_user=None):
@@ -350,13 +379,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
     if limit == 0:
         return True, f"zero limit", "data_taxi_requests", []
 
-    headers = {
-        'user-agent': user_agent,
-        'content-type': 'application/json',
-        "x-elastic-internal-origin": "kibana",
-        "kbn-xsrf": "reporting",
-        "Authorization": _build_auth_header(auth_type, auth_user, api_key),
-    }
+    headers = _console_proxy_headers(user_agent, _build_auth_header(auth_type, auth_user, api_key))
     # повторяем на сетевых ошибках/таймауте и транзиентных кодах (429/5xx); на 4xx — без повтора
     retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 
@@ -366,15 +389,13 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
             print(resp, resp.status_code, dict(resp.json()))
         if resp.status_code in retry_statuses:
             raise RetryableError(f"status {resp.status_code}", resp.status_code)
-        # elastic может вернуть HTTP 200, но в теле {"error":..., "status": 4xx/5xx} — ловим это
+        # elastic/opensearch может вернуть HTTP 200, но в теле ошибку — ловим это
         try:
             body_json = resp.json()
         except BaseException:
             body_json = None
         if isinstance(body_json, dict) and "error" in body_json:
-            err = body_json.get("error")
-            reason = err.get("reason") if isinstance(err, dict) else str(err)
-            body_status = body_json.get("status")
+            body_status, reason = _extract_body_error(body_json)
             if isinstance(body_status, int) and (body_status == 429 or body_status >= 500):
                 raise RetryableError(f"elastic body status {body_status}: {reason}", body_status)
             raise ValueError(f"elastic error (status {body_status}): {reason}")
@@ -459,13 +480,7 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
     from app.sources.additional.retry import retry_call, RetryableError
     if debug:
         print("Делаем запрос агрегации")
-    headers = {
-        'user-agent': user_agent,
-        'content-type': 'application/json',
-        "x-elastic-internal-origin": "kibana",
-        "kbn-xsrf": "reporting",
-        "Authorization": _build_auth_header(auth_type, auth_user, api_key),
-    }
+    headers = _console_proxy_headers(user_agent, _build_auth_header(auth_type, auth_user, api_key))
     retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 
     def post():
@@ -473,15 +488,13 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
                              headers=headers, verify=verify_certs, timeout=timeout)
         if resp.status_code in retry_statuses:
             raise RetryableError(f"status {resp.status_code}", resp.status_code)
-        # HTTP 200 с телом-ошибкой {"error":..., "status": 4xx/5xx}
+        # HTTP 200 с телом-ошибкой (elastic или OpenSearch Dashboards)
         try:
             body_json = resp.json()
         except BaseException:
             body_json = None
         if isinstance(body_json, dict) and "error" in body_json:
-            err = body_json.get("error")
-            reason = err.get("reason") if isinstance(err, dict) else str(err)
-            body_status = body_json.get("status")
+            body_status, reason = _extract_body_error(body_json)
             if isinstance(body_status, int) and (body_status == 429 or body_status >= 500):
                 raise RetryableError(f"elastic body status {body_status}: {reason}", body_status)
             raise ValueError(f"elastic error (status {body_status}): {reason}")
