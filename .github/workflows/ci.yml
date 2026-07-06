@@ -1,0 +1,40 @@
+# UH2S — CI: линт (ruff) + офлайн-тесты (unittest) на Python 3.12.
+# Также проверяет, что зафиксированные зависимости (uv.lock) устанавливаются на чистой машине.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Отменяем устаревшие прогоны при новом пуше в ту же ветку/PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.21"          # та же версия, что использовалась для генерации uv.lock
+          enable-cache: true
+
+      - name: Pin Python 3.12
+        run: uv python pin 3.12       # проект требует >=3.12 (match, вложенные кавычки в f-строках)
+
+      # Ядро + инструменты (ruff) из lock — без коннекторов и без тяжёлого llama-cpp-python.
+      # Тесты офлайн и импортируют коннекторы лениво, поэтому для прогона хватает ядра.
+      # Шаг заодно проверяет, что uv.lock реально ставится (--frozen: без переразрешения).
+      - name: Install deps from lock
+        run: uv sync --frozen --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Run tests
+        run: uv run python -m unittest discover -s tests -t .
