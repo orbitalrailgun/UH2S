@@ -321,8 +321,23 @@ def _hits_total(resp_json):
         return None
 
 
+def _build_auth_header(auth_type, auth_user, secret):
+    """Значение заголовка Authorization по типу аутентификации источника elastic_requests.
+    api_key (по умолчанию) -> 'ApiKey <secret>'; basic_auth/http_auth -> 'Basic base64(user:secret)'.
+    secret — это source['key']['value']; auth_user — source['key']['account'] (нужен для basic)."""
+    at = (auth_type or "api_key").strip().lower()
+    if at in ("api_key", "apikey"):
+        return f"ApiKey {secret}"
+    if at in ("basic_auth", "basic", "http_auth"):
+        import base64
+        token = base64.b64encode(f"{auth_user}:{secret}".encode()).decode()
+        return f"Basic {token}"
+    raise ValueError(f"unknown elastic auth_type: {auth_type}")
+
+
 def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, sort, fields, size, search_after_shift, limit, debug = False,
-                       max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None, debug_log=None):
+                       max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None, debug_log=None,
+                       auth_type="api_key", auth_user=None):
     import requests
     import pandas
     from app.sources.additional.retry import retry_call, RetryableError
@@ -340,7 +355,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
         'content-type': 'application/json',
         "x-elastic-internal-origin": "kibana",
         "kbn-xsrf": "reporting",
-        "Authorization": f"ApiKey {api_key}",
+        "Authorization": _build_auth_header(auth_type, auth_user, api_key),
     }
     # повторяем на сетевых ошибках/таймауте и транзиентных кодах (429/5xx); на 4xx — без повтора
     retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
@@ -438,7 +453,8 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
         return False, f"elastic2python query requests fail:{str(e)}", "data_taxi_requests", []
 
 def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, query, aggs, debug = False, size = 0,
-                            max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None):
+                            max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None,
+                            auth_type="api_key", auth_user=None):
     import requests
     from app.sources.additional.retry import retry_call, RetryableError
     if debug:
@@ -448,7 +464,7 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
         'content-type': 'application/json',
         "x-elastic-internal-origin": "kibana",
         "kbn-xsrf": "reporting",
-        "Authorization": f"ApiKey {api_key}",
+        "Authorization": _build_auth_header(auth_type, auth_user, api_key),
     }
     retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 

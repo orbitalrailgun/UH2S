@@ -23,10 +23,18 @@ def _make_debug_logger(current_state, func_name):
     return debug_log
 
 # execution_function
+def _auth_kwargs(source):
+    """Параметры аутентификации для data_taxi_*_requests из конфигурации источника.
+    По умолчанию api_key (обратная совместимость); basic_auth берёт логин из source['key']['account']."""
+    return {"auth_type": source.get("auth_type", "api_key"),
+            "auth_user": (source.get("key") or {}).get("account")}
+
+
 def execute_elastic_query(parameters, source_object, data_map, current_state):
-    try:  
+    try:
         query = parameters
         source = source_object
+        auth_kwargs = _auth_kwargs(source)
 
         # опциональные параметры
         if "search_after_shift" not in query:
@@ -38,14 +46,14 @@ def execute_elastic_query(parameters, source_object, data_map, current_state):
 
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
         data_taxi_requests_result = elastic2python.data_taxi_requests(
-            query["url"], 
+            query["url"],
             f'{current_state["app_name"]}/{current_state["app_version"]}',
-            source["key"]["value"], 
-            source.get("verify_certs", False), 
+            source["key"]["value"],
+            source.get("verify_certs", False),
             source.get("request_timeout", 300),
-            query["query"], 
-            query["sort"], 
-            query["fields"], 
+            query["query"],
+            query["sort"],
+            query["fields"],
             query["size"],
             query["search_after_shift"],
             query["limit"],
@@ -54,7 +62,8 @@ def execute_elastic_query(parameters, source_object, data_map, current_state):
             retry_backoff=source.get("retry_backoff_seconds", 0.5),
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
             on_retry=_make_retry_logger(current_state, currentFuncName()),
-            debug_log=_make_debug_logger(current_state, currentFuncName()))
+            debug_log=_make_debug_logger(current_state, currentFuncName()),
+            **auth_kwargs)
         if data_taxi_requests_result[0] == False:
             error_message = f"data_taxi_requests_result is false: {data_taxi_requests_result[1]}"
             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
@@ -72,14 +81,15 @@ def execute_elastic_query(parameters, source_object, data_map, current_state):
 def execute_elastic_aggs(parameters, source_object, data_map, current_state):
     source = source_object
     query = parameters
+    auth_kwargs = _auth_kwargs(source)
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
         data_taxi_aggs_requests_result = elastic2python.data_taxi_aggs_requests(
-            query["url"], 
-            f'{current_state["app_name"]}/{current_state["app_version"]}', 
-            source["key"]["value"], 
-            source.get("verify_certs", False), 
-            source.get("request_timeout", 300), 
+            query["url"],
+            f'{current_state["app_name"]}/{current_state["app_version"]}',
+            source["key"]["value"],
+            source.get("verify_certs", False),
+            source.get("request_timeout", 300),
             query["query"],
             query["aggs"],
             debug = False,
@@ -87,7 +97,8 @@ def execute_elastic_aggs(parameters, source_object, data_map, current_state):
             max_retries=source.get("max_retries", 2),
             retry_backoff=source.get("retry_backoff_seconds", 0.5),
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
-            on_retry=_make_retry_logger(current_state, currentFuncName()))
+            on_retry=_make_retry_logger(current_state, currentFuncName()),
+            **auth_kwargs)
 
         if data_taxi_aggs_requests_result[0] == False:
             error_message = f"data_taxi_aggs_requests_result is false: {data_taxi_aggs_requests_result[1]}"
@@ -106,6 +117,7 @@ def execute_elastic_aggs(parameters, source_object, data_map, current_state):
 def execute_function_linux_pid_hierarchy_elastic_requests(parameters, source_object, data_map, current_state):
     source = source_object
     query = parameters
+    auth_kwargs = _auth_kwargs(source)
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
         current_data = []
@@ -123,7 +135,8 @@ def execute_function_linux_pid_hierarchy_elastic_requests(parameters, source_obj
                 query["fields"], 
                 query["size"], 
                 query["search_after_shift"], 
-                debug = False)
+                debug = False,
+                **auth_kwargs)
             if data_taxi_requests_result[0] == False:
                 error_message = f"data_taxi_requests_result is false: {data_taxi_requests_result[1]}"
                 logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
@@ -175,7 +188,8 @@ def execute_function_linux_pid_hierarchy_elastic_requests(parameters, source_obj
                         query["fields"], 
                         query["size"], 
                         query["search_after_shift"], 
-                        debug = False)
+                        debug = False,
+                **auth_kwargs)
                     if data_taxi_requests_result[0] == False:
                         error_message = f"data_taxi_requests_result is false: {data_taxi_requests_result[1]}"
                         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
@@ -231,7 +245,8 @@ def execute_function_linux_pid_hierarchy_elastic_requests(parameters, source_obj
                             query["fields"], 
                             query["size"], 
                             query["search_after_shift"], 
-                            debug = False)
+                            debug = False,
+                **auth_kwargs)
                         if data_taxi_requests_result[0] == False:
                             error_message = f"data_taxi_requests_result is false: {data_taxi_requests_result[1]}"
                             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
@@ -261,6 +276,7 @@ def execute_function_linux_pid_hierarchy_elastic_requests(parameters, source_obj
 def execute_function_linux_pid_siblings_elastic_requests(parameters, source_object, data_map, current_state):
     source = source_object
     query = parameters
+    auth_kwargs = _auth_kwargs(source)
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
         current_data = []
@@ -277,7 +293,8 @@ def execute_function_linux_pid_siblings_elastic_requests(parameters, source_obje
                 query["fields"], 
                 query["size"], 
                 query["search_after_shift"], 
-                debug = False)
+                debug = False,
+                **auth_kwargs)
             if data_taxi_requests_result[0] == False:
                 error_message = f"data_taxi_requests_result is false: {data_taxi_requests_result[1]}"
                 logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
@@ -317,7 +334,8 @@ def execute_function_linux_pid_siblings_elastic_requests(parameters, source_obje
                 query["fields"], 
                 query["size"], 
                 query["search_after_shift"], 
-                debug = False)
+                debug = False,
+                **auth_kwargs)
             if data_taxi_requests_result[0] == False:
                 error_message = f"data_taxi_requests_result is false: {data_taxi_requests_result[1]}"
                 logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
