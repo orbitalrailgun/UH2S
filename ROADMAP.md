@@ -306,7 +306,22 @@ dev-стенда; интерактивный вариант закомменти
   `osd-xsrf`), разбор тела-ошибки понимает оба формата (`status`/`statusCode`, `error.reason`/`message`).
 - Тесты `tests/` — 176 офлайн (вкл. elastic-аутентификацию и разбор ошибок).
 
-## 1. Текущее состояние (актуально на `v0.14.0`)
+## 0.23. Discovery индексов/датавью и автоописание источников агентом в `v0.15.0`
+
+Доработки источника `elastic_requests` и рабочий процесс агента «исследуй источник → опиши в БЗ»:
+- **`list_indices`**: индексы/алиасы уровня Elasticsearch через console-proxy (`_cat/indices?format=json`,
+  `_cat/aliases`, `_resolve/index/*`), ответ нормализуется в list-of-dict.
+- **`list_data_views`**: data views / index patterns из saved objects Kibana/OpenSearch Dashboards
+  (`/api/saved_objects/_find?type=index-pattern` или Kibana 8+ `/api/data_views`) — прямой Dashboards API.
+- **Мультитенантный OpenSearch**: `securitytenant` (+ произвольные `extra_headers`) в конфиге источника,
+  иначе saved_objects читаются из тенанта по умолчанию (часто пусто); при «0 строк на 200» — диагностика
+  структуры ответа в лог.
+- **Агент**: рецепт в системном промпте «исследовать источник и описать его данные в базе знаний»
+  (get_source_functions → перечислить сущности через list_data_views/list_indices/information_schema →
+  проба через `run` → `memory_save` по одной заметке на сущность, без секретов/PII).
+- Документация: `ARCHITECTURE.md`, `HARVESTER_DSL.md`. Тесты — 185 офлайн.
+
+## 1. Текущее состояние (актуально на `v0.15.0`)
 
 ### Работает (проверено на стенде)
 - Запуск; **ленивая загрузка** зависимостей; секреты/конфиги — из окружения/аргументов/`pwinput` (не в коде).
@@ -326,7 +341,8 @@ dev-стенда; интерактивный вариант закомменти
   подтверждением, сессионные лимиты/токены, Стоп/история/стриминг.
 - **Память агента (База знаний)**: общая таблица `knowledge`, раздел UI «База знаний», действия
   `memory_*` (авто-запись), авто-инъекция релевантных заметок в промпт.
-- **elastic_requests**: `api_key`/`basic_auth`, совместимость с Kibana и OpenSearch Dashboards (console-proxy).
+- **elastic_requests**: `api_key`/`basic_auth`, совместимость с Kibana и OpenSearch Dashboards (console-proxy);
+  discovery — `list_indices` (индексы ES) и `list_data_views` (data views/index patterns), `securitytenant` для OSD.
 - Тесты `tests/` (176, офлайн): парсер, cron, APPLY-порядок, DEF-инъекция, TheHive/CMDB-хелперы,
   AI-пайплайн (вкл. память/ранжирование заметок), elastic-аутентификация/разбор ошибок.
 
