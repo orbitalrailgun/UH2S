@@ -303,7 +303,8 @@ DEF 1719100000000 AS start
 - `netbox:search(target, [object_types], [limit], [flatten])`, `netbox:search_cidr_by_ip(target, [flatten])`
 - `sqlite3_im:query(queries=[...])`, `duckdb_im:query(type, queries=[...])` — SQL поверх собранных данных
 - `pandas_im:aggr/dynamic_aggr/shift/union/...` — агрегации/преобразования
-- `postgresql/mysql/mssql:query(...)`, `elastic*/opensearch:...`, `gitlab/youtrack/iris/dns/...`
+- `elastic_requests` (через console-proxy Kibana/OpenSearch Dashboards): `query(url, query, fields, sort, [size], [limit])`, `aggs_query(url, query, aggs)`, `pid_hierarchy`/`pid_siblings`, `list_indices(url)` — индексы уровня ES (`_cat/indices?format=json`), `list_data_views(url)` — data views / index patterns из saved objects (`/api/saved_objects/_find?type=index-pattern`). `auth_type`: `api_key` (по умолч.) или `basic_auth` (логин в `key.account`). Для мультитенантного OpenSearch — `securitytenant` в конфиге источника
+- `postgresql/mysql/mssql:query(...)`, `elastic`/`opensearch:...`, `gitlab/youtrack/iris/dns/...`
 
 Как добавить новый источник — см. [`ADDING_SOURCES.md`](ADDING_SOURCES.md).
 
