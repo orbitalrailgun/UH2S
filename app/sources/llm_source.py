@@ -159,15 +159,24 @@ def _system_prompt(instructions, knowledge, per_line):
 
 
 def _resolve_table(parameters, data_map, func_name, current_state):
-    """Достать входную таблицу по параметру data. Возврат (ok, error_or_none, rows)."""
-    data_name = parameters.get("data")
-    if not isinstance(data_name, str) or not data_name:
-        return False, "не задан параметр data (имя собранной таблицы, строкой)", None
-    rows = data_map.get(data_name)
-    if rows is None:
-        return False, f"таблица '{data_name}' не найдена среди собранных данных", None
-    if not isinstance(rows, list):
-        return False, f"'{data_name}' не является таблицей (ожидается list of dict)", None
+    """Достать входные данные по параметру data. Принимает имя таблицы строкой ("tbl") ИЛИ список
+    имён (["t1","t2"]) — строки нескольких таблиц склеиваются. Возврат (ok, error_or_none, rows)."""
+    data_param = parameters.get("data")
+    if isinstance(data_param, str) and data_param:
+        names = [data_param]
+    elif isinstance(data_param, list) and data_param:
+        names = [str(name) for name in data_param]
+    else:
+        return False, "не задан параметр data (имя собранной таблицы строкой или список имён)", None
+
+    rows = []
+    for name in names:
+        table = data_map.get(name)
+        if table is None:
+            return False, f"таблица '{name}' не найдена среди собранных данных", None
+        if not isinstance(table, list):
+            return False, f"'{name}' не является таблицей (ожидается list of dict)", None
+        rows.extend(table)
     return True, None, rows
 
 

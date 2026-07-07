@@ -106,6 +106,31 @@ class TestDataAnalysis(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertEqual(rows, [{"group": "a", "count": 2}])
 
+    def test_data_as_list_single(self):
+        import app.llm
+        app.llm.llm_chat = lambda j, m, s: (True, '[{"summary":"ok"}]', {"prompt_tokens": 1, "completion_tokens": 1})
+        ok, msg, _fn, rows = execute_llm_data_analysis(
+            {"data": ["filtred"], "instructions": "x"}, {}, {"filtred": [{"a": 1}]}, STATE)
+        self.assertTrue(ok, msg)
+        self.assertEqual(rows, [{"summary": "ok"}])
+
+    def test_data_as_list_many_combined(self):
+        import app.llm
+        captured = {}
+
+        def capture(llm_json, messages, current_state):
+            captured["user"] = messages[-1]["content"]
+            return True, '[{"n":5}]', {"prompt_tokens": 1, "completion_tokens": 1}
+
+        app.llm.llm_chat = capture
+        ok, _msg, _fn, rows = execute_llm_data_analysis(
+            {"data": ["t1", "t2"], "instructions": "x"}, {},
+            {"t1": [{"a": 1}], "t2": [{"a": 2}, {"a": 3}]}, STATE)
+        self.assertTrue(ok)
+        # обе таблицы склеены в один набор (3 строки) и переданы модели
+        self.assertIn('"a": 1', captured["user"])
+        self.assertIn('"a": 3', captured["user"])
+
     def test_unparseable_fails(self):
         import app.llm
         app.llm.llm_chat = lambda j, m, s: (True, "не json", {"prompt_tokens": 1, "completion_tokens": 1})
