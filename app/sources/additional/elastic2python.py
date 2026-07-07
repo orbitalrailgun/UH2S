@@ -335,11 +335,12 @@ def _build_auth_header(auth_type, auth_user, secret):
     raise ValueError(f"unknown elastic auth_type: {auth_type}")
 
 
-def _console_proxy_headers(user_agent, authorization):
-    """Заголовки для console-proxy. Anti-CSRF шлём в ОБОИХ вариантах: kbn-xsrf (Kibana) и osd-xsrf
-    (OpenSearch Dashboards) — путь /api/console/proxy идентичен, различается только требуемый xsrf-заголовок;
-    лишний заголовок другая система игнорирует, поэтому один конфиг работает и там, и там."""
-    return {
+def _console_proxy_headers(user_agent, authorization, extra_headers=None):
+    """Заголовки для console-proxy / Dashboards API. Anti-CSRF шлём в ОБОИХ вариантах: kbn-xsrf (Kibana) и
+    osd-xsrf (OpenSearch Dashboards) — лишний заголовок другая система игнорирует, поэтому один конфиг
+    работает и там, и там. extra_headers (напр. {'securitytenant': 'global'} для мультитенантного OSD)
+    добавляются/переопределяют базовые."""
+    headers = {
         'user-agent': user_agent,
         'content-type': 'application/json',
         "x-elastic-internal-origin": "kibana",
@@ -347,6 +348,9 @@ def _console_proxy_headers(user_agent, authorization):
         "osd-xsrf": "true",
         "Authorization": authorization,
     }
+    if isinstance(extra_headers, dict):
+        headers.update({str(k): str(v) for k, v in extra_headers.items()})
+    return headers
 
 
 def _extract_body_error(body_json):
@@ -596,14 +600,16 @@ def data_taxi_list_requests(url, user_agent, api_key, verify_certs, timeout, deb
 
 def data_taxi_saved_objects_requests(url, user_agent, api_key, verify_certs, timeout, debug=False,
                                      max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504),
-                                     on_retry=None, auth_type="api_key", auth_user=None):
+                                     on_retry=None, auth_type="api_key", auth_user=None, extra_headers=None):
     """GET к Kibana/OpenSearch Dashboards API (saved_objects/_find или data_views) — список data views /
     index patterns как list-of-dict. url — ПРЯМОЙ путь Dashboards API (НЕ console-proxy), напр.
     /api/saved_objects/_find?type=index-pattern&per_page=1000  или  /api/data_views.
-    Пагинацию не разворачиваем: задавайте per_page в url. Возврат (ok, msg, func, records)."""
+    extra_headers — доп. заголовки (для мультитенантного OSD: {'securitytenant': 'global'}).
+    Пагинацию не разворачиваем: задавайте per_page в url.
+    Возврат (ok, msg, func, records); при 0 записей msg содержит структуру ответа для диагностики."""
     import requests
     from app.sources.additional.retry import retry_call, RetryableError
-    headers = _console_proxy_headers(user_agent, _build_auth_header(auth_type, auth_user, api_key))
+    headers = _console_proxy_headers(user_agent, _build_auth_header(auth_type, auth_user, api_key), extra_headers)
     retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 
     def do_get():
@@ -628,7 +634,14 @@ def data_taxi_saved_objects_requests(url, user_agent, api_key, verify_certs, tim
     try:
         data = retry_call(do_get, attempts=max_retries + 1, backoff=retry_backoff,
                           retryable_exceptions=retryable, on_retry=on_retry)
-        return True, "OK", "data_taxi_saved_objects_requests", _extract_data_views(data)
+        records = _extract_data_views(data)
+        message = "OK"
+        # 0 записей при валидном 200 — частый случай мультитенантного OSD (не тот tenant): подсказываем
+        if not records and isinstance(data, dict):
+            total = data.get("total")
+            message = (f"OK but 0 records (response keys={list(data.keys())}, total={total}); "
+                       f"для OpenSearch с мультитенантностью задайте securitytenant в конфиге источника")
+        return True, message, "data_taxi_saved_objects_requests", records
     except BaseException as e:
         return False, f"elastic2python saved_objects requests fail:{str(e)}", "data_taxi_saved_objects_requests", []
 

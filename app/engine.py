@@ -219,6 +219,9 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
         "unrequired":{
             "auth_type":"api_key",                 # api_key (по умолчанию) -> Authorization: ApiKey key.value;
                                                    # basic_auth -> Authorization: Basic base64(key.account:key.value)
+            "securitytenant":"global",             # OpenSearch Dashboards с мультитенантностью: тенант для
+                                                   # list_data_views (иначе saved_objects из тенанта по умолчанию, часто пусто)
+            "extra_headers":{},                    # произвольные доп. HTTP-заголовки (напр. кастомные прокси-заголовки)
             "verify_certs":False,
             "request_timeout":300,
             "max_retries":2,                       # повторов при сетевой ошибке/таймауте/коде из retry_on_status

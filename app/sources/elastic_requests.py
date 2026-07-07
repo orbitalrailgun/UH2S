@@ -30,6 +30,20 @@ def _auth_kwargs(source):
             "auth_user": (source.get("key") or {}).get("account")}
 
 
+def _extra_headers(source):
+    """Доп. HTTP-заголовки из конфига источника. securitytenant — для мультитенантного OpenSearch
+    Dashboards (иначе saved_objects/_find вернёт пустой список из тенанта по умолчанию); extra_headers —
+    произвольные пары."""
+    headers = {}
+    tenant = source.get("securitytenant") or source.get("security_tenant")
+    if tenant:
+        headers["securitytenant"] = str(tenant)
+    custom = source.get("extra_headers")
+    if isinstance(custom, dict):
+        headers.update({str(k): str(v) for k, v in custom.items()})
+    return headers
+
+
 def execute_elastic_query(parameters, source_object, data_map, current_state):
     try:
         query = parameters
@@ -170,11 +184,17 @@ def execute_elastic_list_data_views(parameters, source_object, data_map, current
             retry_backoff=source.get("retry_backoff_seconds", 0.5),
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
             on_retry=_make_retry_logger(current_state, currentFuncName()),
+            extra_headers=_extra_headers(source),
             **auth_kwargs)
         if data_views_result[0] == False:
             error_message = f"data_views_result is false: {data_views_result[1]}"
             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
             return False, error_message, currentFuncName(), []
+
+        # диагностика «0 строк при 200» (частый кейс мультитенантного OSD): пишем причину в лог
+        if not data_views_result[3]:
+            logger_log(syslog.LOG_WARNING, get_log_message(
+                f"list_data_views: {data_views_result[1]}", currentFuncName(), current_state))
 
         logger_log(syslog.LOG_DEBUG, get_log_message(f"done", currentFuncName(), current_state))
         return True, "OK", currentFuncName(), data_views_result[3]

@@ -39,6 +39,12 @@ class TestConsoleProxyHeaders(unittest.TestCase):
         self.assertEqual(headers["osd-xsrf"], "true")
         self.assertEqual(headers["Authorization"], "ApiKey SECRET")
 
+    def test_extra_headers_merged(self):
+        # securitytenant для мультитенантного OpenSearch Dashboards
+        headers = _console_proxy_headers("ua", "ApiKey X", {"securitytenant": "global"})
+        self.assertEqual(headers["securitytenant"], "global")
+        self.assertEqual(headers["osd-xsrf"], "true")  # базовые сохраняются
+
 
 class TestExtractBodyError(unittest.TestCase):
     def test_opensearch_dashboards_format(self):
