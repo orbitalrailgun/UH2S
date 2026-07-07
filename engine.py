@@ -140,8 +140,8 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                 command["sub_commands"] = sub_commands  # переиспользуем при исполнении (без повторного парсинга)
                 continue
 
-            #получаем исполняемый объект по имени, тут исполняемым обектом может быть source или script
-            get_actual_object_by_name_result = get_actual_object_by_name(command["source"], "('source', 'script')", current_state)
+            #получаем исполняемый объект по имени: source, script или llm (llm-объект как источник данных)
+            get_actual_object_by_name_result = get_actual_object_by_name(command["source"], "('source', 'script', 'llm')", current_state)
             if not get_actual_object_by_name_result[0]:
                 error_message = f"get object {command["source"]} error: {get_actual_object_by_name_result[1]}"
                 logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
@@ -161,16 +161,20 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
                 logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                 return False, error_message, currentFuncName(), commands
             
-            # получаем тип источника, если тип исполнения source
+            # получаем тип источника
             if source_object["type"] == "source":
                 if "type" not in source_object["json"]:
                     error_message = f"there is not type in json source object {source_object["name"]}"
                     logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
                     return False, error_message, currentFuncName(), commands
                 command["source_type"] = source_object["json"]["type"]
+            elif source_object["type"] == "llm":
+                # llm-объект как источник данных: тип коннектора — фиксированный "llm"
+                # (функции line_analysis/data_analysis из ENGINE_SOURCES_AND_FUNCTIONS_MAP["llm"])
+                command["source_type"] = "llm"
 
-            #check source function
-            if source_object["type"] == "source":
+            #check source function (для source и llm — обе резолвятся через реестр коннекторов)
+            if source_object["type"] in ("source", "llm"):
                 get_source_function_result = get_source_function(command["source_type"],command["function"], current_state)
                 if not get_source_function_result[0]:
                     error_message = f"get_source_function error: {get_source_function_result[1]}"

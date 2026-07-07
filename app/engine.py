@@ -16,8 +16,7 @@ from app.sources.opensearch import execute_opensearch_query, execute_opensearch_
 from app.sources.postgresql import execute_postgresql 
 from app.sources.sqlite3 import execute_sqlite3
 from app.sources.mssql import execute_mssql
-from app.sources.ollama import execute_ollama_chat_query
-from app.sources.llama import execute_llama_chat_query
+from app.sources.llm_source import execute_llm_line_analysis, execute_llm_data_analysis
 from app.sources.pandas import execute_pandas_dynamic_aggregation, execute_pandas_aggregation, execute_pandas_aggregation_with_time_grouper, execute_pandas_shift, execute_pandas_union
 #from app.sources.grafana import execute_grafana_export_table_requests
 from app.sources.youtrack import execute_youtrack_project_finder, execute_youtrack_all_project_issue_finder, execute_youtrack_all_articles_finder
@@ -876,55 +875,44 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
         "required":{}, 
         "unrequired":{}
     },
-    "ollama":{
+    # Объект типа `llm` используется как ИСТОЧНИК данных: GET <llm_object>:line_analysis(...)/data_analysis(...).
+    # Конфиг подключения (type ollama|openai, url, model, key, ...) берётся из самого llm-объекта — тот же,
+    # что использует AI-агент. Реестр функций тут описывает ПАРАМЕТРЫ ВЫЗОВА (не конфиг объекта).
+    "llm":{
         "functions":{
-            "chat":{
+            "line_analysis":{
+                # Построчный анализ: на КАЖДУЮ строку data — независимый вызов LLM; сгенерированные поля
+                # добавляются к строке. На выходе исходная таблица + новые столбцы.
                 "required":{
-                    "url":"https://localhost:11434/api/chat",
-                    "model":"llama3.2",
-                    "format":"json",
-                    "main_prompt":"Analyze the following data and return findings.",
-                    "data_for_analysis":["data1", "data2"]
+                    "data":"my_table",   # имя ранее собранной таблицы (строка); каждая строка анализируется отдельно
+                    "instructions":"Проанализируй строку и верни поля verdict (строка) и accuracy (0.0-1.0)",
+                },
+                "unrequired":{
+                    "knowledge_base":False,  # true -> подмешать релевантные заметки из базы знаний в промпт
                 },
                 "functions":{
-                    "query": execute_ollama_chat_query,
-                    #"converter":lambda: None
+                    "query": execute_llm_line_analysis,
+                }
+            },
+            "data_analysis":{
+                # Анализ всего набора одним вызовом: на выходе [{}] по инструкции (агрегаты/сводки/выводы).
+                "required":{
+                    "data":"my_table",
+                    "instructions":"Проанализируй набор и верни массив объектов с полями ...",
+                },
+                "unrequired":{
+                    "knowledge_base":False,
+                },
+                "functions":{
+                    "query": execute_llm_data_analysis,
                 }
             }
         },
-        "required":{
-            #"key":{"system":"foo", "account":"bar"},
-            "max_threads":10
-        },
+        # конфиг источника берётся из json llm-объекта (type/url/model/key/verify/request_timeout/context_window);
+        # max_threads — степень параллелизма пер-строчного анализа
+        "required":{},
         "unrequired":{
-            "verify_certs":False,
-            "request_timeout":300
-        }
-    },
-    "llama":{
-        "functions":{
-            "chat":{
-                "required":{
-                    "model_path":"/models/mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf",
-                    "context_length":16000,
-                    "cpu_threads":32,
-                    "gpu_layers":0,
-                    "max_tokens":32000,
-                    "stop":["</s>"],
-                    "data_for_analysis":["data1", "data2"]
-                },
-                "functions":{
-                    "query": execute_llama_chat_query,
-                    #"converter":lambda: None
-                }
-            }
-        },
-        "required":{
-            "max_threads":2
-        },
-        "unrequired":{
-            "verify_certs":False,
-            "request_timeout":300
+            "max_threads":4
         }
     },
     "universal_harvester":{
@@ -1553,11 +1541,13 @@ def get_command_dependency(command, current_state):
                 elif isinstance(command['parameters']["target_data"], str):
                     dependency.append(command['parameters']["target_data"])
 
-            if command["source_type"] == "ollama":
-                if isinstance(command['parameters']["target_data"], list):
-                    dependency = dependency + command['parameters']["target_data"]
-                elif isinstance(command['parameters']["target_data"], str):
-                    dependency.append(command['parameters']["target_data"])
+            if command["source_type"] == "llm":
+                # источник llm: входная таблица задаётся параметром data (строка или список имён)
+                data_param = command['parameters'].get("data")
+                if isinstance(data_param, list):
+                    dependency = dependency + data_param
+                elif isinstance(data_param, str):
+                    dependency.append(data_param)
 
         return True, "OK", currentFuncName(), list(set(dependency))
     

@@ -13,12 +13,11 @@ ENV PYTHONUNBUFFERED=1 \
     UH2S_SHOW=false
 
 # Системные зависимости:
-#  build-essential/cmake/pkg-config — сборка llama-cpp-python;
+#  build-essential/pkg-config — сборка нативных расширений (напр. pymssql) из sdist при отсутствии wheel;
 #  freetds-dev — сборка и работа pymssql (источник mssql);
-#  libgomp1 — OpenMP для numpy/llama; ca-certificates/curl — TLS-доверие и healthcheck.
+#  libgomp1 — OpenMP для numpy; ca-certificates/curl — TLS-доверие и healthcheck.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
-        cmake \
         pkg-config \
         freetds-dev \
         libgomp1 \

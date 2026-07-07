@@ -7,7 +7,7 @@
 # Установка:
 #   uv sync                      # только ядро (dependencies)
 #   uv sync --extra connectors   # ядро + коннекторы источников
-#   uv sync --all-extras         # всё, включая тяжёлый llama-cpp-python
+#   uv sync --all-extras         # всё (sso + mcp + connectors)
 # Обновить lock после правки версий:
 #   uv lock
 # Экспорт пинов для pip/Docker (без uv в образе):
@@ -55,9 +55,6 @@ connectors = [
     "pyotp",                   # источник teleport (TOTP)
 ]
 
-# Тяжёлый локальный LLM-инференс (источник `llama`); требует C/C++ тулчейн
-llama = ["llama-cpp-python"]
-
 # Инструменты разработки (линт для CI)
 dev = ["ruff"]
 
@@ -67,7 +64,6 @@ all = [
     "pandas", "numpy", "matplotlib", "SciencePlots", "openpyxl", "requests", "pytz", "duckdb",
     "psycopg2-binary", "pymssql", "mysql-connector-python", "elasticsearch", "opensearch-py",
     "dnspython", "python-netbox", "pexpect", "pyotp",
-    "llama-cpp-python",
 ]
 
 [tool.uv]
