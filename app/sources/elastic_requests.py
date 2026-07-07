@@ -149,6 +149,42 @@ def execute_elastic_list_indices(parameters, source_object, data_map, current_st
         return False, error_message, currentFuncName(), []
 
 
+# функция получения списка data views / index patterns (saved objects слоя Kibana/OpenSearch Dashboards)
+def execute_elastic_list_data_views(parameters, source_object, data_map, current_state):
+    """Список data views / index patterns (то, что настроено в Kibana/OpenSearch Dashboards). url — ПРЯМОЙ
+    путь Dashboards API (НЕ console-proxy), напр. /api/saved_objects/_find?type=index-pattern&per_page=1000
+    или /api/data_views. Возврат — list-of-dict (id/title/name/timeFieldName)."""
+    source = source_object
+    query = parameters
+    auth_kwargs = _auth_kwargs(source)
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
+        data_views_result = elastic2python.data_taxi_saved_objects_requests(
+            query["url"],
+            f'{current_state["app_name"]}/{current_state["app_version"]}',
+            source["key"]["value"],
+            source.get("verify_certs", False),
+            source.get("request_timeout", 300),
+            debug = False,
+            max_retries=source.get("max_retries", 2),
+            retry_backoff=source.get("retry_backoff_seconds", 0.5),
+            retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
+            on_retry=_make_retry_logger(current_state, currentFuncName()),
+            **auth_kwargs)
+        if data_views_result[0] == False:
+            error_message = f"data_views_result is false: {data_views_result[1]}"
+            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), []
+
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done", currentFuncName(), current_state))
+        return True, "OK", currentFuncName(), data_views_result[3]
+
+    except BaseException as e:
+        error_message = f"list data views fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), []
+
+
 # функция построения цепочки иерархии для выбранного процесса pid
 def execute_function_linux_pid_hierarchy_elastic_requests(parameters, source_object, data_map, current_state):
     source = source_object

@@ -382,6 +382,29 @@ def _normalize_to_records(data):
     return []
 
 
+def _extract_data_views(data):
+    """Извлечь data views / index patterns из ответа Kibana/OpenSearch Dashboards -> list-of-dict.
+    Понимает saved_objects/_find ({'saved_objects':[{id,type,attributes:{title,...}}]}) и
+    Kibana data_views API ({'data_view':[{id,title,name}]}). Иначе — обычная нормализация."""
+    if isinstance(data, dict) and isinstance(data.get("saved_objects"), list):
+        rows = []
+        for saved_object in data["saved_objects"]:
+            attributes = saved_object.get("attributes", {}) or {}
+            rows.append({
+                "id": saved_object.get("id"),
+                "type": saved_object.get("type"),
+                "title": attributes.get("title"),           # сам паттерн, напр. "logs-*"
+                "name": attributes.get("name"),             # человекочитаемое имя (Kibana 8+)
+                "timeFieldName": attributes.get("timeFieldName"),
+                "updated_at": saved_object.get("updated_at"),
+            })
+        return rows
+    if isinstance(data, dict) and isinstance(data.get("data_view"), list):
+        return [{"id": dv.get("id"), "title": dv.get("title"), "name": dv.get("name")}
+                for dv in data["data_view"]]
+    return _normalize_to_records(data)
+
+
 def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, sort, fields, size, search_after_shift, limit, debug = False,
                        max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None, debug_log=None,
                        auth_type="api_key", auth_user=None):
@@ -569,6 +592,45 @@ def data_taxi_list_requests(url, user_agent, api_key, verify_certs, timeout, deb
         return True, "OK", "data_taxi_list_requests", _normalize_to_records(data)
     except BaseException as e:
         return False, f"elastic2python list requests fail:{str(e)}", "data_taxi_list_requests", []
+
+
+def data_taxi_saved_objects_requests(url, user_agent, api_key, verify_certs, timeout, debug=False,
+                                     max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504),
+                                     on_retry=None, auth_type="api_key", auth_user=None):
+    """GET к Kibana/OpenSearch Dashboards API (saved_objects/_find или data_views) — список data views /
+    index patterns как list-of-dict. url — ПРЯМОЙ путь Dashboards API (НЕ console-proxy), напр.
+    /api/saved_objects/_find?type=index-pattern&per_page=1000  или  /api/data_views.
+    Пагинацию не разворачиваем: задавайте per_page в url. Возврат (ok, msg, func, records)."""
+    import requests
+    from app.sources.additional.retry import retry_call, RetryableError
+    headers = _console_proxy_headers(user_agent, _build_auth_header(auth_type, auth_user, api_key))
+    retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+
+    def do_get():
+        resp = requests.get(url, headers=headers, verify=verify_certs, timeout=timeout)
+        if debug:
+            print(resp, resp.status_code)
+        if resp.status_code in retry_statuses:
+            raise RetryableError(f"status {resp.status_code}", resp.status_code)
+        try:
+            body_json = resp.json()
+        except BaseException:
+            body_json = None
+        if isinstance(body_json, dict) and "error" in body_json:
+            body_status, reason = _extract_body_error(body_json)
+            if isinstance(body_status, int) and (body_status == 429 or body_status >= 500):
+                raise RetryableError(f"dashboards body status {body_status}: {reason}", body_status)
+            raise ValueError(f"dashboards error (status {body_status}): {reason}")
+        if resp.status_code not in (200, 201):
+            raise ValueError(f"fail response code {resp.status_code}: {resp.text[:500]}")
+        return body_json
+
+    try:
+        data = retry_call(do_get, attempts=max_retries + 1, backoff=retry_backoff,
+                          retryable_exceptions=retryable, on_retry=on_retry)
+        return True, "OK", "data_taxi_saved_objects_requests", _extract_data_views(data)
+    except BaseException as e:
+        return False, f"elastic2python saved_objects requests fail:{str(e)}", "data_taxi_saved_objects_requests", []
 
 
 def data_taxi_csv_downloader(elastic_client, index, query, sort, fields, size, search_after, search_after_shift, filename, writemode):

@@ -3,7 +3,8 @@ import base64
 import unittest
 
 from app.sources.additional.elastic2python import (_build_auth_header, _console_proxy_headers,
-                                                   _extract_body_error, _normalize_to_records)
+                                                   _extract_body_error, _normalize_to_records,
+                                                   _extract_data_views)
 
 
 class TestElasticAuthHeader(unittest.TestCase):
@@ -75,10 +76,30 @@ class TestNormalizeToRecords(unittest.TestCase):
         self.assertEqual(_normalize_to_records(42), [])
 
 
-class TestListIndicesRegistered(unittest.TestCase):
-    def test_engine_map_has_list_indices(self):
+class TestExtractDataViews(unittest.TestCase):
+    def test_saved_objects_find(self):
+        rows = _extract_data_views({"saved_objects": [
+            {"id": "abc", "type": "index-pattern",
+             "attributes": {"title": "logs-*", "timeFieldName": "@timestamp"}, "updated_at": "2026-01-01"}], "total": 1})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["title"], "logs-*")
+        self.assertEqual(rows[0]["timeFieldName"], "@timestamp")
+
+    def test_data_views_api(self):
+        rows = _extract_data_views({"data_view": [{"id": "x", "title": "metrics-*", "name": "Metrics"}]})
+        self.assertEqual(rows, [{"id": "x", "title": "metrics-*", "name": "Metrics"}])
+
+    def test_fallback_to_normalize(self):
+        # незнакомый формат -> общая нормализация
+        self.assertEqual(_extract_data_views([{"index": "logs-1"}]), [{"index": "logs-1"}])
+
+
+class TestListFunctionsRegistered(unittest.TestCase):
+    def test_engine_map_has_list_functions(self):
         from app.engine import ENGINE_SOURCES_AND_FUNCTIONS_MAP as M
-        self.assertIn("list_indices", M["elastic_requests"]["functions"])
+        functions = M["elastic_requests"]["functions"]
+        self.assertIn("list_indices", functions)
+        self.assertIn("list_data_views", functions)
 
 
 if __name__ == "__main__":
