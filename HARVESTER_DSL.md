@@ -305,8 +305,12 @@ DEF 1719100000000 AS start
 - `pandas_im:aggr/dynamic_aggr/shift/union/...` — агрегации/преобразования
 - `elastic_requests` (через console-proxy Kibana/OpenSearch Dashboards): `query(url, query, fields, sort, [size], [limit])`, `aggs_query(url, query, aggs)`, `pid_hierarchy`/`pid_siblings`, `list_indices(url)` — индексы уровня ES (`_cat/indices?format=json`), `list_data_views(url)` — data views / index patterns из saved objects (`/api/saved_objects/_find?type=index-pattern`). `auth_type`: `api_key` (по умолч.) или `basic_auth` (логин в `key.account`). Для мультитенантного OpenSearch — `securitytenant` в конфиге источника
 - `postgresql/mysql/mssql:query(...)`, `elastic`/`opensearch:...`, `gitlab/youtrack/iris/dns/...`
-- **`llm`** (объект типа `llm` как источник данных — LLM-анализ/обогащение): `line_analysis(data="tbl", instructions="...", [knowledge_base=true])` — на каждую строку `data` вызывает модель и добавляет сгенерированные поля (коллизия имён → префикс `llm_`); `data_analysis(data="tbl", instructions="...", [knowledge_base=true])` — анализ всего набора одним вызовом, результат `[{}]`. `knowledge_base=true` подмешивает релевантные заметки из базы знаний. Конфиг подключения берётся из самого llm-объекта. Пример:
-  `GET my_llm:line_analysis(data="alerts", instructions="Проанализируй алерт, верни verdict (строка) и accuracy (0.0-1.0)", knowledge_base=true) AS triaged`
+- **`llm`** (объект типа `llm` как источник данных — LLM-анализ/обогащение):
+  - `line_analysis(data, instructions, [knowledge_base])` — на **каждую строку** `data` независимый вызов модели; сгенерированный JSON добавляется полями к строке (коллизия имён → префикс `llm_`). На выходе исходная таблица + новые столбцы. Ошибка отдельной строки не роняет прогон (поле `llm_error`). Параллельно (`max_threads`).
+  - `data_analysis(data, instructions, [knowledge_base])` — **весь набор одним вызовом**, результат `[{}]` по инструкции (сводки/выводы/группировки).
+  - `data` — имя таблицы строкой (`data="alerts"`) **или** список имён (`data=["a","b"]`, строки склеиваются). `knowledge_base=true` подмешивает релевантные заметки из базы знаний. Конфиг подключения (`type`/`url`/`model`/`key`/`request_timeout`/`context_window`) и повторы берутся из самого llm-объекта.
+  - **Тюнинг** (в json llm-объекта): `max_threads` (параллелизм построчного анализа), `request_timeout` (медленные модели), `max_retries`/`retry_backoff_seconds` (повторы на таймаут/429/5xx). `data_analysis` шлёт весь набор — следите за `context_window`; крупные таблицы урезайте/сэмплируйте (`sqlite3_im`/`pandas_im`) заранее.
+  - Пример: `GET my_llm:line_analysis(data="alerts", instructions="Проанализируй алерт, верни verdict (строка) и accuracy (0.0-1.0)", knowledge_base=true) AS triaged`
 
 Как добавить новый источник — см. [`ADDING_SOURCES.md`](ADDING_SOURCES.md).
 
