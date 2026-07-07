@@ -908,11 +908,14 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                 }
             }
         },
-        # конфиг источника берётся из json llm-объекта (type/url/model/key/verify/request_timeout/context_window);
-        # max_threads — степень параллелизма пер-строчного анализа
+        # конфиг источника берётся из json llm-объекта (type/url/model/key/verify/request_timeout/context_window).
+        # Для медленных/лимитирующих эндпоинтов: снизьте max_threads, поднимите request_timeout (в llm-объекте),
+        # настройте повторы. Повторяются транзиентные ошибки (таймаут/сеть/429/5xx), backoff экспоненциальный.
         "required":{},
         "unrequired":{
-            "max_threads":4
+            "max_threads":4,                 # степень параллелизма пер-строчного line_analysis
+            "max_retries":2,                 # повторов на строку/запрос при транзиентной ошибке
+            "retry_backoff_seconds":1.0       # базовая задержка backoff (экспоненциальная, с джиттером)
         }
     },
     "universal_harvester":{

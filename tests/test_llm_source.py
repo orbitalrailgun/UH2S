@@ -4,7 +4,7 @@ import unittest
 
 import app.sources.llm_source as llm_source
 from app.sources.llm_source import (_parse_json_object, _parse_json_array, _merge_generated,
-                                    execute_llm_line_analysis, execute_llm_data_analysis)
+                                    _is_transient_error, execute_llm_line_analysis, execute_llm_data_analysis)
 
 STATE = {"app_name": "UH2S", "app_version": "test", "username": "tester", "processes": 4}
 
@@ -112,6 +112,57 @@ class TestDataAnalysis(unittest.TestCase):
         ok, _msg, _fn, rows = execute_llm_data_analysis(
             {"data": "alerts", "instructions": "x"}, {}, {"alerts": [{"g": "a"}]}, STATE)
         self.assertFalse(ok)
+
+
+class TestRetry(unittest.TestCase):
+    def setUp(self):
+        import app.llm
+        self._orig = app.llm.llm_chat
+
+    def tearDown(self):
+        import app.llm
+        app.llm.llm_chat = self._orig
+
+    def test_transient_classification(self):
+        self.assertTrue(_is_transient_error("... Read timed out."))
+        self.assertTrue(_is_transient_error("openai chat http 503: unavailable"))
+        self.assertTrue(_is_transient_error("Too Many Requests 429"))
+        self.assertFalse(_is_transient_error("openai chat http 400: bad request"))
+        self.assertFalse(_is_transient_error("openai chat http 401: unauthorized"))
+
+    def test_recovers_after_transient_timeouts(self):
+        import app.llm
+        calls = {"n": 0}
+
+        def flaky(llm_json, messages, current_state):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                return False, "llm chat fail: Read timed out.", {}
+            return True, '{"verdict":"benign","accuracy":0.7}', {"prompt_tokens": 1, "completion_tokens": 1}
+
+        app.llm.llm_chat = flaky
+        ok, _msg, _fn, rows = execute_llm_line_analysis(
+            {"data": "t", "instructions": "x"}, {"max_retries": 3, "retry_backoff_seconds": 0},
+            {"t": [{"ip": "1.1.1.1"}]}, dict(STATE))
+        self.assertTrue(ok)
+        self.assertEqual(rows[0]["verdict"], "benign")
+        self.assertEqual(calls["n"], 3)
+
+    def test_non_transient_not_retried(self):
+        import app.llm
+        calls = {"n": 0}
+
+        def bad_request(llm_json, messages, current_state):
+            calls["n"] += 1
+            return False, "openai chat http 400: bad request", {}
+
+        app.llm.llm_chat = bad_request
+        ok, _msg, _fn, rows = execute_llm_line_analysis(
+            {"data": "t", "instructions": "x"}, {"max_retries": 3, "retry_backoff_seconds": 0},
+            {"t": [{"ip": "1.1.1.1"}]}, dict(STATE))
+        self.assertTrue(ok)  # прогон не падает
+        self.assertIn("llm_error", rows[0])
+        self.assertEqual(calls["n"], 1)  # 400 не повторяется
 
 
 class TestLlmRegisteredAndOllamaRemoved(unittest.TestCase):

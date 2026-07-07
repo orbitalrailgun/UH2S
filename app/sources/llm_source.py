@@ -7,9 +7,57 @@ source_object здесь — это json самого llm-объекта (type/u
 Тяжёлых зависимостей нет: llm_chat (requests) импортируется лениво внутри функций."""
 import re
 import json
+import time
+import random
 import syslog
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.logging import get_log_message, logger_log, currentFuncName
+
+
+# Маркеры ТРАНЗИЕНТНЫХ ошибок LLM-эндпоинта (таймаут/сеть/перегрузка) — их имеет смысл повторять.
+# llm_chat не бросает исключение, а возвращает (False, текст) — поэтому классифицируем по тексту.
+_TRANSIENT_MARKERS = ("timed out", "timeout", "read timed out", "connection", "connectionpool",
+                      "temporarily", "reset by peer", "econnreset", "429", "500", "502", "503", "504",
+                      "too many requests", "overloaded", "unavailable")
+
+
+def _is_transient_error(error_text):
+    lowered = (error_text or "").lower()
+    return any(marker in lowered for marker in _TRANSIENT_MARKERS)
+
+
+def _llm_chat_with_retry(llm_json, messages, current_state, attempts, backoff):
+    """Обёртка над llm_chat с повторами на транзиентных ошибках (экспоненциальный backoff + джиттер).
+    Нетранзиентные ошибки (напр. 400/401) не повторяются. Возврат — как у llm_chat: (ok, content, usage)."""
+    from app.llm import llm_chat
+    attempts = max(1, int(attempts))
+    result = (False, "no attempts", {})
+    for attempt in range(attempts):
+        result = llm_chat(llm_json, messages, current_state)
+        if result[0]:
+            return result
+        if attempt < attempts - 1 and _is_transient_error(result[1]):
+            delay = backoff * (2 ** attempt) + random.uniform(0, 0.3)
+            logger_log(syslog.LOG_WARNING, get_log_message(
+                f"llm retry attempt {attempt + 1}/{attempts - 1} after {delay:.1f}s ({str(result[1])[:120]})",
+                currentFuncName(), current_state))
+            time.sleep(delay)
+            continue
+        break
+    return result
+
+
+def _retry_config(source_object):
+    """Параметры повторов из конфига llm-объекта: max_retries (деф. 2) -> attempts, backoff сек (деф. 1.0)."""
+    try:
+        attempts = int(source_object.get("max_retries", 2)) + 1
+    except (TypeError, ValueError):
+        attempts = 3
+    try:
+        backoff = float(source_object.get("retry_backoff_seconds", 1.0))
+    except (TypeError, ValueError):
+        backoff = 1.0
+    return attempts, backoff
 
 
 def _strip_code_fences(text):
@@ -133,7 +181,6 @@ def _workers(source_object, current_state):
 def execute_llm_line_analysis(parameters, source_object, data_map, current_state):
     """Построчный анализ: на КАЖДУЮ строку data — независимый вызов LLM; JSON-ответ добавляется полями
     к строке. На выходе исходная таблица + новые столбцы. Ошибка строки не роняет прогон (поле llm_error)."""
-    from app.llm import llm_chat
     try:
         instructions = parameters.get("instructions") or ""
         use_kb = bool(parameters.get("knowledge_base", False))
@@ -147,11 +194,12 @@ def execute_llm_line_analysis(parameters, source_object, data_map, current_state
         knowledge = _knowledge_context(instructions, current_state) if use_kb else ""
         system_prompt = _system_prompt(instructions, knowledge, per_line=True)
         llm_json = source_object  # json llm-объекта, пригодный для llm_chat
+        attempts, backoff = _retry_config(source_object)
 
         def analyze(index, row):
             messages = [{"role": "system", "content": system_prompt},
                         {"role": "user", "content": json.dumps(row, ensure_ascii=False, default=str)}]
-            call_ok, content, _usage = llm_chat(llm_json, messages, current_state)
+            call_ok, content, _usage = _llm_chat_with_retry(llm_json, messages, current_state, attempts, backoff)
             if not call_ok:
                 return index, {**row, "llm_error": str(content)}
             generated = _parse_json_object(content)
@@ -176,7 +224,6 @@ def execute_llm_line_analysis(parameters, source_object, data_map, current_state
 
 def execute_llm_data_analysis(parameters, source_object, data_map, current_state):
     """Анализ всего набора одним вызовом: на выходе [{}] по инструкции (сводки/выводы/агрегаты)."""
-    from app.llm import llm_chat
     try:
         instructions = parameters.get("instructions") or ""
         use_kb = bool(parameters.get("knowledge_base", False))
@@ -189,8 +236,9 @@ def execute_llm_data_analysis(parameters, source_object, data_map, current_state
         system_prompt = _system_prompt(instructions, knowledge, per_line=False)
         messages = [{"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(rows, ensure_ascii=False, default=str)}]
+        attempts, backoff = _retry_config(source_object)
 
-        call_ok, content, _usage = llm_chat(source_object, messages, current_state)
+        call_ok, content, _usage = _llm_chat_with_retry(source_object, messages, current_state, attempts, backoff)
         if not call_ok:
             return False, f"llm data_analysis: {content}", currentFuncName(), []
         array = _parse_json_array(content)
