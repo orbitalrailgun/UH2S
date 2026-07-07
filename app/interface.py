@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled, storage_list, storage_load, storage_delete, create_schedule, list_schedules, get_schedule, update_schedule, set_schedule_enabled, delete_schedule, knowledge_save, knowledge_search, knowledge_list, knowledge_get, knowledge_delete
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled, storage_list, storage_load, storage_save, storage_delete, create_schedule, list_schedules, get_schedule, update_schedule, set_schedule_enabled, delete_schedule, knowledge_save, knowledge_search, knowledge_list, knowledge_get, knowledge_delete
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_chat_stream, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -14,6 +14,7 @@ from typing import Dict, Any, Tuple
 from engine import commands_executor
 from app.engine import command_parser, list_source_types, describe_source_functions
 from app.ai_pipeline import AGENT_ACTIONS, extract_action, extract_final_harvester, parse_save_object, parse_memory_save, rank_notes_by_query
+from app.tabular import parse_table_file
 from app.i18n import translate, resolve_language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE
 from app.analyzer import build_execution_mermaid
 from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE, REGEX_USERNAME_RULE
@@ -1418,12 +1419,66 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
             ui.label(tr("storage.title")).style("color: var(--title-color); font-weight:700;")
             with ui.row().classes('gap-2 items-center flex-wrap'):
                 ui.button(tr("storage.btn.refresh"), icon='refresh').on_click(lambda: refresh_storage_grid())
+                ui.button(tr("storage.btn.add"), icon='upload_file').on_click(lambda: add_to_storage_dialog())
                 ui.button(tr("storage.btn.preview"), icon='visibility').on_click(lambda: preview_entry())
                 fmt_select = ui.select(["json_in_zip", "csv_in_zip", "xlsx"], value="json_in_zip",
                                        label=tr("storage.download_fmt")).props('dense').style('min-width: 140px')
                 ui.button(tr("storage.btn.download"), icon='download').on_click(lambda: download_entry())
                 ui.button(tr("storage.btn.delete"), icon='delete', color='negative').on_click(lambda: delete_entry())
             grid_storage = ui.aggrid({}).classes('w-full').style('height: 62vh')
+
+            def add_to_storage_dialog():
+                """Загрузка отдельной таблицы (CSV/XLSX) в storage под ключом с TTL — для инвентаризационных
+                данных вне систем. Ключ и TTL задаются до загрузки; парсинг файла -> storage_save (upsert)."""
+                with ui.dialog() as add_dialog, ui.card().classes('w-full max-w-2xl'):
+                    ui.label(tr("storage.add.title")).style("font-weight:700; color: var(--title-color);")
+                    key_input = ui.input(tr("storage.add.key")).classes('w-full').props('dense')
+                    ttl_input = ui.number(tr("storage.add.ttl"), value=None, min=0).classes('w-full').props('dense')
+                    ui.label(tr("storage.add.ttl_hint")).classes('text-sm').style("opacity:0.75;")
+
+                    def handle_upload(event):
+                        key = (key_input.value or "").strip()
+                        # если ключ не задан — берём имя файла без расширения
+                        if not key:
+                            base = (event.name or "").rsplit(".", 1)[0].strip()
+                            key = base
+                        if not key:
+                            ui.notify(tr("storage.add.need_key"), type="warning")
+                            return
+                        # TTL: пусто -> не истекает (None); иначе целое число секунд
+                        ttl = None
+                        if ttl_input.value not in (None, ""):
+                            try:
+                                ttl = int(ttl_input.value)
+                                if ttl <= 0:
+                                    ttl = None
+                            except (TypeError, ValueError):
+                                ui.notify(tr("storage.add.bad_ttl"), type="warning")
+                                return
+                        try:
+                            content = event.content.read()
+                        except BaseException as read_error:
+                            ui.notify(tr("storage.add.error", error=str(read_error)), type="negative")
+                            return
+                        ok, err, records = parse_table_file(content, event.name)
+                        if not ok:
+                            ui.notify(tr("storage.add.error", error=err), type="negative")
+                            return
+                        if not records:
+                            ui.notify(tr("storage.add.empty"), type="warning")
+                            return
+                        save_result = storage_save(key, records, ttl, current_state)
+                        if not save_result[0]:
+                            ui.notify(tr("settings.common.error", error=save_result[1]), type="negative")
+                            return
+                        ui.notify(tr("storage.add.saved", name=key, rows=len(records)), type="positive")
+                        add_dialog.close()
+                        refresh_storage_grid()
+
+                    ui.upload(label=tr("storage.add.upload"), auto_upload=True, on_upload=handle_upload) \
+                        .props('accept=".csv,.xlsx,.xls"').classes('w-full')
+                    ui.button(tr("settings.btn.close"), on_click=add_dialog.close).classes('hover-glow')
+                add_dialog.open()
 
             def refresh_storage_grid():
                 result = storage_list(current_state)
