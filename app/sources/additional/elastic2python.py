@@ -364,6 +364,24 @@ def _extract_body_error(body_json):
     return (status if isinstance(status, int) else None), reason
 
 
+def _normalize_to_records(data):
+    """Привести ответ elastic/opensearch к list-of-dict (табличный контракт DSL).
+    - list (напр. _cat/indices?format=json) -> как есть (скаляры -> {'value': ...});
+    - dict (напр. _aliases, _resolve -> {index: {...}}) -> [{'name': ключ, ...значение}];
+    - иначе -> []."""
+    if isinstance(data, list):
+        return [d if isinstance(d, dict) else {"value": d} for d in data]
+    if isinstance(data, dict):
+        rows = []
+        for key, value in data.items():
+            if isinstance(value, dict):
+                rows.append({"name": key, **value})
+            else:
+                rows.append({"name": key, "value": value})
+        return rows
+    return []
+
+
 def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, sort, fields, size, search_after_shift, limit, debug = False,
                        max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None, debug_log=None,
                        auth_type="api_key", auth_user=None):
@@ -512,7 +530,47 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
         return True, "OK", "data_taxi_aggs_requests", output_data
     except BaseException as e:
         return False, f"elastic2python aggs requests fail:{str(e)}", "data_taxi_aggs_requests", []
-    
+
+
+def data_taxi_list_requests(url, user_agent, api_key, verify_certs, timeout, debug=False,
+                            max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None,
+                            auth_type="api_key", auth_user=None):
+    """GET-запрос метаданных через console-proxy и нормализация ответа в list-of-dict.
+    Метод (GET) и путь (напр. /_cat/indices?format=json, /_cat/aliases?format=json, /_resolve/index/*)
+    закодированы в самом url (&method=GET) — тело не отправляем. Возврат (ok, msg, func, records)."""
+    import requests
+    from app.sources.additional.retry import retry_call, RetryableError
+    headers = _console_proxy_headers(user_agent, _build_auth_header(auth_type, auth_user, api_key))
+    retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+
+    def post():
+        resp = requests.post(url, headers=headers, verify=verify_certs, timeout=timeout)
+        if debug:
+            print(resp, resp.status_code)
+        if resp.status_code in retry_statuses:
+            raise RetryableError(f"status {resp.status_code}", resp.status_code)
+        try:
+            body_json = resp.json()
+        except BaseException:
+            body_json = None
+        # тело-ошибка (elastic {error,status} или OSD {error,message,statusCode})
+        if isinstance(body_json, dict) and "error" in body_json:
+            body_status, reason = _extract_body_error(body_json)
+            if isinstance(body_status, int) and (body_status == 429 or body_status >= 500):
+                raise RetryableError(f"elastic body status {body_status}: {reason}", body_status)
+            raise ValueError(f"elastic error (status {body_status}): {reason}")
+        if resp.status_code not in (200, 201):
+            raise ValueError(f"fail response code {resp.status_code}: {resp.text[:500]}")
+        return body_json
+
+    try:
+        data = retry_call(post, attempts=max_retries + 1, backoff=retry_backoff,
+                          retryable_exceptions=retryable, on_retry=on_retry)
+        return True, "OK", "data_taxi_list_requests", _normalize_to_records(data)
+    except BaseException as e:
+        return False, f"elastic2python list requests fail:{str(e)}", "data_taxi_list_requests", []
+
+
 def data_taxi_csv_downloader(elastic_client, index, query, sort, fields, size, search_after, search_after_shift, filename, writemode):
     import pandas # интерфейс для csv и как способ удалить дубликаты
     output_data = []

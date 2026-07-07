@@ -2,7 +2,8 @@
 import base64
 import unittest
 
-from app.sources.additional.elastic2python import _build_auth_header, _console_proxy_headers, _extract_body_error
+from app.sources.additional.elastic2python import (_build_auth_header, _console_proxy_headers,
+                                                   _extract_body_error, _normalize_to_records)
 
 
 class TestElasticAuthHeader(unittest.TestCase):
@@ -54,6 +55,30 @@ class TestExtractBodyError(unittest.TestCase):
     def test_missing_status_is_none(self):
         status, _ = _extract_body_error({"error": "boom"})
         self.assertIsNone(status)
+
+
+class TestNormalizeToRecords(unittest.TestCase):
+    def test_cat_indices_list_passthrough(self):
+        # _cat/indices?format=json -> список готовых dict, возвращаем как есть
+        rows = _normalize_to_records([{"index": "logs-1", "health": "green"}, {"index": "logs-2"}])
+        self.assertEqual(rows, [{"index": "logs-1", "health": "green"}, {"index": "logs-2"}])
+
+    def test_aliases_dict_to_rows(self):
+        # _aliases -> {index: {...}} нормализуем в строки с ключом name
+        rows = _normalize_to_records({"logs-1": {"aliases": {"cur": {}}}})
+        self.assertEqual(rows, [{"name": "logs-1", "aliases": {"cur": {}}}])
+
+    def test_scalar_list(self):
+        self.assertEqual(_normalize_to_records(["a", "b"]), [{"value": "a"}, {"value": "b"}])
+
+    def test_other_is_empty(self):
+        self.assertEqual(_normalize_to_records(42), [])
+
+
+class TestListIndicesRegistered(unittest.TestCase):
+    def test_engine_map_has_list_indices(self):
+        from app.engine import ENGINE_SOURCES_AND_FUNCTIONS_MAP as M
+        self.assertIn("list_indices", M["elastic_requests"]["functions"])
 
 
 if __name__ == "__main__":

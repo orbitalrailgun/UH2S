@@ -113,6 +113,42 @@ def execute_elastic_aggs(parameters, source_object, data_map, current_state):
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
     
+# функция получения списка индексов/паттернов (что вообще можно смотреть существующими функциями)
+def execute_elastic_list_indices(parameters, source_object, data_map, current_state):
+    """Список индексов/алиасов через console-proxy. url задаёт цель, напр.
+    .../api/console/proxy?path=/_cat/indices?format=json&method=GET (или _cat/aliases, _resolve/index/*).
+    Возврат — list-of-dict (для _cat/*?format=json это готовые строки index/health/docs.count/... )."""
+    source = source_object
+    query = parameters
+    auth_kwargs = _auth_kwargs(source)
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"start", currentFuncName(), current_state))
+        list_result = elastic2python.data_taxi_list_requests(
+            query["url"],
+            f'{current_state["app_name"]}/{current_state["app_version"]}',
+            source["key"]["value"],
+            source.get("verify_certs", False),
+            source.get("request_timeout", 300),
+            debug = False,
+            max_retries=source.get("max_retries", 2),
+            retry_backoff=source.get("retry_backoff_seconds", 0.5),
+            retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
+            on_retry=_make_retry_logger(current_state, currentFuncName()),
+            **auth_kwargs)
+        if list_result[0] == False:
+            error_message = f"list_result is false: {list_result[1]}"
+            logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), []
+
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done", currentFuncName(), current_state))
+        return True, "OK", currentFuncName(), list_result[3]
+
+    except BaseException as e:
+        error_message = f"list indices fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), []
+
+
 # функция построения цепочки иерархии для выбранного процесса pid
 def execute_function_linux_pid_hierarchy_elastic_requests(parameters, source_object, data_map, current_state):
     source = source_object

@@ -11,7 +11,7 @@ from app.validation import json_validate
 # импорт источников
 from app.sources.netbox import execute_netbox_search, execute_netbox_search_cidr_by_ipaddress
 from app.sources.elastic import execute_elasctic_query_via_client, execute_elasctic_aggs_via_client, execute_function_linux_pid_hierarchy_elastic, execute_function_linux_pid_siblings_elastic
-from app.sources.elastic_requests import execute_elastic_query as execute_elasctic_query_via_requests, execute_elastic_aggs as execute_elasctic_aggs_via_requests, execute_function_linux_pid_hierarchy_elastic_requests, execute_function_linux_pid_siblings_elastic_requests
+from app.sources.elastic_requests import execute_elastic_query as execute_elasctic_query_via_requests, execute_elastic_aggs as execute_elasctic_aggs_via_requests, execute_function_linux_pid_hierarchy_elastic_requests, execute_function_linux_pid_siblings_elastic_requests, execute_elastic_list_indices
 from app.sources.opensearch import execute_opensearch_query, execute_opensearch_aggs
 from app.sources.postgresql import execute_postgresql 
 from app.sources.sqlite3 import execute_sqlite3
@@ -158,6 +158,17 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                 },
                 "functions":{
                     "query": execute_elasctic_aggs_via_requests,
+                    #"converter":lambda: None
+                }
+            },
+            "list_indices":{
+                # список индексов/алиасов (что вообще можно смотреть). url указывает на цель через
+                # console-proxy: _cat/indices?format=json (или _cat/aliases, _resolve/index/*), method=GET.
+                "required":{
+                    "url":"https://elastic.ru/api/console/proxy?path=/_cat/indices?format=json&method=GET",
+                },
+                "functions":{
+                    "query": execute_elastic_list_indices,
                     #"converter":lambda: None
                 }
             },
