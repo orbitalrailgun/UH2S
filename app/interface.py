@@ -1436,12 +1436,14 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     ttl_input = ui.number(tr("storage.add.ttl"), value=None, min=0).classes('w-full').props('dense')
                     ui.label(tr("storage.add.ttl_hint")).classes('text-sm').style("opacity:0.75;")
 
-                    def handle_upload(event):
+                    async def handle_upload(event):
+                        # NiceGUI 3.14: событие несёт event.file (FileUpload) с .name и async .read()
+                        upload_file = event.file
+                        file_name = getattr(upload_file, "name", "") or ""
                         key = (key_input.value or "").strip()
                         # если ключ не задан — берём имя файла без расширения
                         if not key:
-                            base = (event.name or "").rsplit(".", 1)[0].strip()
-                            key = base
+                            key = file_name.rsplit(".", 1)[0].strip()
                         if not key:
                             ui.notify(tr("storage.add.need_key"), type="warning")
                             return
@@ -1456,11 +1458,11 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                                 ui.notify(tr("storage.add.bad_ttl"), type="warning")
                                 return
                         try:
-                            content = event.content.read()
+                            content = await upload_file.read()
                         except BaseException as read_error:
                             ui.notify(tr("storage.add.error", error=str(read_error)), type="negative")
                             return
-                        ok, err, records = parse_table_file(content, event.name)
+                        ok, err, records = parse_table_file(content, file_name)
                         if not ok:
                             ui.notify(tr("storage.add.error", error=err), type="negative")
                             return
