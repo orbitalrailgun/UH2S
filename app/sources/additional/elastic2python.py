@@ -1,3 +1,5 @@
+import json  # используется в диагностике (data_taxi_requests) и разборе ответов
+
 # функции преднозначены для опциональной генерации search_after на основе sort и query
 def get_actual_search_after_from_query_and_sort(query, sort):
     # get sort field
@@ -684,7 +686,7 @@ def data_taxi_csv_downloader(elastic_client, index, query, sort, fields, size, s
                 
             # блок обновления search_after 
             if writemode == "append" and taxi_step > 1:
-                search_after = [new_data[search_after_shift][sort_fields[0]]]
+                search_after = [output_data[search_after_shift][sort_fields[0]]]
             else:
                 search_after = [output_data[search_after_shift][sort_fields[0]]]
 

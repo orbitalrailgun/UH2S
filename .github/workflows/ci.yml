@@ -16,10 +16,10 @@ jobs:
   lint-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7          # Node 24 (v4 использовал устаревший Node 20)
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8         # Node 24
         with:
           version: "0.11.21"          # та же версия, что использовалась для генерации uv.lock
           enable-cache: true
@@ -27,9 +27,9 @@ jobs:
       - name: Pin Python 3.12
         run: uv python pin 3.12       # проект требует >=3.12 (match, вложенные кавычки в f-строках)
 
-      # Ядро + инструменты (ruff) из lock — без коннекторов и без тяжёлого llama-cpp-python.
-      # Тесты офлайн и импортируют коннекторы лениво, поэтому для прогона хватает ядра.
-      # Шаг заодно проверяет, что uv.lock реально ставится (--frozen: без переразрешения).
+      # Ядро + инструменты (ruff) из lock — без коннекторов (тесты офлайн и импортируют коннекторы
+      # лениво, поэтому для прогона хватает ядра). Шаг заодно проверяет, что uv.lock согласован и
+      # реально ставится (--frozen: ошибка, если lock разошёлся с pyproject).
       - name: Install deps from lock
         run: uv sync --frozen --extra dev
 

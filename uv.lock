@@ -633,15 +633,6 @@ wheels = [
 ]
 
 [[package]]
-name = "diskcache"
-version = "5.6.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3f/21/1c1ffc1a039ddcc459db43cc108658f32c57d271d7289a2794e401d0fdb6/diskcache-5.6.3.tar.gz", hash = "sha256:2c3a3fa2743d8535d832ec61c2054a1641f41775aa7c556758a109941e33e4fc", size = 67916, upload-time = "2023-08-31T06:12:00.316Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/27/4570e78fc0bf5ea0ca45eb1de3818a23787af9b390c0b0a0033a1b8236f9/diskcache-5.6.3-py3-none-any.whl", hash = "sha256:5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19", size = 45550, upload-time = "2023-08-31T06:11:58.822Z" },
-]
-
-[[package]]
 name = "dnspython"
 version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1378,18 +1369,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/06/7399a607f434119c6e1fdc8ec89a8d51ccccadf3341dee4ead6bd14caaf5/kiwisolver-1.5.0-graalpy312-graalpy250_312_native-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c31c13da98624f957b0fb1b5bae5383b2333c2c3f6793d9825dd5ce79b525cb7", size = 194295, upload-time = "2026-03-09T13:15:38.22Z" },
     { url = "https://files.pythonhosted.org/packages/b5/91/53255615acd2a1eaca307ede3c90eb550bae9c94581f8c00081b6b1c8f44/kiwisolver-1.5.0-graalpy312-graalpy250_312_native-win_amd64.whl", hash = "sha256:1f1489f769582498610e015a8ef2d36f28f505ab3096d0e16b4858a9ec214f57", size = 75987, upload-time = "2026-03-09T13:15:39.65Z" },
 ]
-
-[[package]]
-name = "llama-cpp-python"
-version = "0.3.32"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "diskcache" },
-    { name = "jinja2" },
-    { name = "numpy" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/18/c8/3eb9c10c138eaa9d6148471701476169322eafbd825fdc13ec326552b516/llama_cpp_python-0.3.32.tar.gz", hash = "sha256:b06502361770f82eb08b7f1a192eb084b9ead2b88fe32cda8c397a2782eabde6", size = 70308017, upload-time = "2026-06-29T05:59:48.626Z" }
 
 [[package]]
 name = "lxml"
@@ -3039,7 +3018,6 @@ all = [
     { name = "duckdb" },
     { name = "elasticsearch" },
     { name = "fastmcp" },
-    { name = "llama-cpp-python" },
     { name = "matplotlib" },
     { name = "mysql-connector-python" },
     { name = "numpy" },
@@ -3078,9 +3056,6 @@ connectors = [
 dev = [
     { name = "ruff" },
 ]
-llama = [
-    { name = "llama-cpp-python" },
-]
 mcp = [
     { name = "fastmcp" },
 ]
@@ -3100,8 +3075,6 @@ requires-dist = [
     { name = "elasticsearch", marker = "extra == 'connectors'" },
     { name = "fastmcp", marker = "extra == 'all'" },
     { name = "fastmcp", marker = "extra == 'mcp'" },
-    { name = "llama-cpp-python", marker = "extra == 'all'" },
-    { name = "llama-cpp-python", marker = "extra == 'llama'" },
     { name = "matplotlib", marker = "extra == 'all'" },
     { name = "matplotlib", marker = "extra == 'connectors'" },
     { name = "mysql-connector-python", marker = "extra == 'all'" },
@@ -3136,7 +3109,7 @@ requires-dist = [
     { name = "scienceplots", marker = "extra == 'all'" },
     { name = "scienceplots", marker = "extra == 'connectors'" },
 ]
-provides-extras = ["sso", "mcp", "connectors", "llama", "dev", "all"]
+provides-extras = ["sso", "mcp", "connectors", "dev", "all"]
 
 [[package]]
 name = "uncalled-for"

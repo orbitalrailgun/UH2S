@@ -73,7 +73,9 @@ package = false   # UH2S запускается как приложение (fro
 [tool.ruff]
 target-version = "py312"
 line-length = 140
-extend-exclude = [".venv", "build", "dist"]
+# teleport — непортированная заглушка (в движке закомментирована, ссылается на ещё не перенесённые
+# хелперы вроде get_data_from_cache); исключаем из линта, пока источник не мигрирован.
+extend-exclude = [".venv", "build", "dist", "app/sources/teleport.py"]
 
 [tool.ruff.lint]
 # Только «реальные ошибки», а не стиль: синтаксис (E9) и подмножество pyflakes про баги —
