@@ -20,10 +20,12 @@ jobs:
 
       # uv ставим официальным установочным скриптом (стабильный канонический URL astral) — без
       # экшена setup-uv, чтобы не зависеть от плавающих мажорных тегов и не тянуть Node-20 экшен.
+      # Каталог фиксируем через UV_INSTALL_DIR (совпадает с тем, что кладём в PATH) и проверяем uv --version.
       - name: Install uv
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/uv" --version
 
       - name: Pin Python 3.12
         run: uv python pin 3.12       # проект требует >=3.12 (match, вложенные кавычки в f-строках)
