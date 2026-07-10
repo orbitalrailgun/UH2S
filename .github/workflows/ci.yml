@@ -18,11 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7          # Node 24 (v4 использовал устаревший Node 20)
 
+      # uv ставим официальным установочным скриптом (стабильный канонический URL astral) — без
+      # экшена setup-uv, чтобы не зависеть от плавающих мажорных тегов и не тянуть Node-20 экшен.
       - name: Install uv
-        uses: astral-sh/setup-uv@v8         # Node 24
-        with:
-          version: "0.11.21"          # та же версия, что использовалась для генерации uv.lock
-          enable-cache: true
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Pin Python 3.12
         run: uv python pin 3.12       # проект требует >=3.12 (match, вложенные кавычки в f-строках)
