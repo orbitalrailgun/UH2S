@@ -9,6 +9,7 @@
 Запуск:  python3 -m unittest discover -s tests -t .
 Эти тесты не требуют БД и сторонних пакетов (command_parser работает офлайн).
 """
+import importlib.util
 import unittest
 
 from app.engine import command_parser, get_variable_type, execute_calc
@@ -17,6 +18,11 @@ try:
     from app.engine import split_top_level
 except ImportError:  # появится после внедрения Fix #1
     split_top_level = None
+
+# APPLY-исполнение (run_apply_command / run_apply_script_command) требует pandas для дедупликации.
+# В облегчённом окружении (CI ставит только ядро) pandas нет — такие тесты пропускаем, а не валим.
+_HAS_PANDAS = importlib.util.find_spec("pandas") is not None
+requires_pandas = unittest.skipUnless(_HAS_PANDAS, "требуется pandas (не установлен в облегчённом окружении)")
 
 CS = {"app_name": "test", "app_version": "0", "username": "tester"}
 
@@ -374,6 +380,7 @@ class TestInjectedVariables(unittest.TestCase):
         self.assertEqual(variables["y"], 12)   # CALC(x=10, 2, PLUS)
 
 
+@requires_pandas
 class TestApplyExec(unittest.TestCase):
     """Исполнение APPLY (построчный fan-out) на фейковом источнике, без БД."""
 
@@ -436,6 +443,7 @@ class TestApplyExec(unittest.TestCase):
         self.assertFalse(res[0])
 
 
+@requires_pandas
 class TestApplyScriptExec(unittest.TestCase):
     """APPLY поверх вызова скрипта: под-скрипт прогоняется на каждую строку (офлайн, без БД)."""
 
@@ -798,6 +806,7 @@ class TestDefInjection(unittest.TestCase):
         self.assertEqual(variables["t"], "plain text")
 
 
+@requires_pandas
 class TestApplyParallel(unittest.TestCase):
     """run_apply_command исполняет строки параллельно, но сохраняет порядок вывода и applied_*.
     Работает офлайн: function_object подменяется фейком, process_injections — реальный."""
