@@ -4,7 +4,7 @@ import unittest
 
 import app.sources.llm_source as llm_source
 from app.sources.llm_source import (_parse_json_object, _parse_json_array, _merge_generated,
-                                    _is_transient_error, _extract_note, _scratchpad_block,
+                                    _is_transient_error, _extract_note, _scratchpad_block, _notes_width,
                                     execute_llm_line_analysis, execute_llm_data_analysis)
 
 STATE = {"app_name": "UH2S", "app_version": "test", "username": "tester", "processes": 4}
@@ -216,6 +216,14 @@ class TestTempNotes(unittest.TestCase):
     def test_scratchpad_block_empty(self):
         self.assertEqual(_scratchpad_block([]), "")
 
+    def test_notes_width_parsing(self):
+        self.assertEqual(_notes_width({"temp_notes": 5}), 5)
+        self.assertEqual(_notes_width({"temp_notes": 0}), 0)     # 0 = выключено
+        self.assertEqual(_notes_width({}), 0)                    # по умолчанию выключено
+        self.assertEqual(_notes_width({"temp_notes": -3}), 0)    # отрицательное = выключено
+        self.assertEqual(_notes_width({"temp_notes": "x"}), 0)   # невалидное = выключено
+        self.assertEqual(_notes_width({"temp_notes": True}), 30)  # совместимость с bool
+
     def test_notes_accumulate_and_visible_next_rows(self):
         import app.llm
         seen = []
@@ -226,7 +234,7 @@ class TestTempNotes(unittest.TestCase):
 
         app.llm.llm_chat = chat
         ok, _msg, _fn, rows = execute_llm_line_analysis(
-            {"data": "t", "instructions": "go", "temp_notes": True}, {},
+            {"data": "t", "instructions": "go", "temp_notes": 10}, {},
             {"t": [{"ip": "1"}, {"ip": "2"}, {"ip": "3"}]}, STATE)
         self.assertTrue(ok)
         # _note НЕ попадает в столбцы
@@ -235,6 +243,25 @@ class TestTempNotes(unittest.TestCase):
         self.assertNotIn("Заметки прогона", seen[0])
         self.assertIn("Заметки прогона", seen[1])
         self.assertIn("Заметки прогона", seen[2])
+
+    def test_notes_buffer_width_caps_scratchpad(self):
+        import app.llm
+        seen = []
+
+        def chat(llm_json, messages, current_state):
+            seen.append(messages[-1]["content"])
+            idx = len(seen)
+            return True, '{"v":"ok","_note":"note%d"}' % idx, {"prompt_tokens": 1, "completion_tokens": 1}
+
+        app.llm.llm_chat = chat
+        # ширина буфера 2: 4-я строка видит только 2 последние заметки (note2, note3), не note1
+        ok, _msg, _fn, _rows = execute_llm_line_analysis(
+            {"data": "t", "instructions": "go", "temp_notes": 2}, {},
+            {"t": [{"i": 1}, {"i": 2}, {"i": 3}, {"i": 4}]}, STATE)
+        self.assertTrue(ok)
+        self.assertIn("note2", seen[-1])
+        self.assertIn("note3", seen[-1])
+        self.assertNotIn("note1", seen[-1])
 
     def test_notes_off_keeps_v1_no_note_instruction(self):
         import app.llm
@@ -246,9 +273,9 @@ class TestTempNotes(unittest.TestCase):
 
         app.llm.llm_chat = chat
         ok, _msg, _fn, rows = execute_llm_line_analysis(
-            {"data": "t", "instructions": "go"}, {}, {"t": [{"ip": "1"}]}, STATE)
+            {"data": "t", "instructions": "go", "temp_notes": 0}, {}, {"t": [{"ip": "1"}]}, STATE)
         self.assertTrue(ok)
-        self.assertNotIn("_note", seen[0])  # без temp_notes инструкции о заметках нет
+        self.assertNotIn("_note", seen[0])  # temp_notes=0 -> инструкции о заметках нет
 
 
 class TestLlmRegisteredAndOllamaRemoved(unittest.TestCase):

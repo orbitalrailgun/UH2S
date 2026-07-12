@@ -217,21 +217,32 @@ def _workers(source_object, current_state):
         return 4
 
 
-# сколько последних заметок прогона держать в scratchpad (защита от разрастания контекста)
-_SCRATCHPAD_MAX = 30
+def _notes_width(parameters):
+    """Ширина буфера временных заметок из параметра temp_notes (int). 0/отрицательное/невалидное -> 0
+    (заметки выключены). Совместимость: булев True трактуем как небольшую ширину по умолчанию."""
+    value = parameters.get("temp_notes", 0)
+    if isinstance(value, bool):
+        return 30 if value else 0
+    try:
+        width = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return width if width > 0 else 0
 
 
 def execute_llm_line_analysis(parameters, source_object, data_map, current_state):
     """Построчный анализ: на КАЖДУЮ строку data — вызов LLM; JSON-ответ добавляется полями к строке.
     На выходе исходная таблица + новые столбцы. Ошибка строки не роняет прогон (поле llm_error).
 
-    temp_notes=true -> ПОСЛЕДОВАТЕЛЬНЫЙ проход с run-scoped заметками: модель может класть в ответ поле
-    "_note", которое видно на следующих строках (кластеризация/корреляция). Без него — как раньше,
-    строки независимы и обрабатываются ПАРАЛЛЕЛЬНО (max_threads)."""
+    temp_notes=<int N> (>0) -> ПОСЛЕДОВАТЕЛЬНЫЙ проход с run-scoped заметками: модель может класть в ответ
+    поле "_note", видимое на следующих строках (кластеризация/корреляция); N — ширина буфера (сколько
+    последних заметок держать). temp_notes=0 (по умолчанию) -> заметки выключены, строки независимы и
+    обрабатываются ПАРАЛЛЕЛЬНО (max_threads)."""
     try:
         instructions = parameters.get("instructions") or ""
         use_kb = bool(parameters.get("knowledge_base", False))
-        use_notes = bool(parameters.get("temp_notes", False))
+        notes_width = _notes_width(parameters)
+        use_notes = notes_width > 0
         ok, err, rows = _resolve_table(parameters, data_map, currentFuncName(), current_state)
         if not ok:
             logger_log(syslog.LOG_ERR, get_log_message(f"line_analysis: {err}", currentFuncName(), current_state))
@@ -268,8 +279,8 @@ def execute_llm_line_analysis(parameters, source_object, data_map, current_state
                 results.append(merged)
                 if note:
                     scratchpad.append(note)
-                    if len(scratchpad) > _SCRATCHPAD_MAX:
-                        scratchpad = scratchpad[-_SCRATCHPAD_MAX:]
+                    if len(scratchpad) > notes_width:
+                        scratchpad = scratchpad[-notes_width:]
             return True, "OK", currentFuncName(), results
 
         results = [None] * len(rows)
