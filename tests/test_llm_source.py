@@ -4,7 +4,8 @@ import unittest
 
 import app.sources.llm_source as llm_source
 from app.sources.llm_source import (_parse_json_object, _parse_json_array, _merge_generated,
-                                    _is_transient_error, execute_llm_line_analysis, execute_llm_data_analysis)
+                                    _is_transient_error, _extract_note, _scratchpad_block,
+                                    execute_llm_line_analysis, execute_llm_data_analysis)
 
 STATE = {"app_name": "UH2S", "app_version": "test", "username": "tester", "processes": 4}
 
@@ -188,6 +189,66 @@ class TestRetry(unittest.TestCase):
         self.assertTrue(ok)  # прогон не падает
         self.assertIn("llm_error", rows[0])
         self.assertEqual(calls["n"], 1)  # 400 не повторяется
+
+
+class TestTempNotes(unittest.TestCase):
+    def setUp(self):
+        import app.llm
+        self._orig = app.llm.llm_chat
+
+    def tearDown(self):
+        import app.llm
+        app.llm.llm_chat = self._orig
+
+    def test_extract_note_strips_field(self):
+        note, remainder = _extract_note({"verdict": "x", "_note": "seen 1.1.1.1"})
+        self.assertEqual(note, "seen 1.1.1.1")
+        self.assertEqual(remainder, {"verdict": "x"})
+
+    def test_extract_note_absent(self):
+        self.assertEqual(_extract_note({"verdict": "x"}), (None, {"verdict": "x"}))
+
+    def test_extract_note_empty_ignored(self):
+        note, remainder = _extract_note({"verdict": "x", "_note": "  "})
+        self.assertIsNone(note)
+        self.assertNotIn("_note", remainder)
+
+    def test_scratchpad_block_empty(self):
+        self.assertEqual(_scratchpad_block([]), "")
+
+    def test_notes_accumulate_and_visible_next_rows(self):
+        import app.llm
+        seen = []
+
+        def chat(llm_json, messages, current_state):
+            seen.append(messages[-1]["content"])
+            return True, '{"verdict":"ok","_note":"n"}', {"prompt_tokens": 1, "completion_tokens": 1}
+
+        app.llm.llm_chat = chat
+        ok, _msg, _fn, rows = execute_llm_line_analysis(
+            {"data": "t", "instructions": "go", "temp_notes": True}, {},
+            {"t": [{"ip": "1"}, {"ip": "2"}, {"ip": "3"}]}, STATE)
+        self.assertTrue(ok)
+        # _note НЕ попадает в столбцы
+        self.assertTrue(all("_note" not in r for r in rows))
+        # первая строка без scratchpad, последующие — со scratchpad предыдущих заметок
+        self.assertNotIn("Заметки прогона", seen[0])
+        self.assertIn("Заметки прогона", seen[1])
+        self.assertIn("Заметки прогона", seen[2])
+
+    def test_notes_off_keeps_v1_no_note_instruction(self):
+        import app.llm
+        seen = []
+
+        def chat(llm_json, messages, current_state):
+            seen.append(messages[0]["content"])  # system
+            return True, '{"verdict":"ok"}', {"prompt_tokens": 1, "completion_tokens": 1}
+
+        app.llm.llm_chat = chat
+        ok, _msg, _fn, rows = execute_llm_line_analysis(
+            {"data": "t", "instructions": "go"}, {}, {"t": [{"ip": "1"}]}, STATE)
+        self.assertTrue(ok)
+        self.assertNotIn("_note", seen[0])  # без temp_notes инструкции о заметках нет
 
 
 class TestLlmRegisteredAndOllamaRemoved(unittest.TestCase):

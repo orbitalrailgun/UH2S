@@ -144,8 +144,12 @@ def _knowledge_context(query_text, current_state, limit=5):
         return ""
 
 
-def _system_prompt(instructions, knowledge, per_line):
-    """Системный промпт для line/data анализа: строгий JSON-вывод + инструкция + опц. заметки."""
+# поле в JSON-ответе, куда модель кладёт временную заметку для последующих строк (не попадает в столбцы)
+_NOTE_FIELD = "_note"
+
+
+def _system_prompt(instructions, knowledge, per_line, temp_notes=False):
+    """Системный промпт для line/data анализа: строгий JSON-вывод + инструкция + опц. заметки/scratchpad."""
     if per_line:
         head = ("Ты анализируешь ОДНУ строку данных (JSON-объект). Выполни инструкцию и верни РОВНО ОДИН "
                 "JSON-объект ТОЛЬКО с новыми полями (исходные поля не повторяй). Никакого текста вне JSON.")
@@ -155,7 +159,33 @@ def _system_prompt(instructions, knowledge, per_line):
     parts = [head, f"Инструкция:\n{instructions}"]
     if knowledge:
         parts.append("Справочные заметки из базы знаний (используй при необходимости):\n" + knowledge)
+    if per_line and temp_notes:
+        parts.append(
+            f"Строки обрабатываются ПО ПОРЯДКУ. Ты можешь вести временные заметки в рамках этого прогона: "
+            f"добавь в свой JSON НЕОБЯЗАТЕЛЬНОЕ строковое поле \"{_NOTE_FIELD}\" — краткое наблюдение, полезное "
+            f"для последующих строк (напр. замеченный паттерн, кандидат в кластер). Это поле — служебное, оно "
+            f"НЕ станет столбцом результата. Ранее сделанные заметки будут переданы тебе в блоке «Заметки прогона».")
     return "\n\n".join(parts)
+
+
+def _extract_note(generated):
+    """Вынуть служебное поле _note из JSON-ответа строки -> (note_str|None, generated_без__note).
+    Заметка не должна попадать в столбцы результата."""
+    if _NOTE_FIELD not in generated:
+        return None, generated
+    remainder = {k: v for k, v in generated.items() if k != _NOTE_FIELD}
+    note = generated.get(_NOTE_FIELD)
+    if note is None or (isinstance(note, str) and not note.strip()):
+        return None, remainder
+    return (note if isinstance(note, str) else json.dumps(note, ensure_ascii=False)), remainder
+
+
+def _scratchpad_block(scratchpad):
+    """Текстовый блок накопленных заметок прогона для подмешивания в промпт строки."""
+    if not scratchpad:
+        return ""
+    lines = "\n".join(f"- {note}" for note in scratchpad)
+    return f"Заметки прогона (сделаны на предыдущих строках):\n{lines}"
 
 
 def _resolve_table(parameters, data_map, func_name, current_state):
@@ -187,12 +217,21 @@ def _workers(source_object, current_state):
         return 4
 
 
+# сколько последних заметок прогона держать в scratchpad (защита от разрастания контекста)
+_SCRATCHPAD_MAX = 30
+
+
 def execute_llm_line_analysis(parameters, source_object, data_map, current_state):
-    """Построчный анализ: на КАЖДУЮ строку data — независимый вызов LLM; JSON-ответ добавляется полями
-    к строке. На выходе исходная таблица + новые столбцы. Ошибка строки не роняет прогон (поле llm_error)."""
+    """Построчный анализ: на КАЖДУЮ строку data — вызов LLM; JSON-ответ добавляется полями к строке.
+    На выходе исходная таблица + новые столбцы. Ошибка строки не роняет прогон (поле llm_error).
+
+    temp_notes=true -> ПОСЛЕДОВАТЕЛЬНЫЙ проход с run-scoped заметками: модель может класть в ответ поле
+    "_note", которое видно на следующих строках (кластеризация/корреляция). Без него — как раньше,
+    строки независимы и обрабатываются ПАРАЛЛЕЛЬНО (max_threads)."""
     try:
         instructions = parameters.get("instructions") or ""
         use_kb = bool(parameters.get("knowledge_base", False))
+        use_notes = bool(parameters.get("temp_notes", False))
         ok, err, rows = _resolve_table(parameters, data_map, currentFuncName(), current_state)
         if not ok:
             logger_log(syslog.LOG_ERR, get_log_message(f"line_analysis: {err}", currentFuncName(), current_state))
@@ -201,26 +240,44 @@ def execute_llm_line_analysis(parameters, source_object, data_map, current_state
             return True, "empty input", currentFuncName(), []
 
         knowledge = _knowledge_context(instructions, current_state) if use_kb else ""
-        system_prompt = _system_prompt(instructions, knowledge, per_line=True)
+        system_prompt = _system_prompt(instructions, knowledge, per_line=True, temp_notes=use_notes)
         llm_json = source_object  # json llm-объекта, пригодный для llm_chat
         attempts, backoff = _retry_config(source_object)
 
-        def analyze(index, row):
+        def call_row(row, scratchpad_text):
+            user_content = json.dumps(row, ensure_ascii=False, default=str)
+            if scratchpad_text:
+                user_content = scratchpad_text + "\n\nСтрока для анализа:\n" + user_content
             messages = [{"role": "system", "content": system_prompt},
-                        {"role": "user", "content": json.dumps(row, ensure_ascii=False, default=str)}]
+                        {"role": "user", "content": user_content}]
             call_ok, content, _usage = _llm_chat_with_retry(llm_json, messages, current_state, attempts, backoff)
             if not call_ok:
-                return index, {**row, "llm_error": str(content)}
+                return {**row, "llm_error": str(content)}, None
             generated = _parse_json_object(content)
             if generated is None:
-                return index, {**row, "llm_error": "не удалось разобрать JSON из ответа LLM"}
-            return index, _merge_generated(row, generated)
+                return {**row, "llm_error": "не удалось разобрать JSON из ответа LLM"}, None
+            note, generated = _extract_note(generated) if use_notes else (None, generated)
+            return _merge_generated(row, generated), note
+
+        # temp_notes -> последовательно, накапливая заметки; иначе -> параллельно (строки независимы)
+        if use_notes:
+            results = []
+            scratchpad = []
+            for row in rows:
+                merged, note = call_row(row, _scratchpad_block(scratchpad))
+                results.append(merged)
+                if note:
+                    scratchpad.append(note)
+                    if len(scratchpad) > _SCRATCHPAD_MAX:
+                        scratchpad = scratchpad[-_SCRATCHPAD_MAX:]
+            return True, "OK", currentFuncName(), results
 
         results = [None] * len(rows)
         with ThreadPoolExecutor(max_workers=_workers(source_object, current_state)) as pool:
-            futures = [pool.submit(analyze, i, r) for i, r in enumerate(rows)]
+            futures = {pool.submit(call_row, row, ""): i for i, row in enumerate(rows)}
             for future in as_completed(futures):
-                index, merged = future.result()
+                index = futures[future]
+                merged, _note = future.result()
                 results[index] = merged
 
         return True, "OK", currentFuncName(), results

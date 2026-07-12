@@ -889,6 +889,8 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                 },
                 "unrequired":{
                     "knowledge_base":False,  # true -> подмешать релевантные заметки из базы знаний в промпт
+                    "temp_notes":False,      # true -> ПОСЛЕДОВАТЕЛЬНЫЙ проход с run-scoped заметками (_note),
+                                             # видимыми на следующих строках (кластеризация/корреляция)
                 },
                 "functions":{
                     "query": execute_llm_line_analysis,
