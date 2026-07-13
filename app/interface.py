@@ -17,7 +17,7 @@ from app.engine import command_parser, list_source_types, describe_source_functi
 from app.ai_pipeline import AGENT_ACTIONS, extract_action, extract_final_harvester, parse_save_object, parse_memory_save, rank_notes_by_query
 from app.tabular import parse_table_file
 from app.reference import (dsl_command_snippets, source_function_entries, script_object_entries,
-                           knowledge_entries, filter_entries, insert_snippet)
+                           knowledge_entries, filter_entries, insert_snippet, extract_search_token)
 from app.i18n import translate, resolve_language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE
 from app.analyzer import build_execution_mermaid
 from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE, REGEX_USERNAME_RULE
@@ -3244,9 +3244,11 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                                 pass
                             return entries
 
-                        with ui.expansion(tr("harv.ref.title"), icon='menu_book', value=False).classes('w-full'):
+                        ref_expansion = ui.expansion(tr("harv.ref.title"), icon='menu_book', value=False).classes('w-full')
+                        with ref_expansion:
                             ui.label(tr("harv.ref.hint")).classes('text-xs opacity-60')
-                            ref_search = ui.input(tr("harv.ref.search")).props('dense clearable').classes('w-full')
+                            # debounce — не перерисовывать список на каждое нажатие клавиши слишком часто
+                            ref_search = ui.input(tr("harv.ref.search")).props('dense clearable debounce=150').classes('w-full')
                             ref_list = ui.element('div').classes('w-full').style('max-height: 40vh; overflow-y: auto; padding: 2px 4px')
                             reference_entries = _build_reference_entries()
 
@@ -3257,10 +3259,11 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                                     if not matched:
                                         ui.label(tr("harv.ref.empty")).classes('text-sm opacity-60')
                                         return
-                                    for entry in matched[:200]:  # верхняя граница на случай большого каталога
+                                    for entry in matched[:100]:  # верхняя граница на случай большого каталога
                                         with ui.row().classes('items-center gap-2 no-wrap w-full'):
                                             snippet = entry["snippet"]
-                                            ui.button(tr("harv.ref.insert"), icon='add').props('dense flat').on_click(
+                                            # стандартная кнопка (не flat) — следует настраиваемой палитре
+                                            ui.button(tr("harv.ref.insert"), icon='add').props('dense').on_click(
                                                 lambda s=snippet: _insert_reference(s))
                                             with ui.column().classes('gap-0'):
                                                 ui.label(f"{entry['group']} · {entry['label']}").classes('text-sm').style(
@@ -3271,9 +3274,20 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                             def _insert_reference(snippet):
                                 codemirror_script.value = insert_snippet(codemirror_script.value, snippet)
 
-                            ref_search.on('keydown.enter', lambda: _render_reference())
-                            ref_search.on('blur', lambda: _render_reference())
-                            ui.button(tr("harv.ref.search"), icon='search').props('dense flat').on_click(lambda: _render_reference())
+                            # авто-поиск при каждом изменении поля (без кнопки поиска)
+                            ref_search.on_value_change(lambda: _render_reference())
+
+                            # зеркалирование: пока справочник раскрыт, токен из текущего ввода в редакторе
+                            # подставляется в поле поиска -> подсказки ищутся по мере набора скрипта
+                            def _mirror_editor_to_search():
+                                if not ref_expansion.value:
+                                    return
+                                token = extract_search_token(codemirror_script.value)
+                                if token and token != (ref_search.value or ""):
+                                    ref_search.value = token  # триггерит on_value_change -> перерисовку
+
+                            codemirror_script.on_value_change(_mirror_editor_to_search)
+                            ref_expansion.on_value_change(_mirror_editor_to_search)
                             _render_reference()
 
                         # сворачиваемый блок прогресса шагов (вариант A): список команд со статусами

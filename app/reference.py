@@ -4,6 +4,7 @@
 
 Запись каталога (entry): {"group", "label", "signature", "snippet", "doc"}.
 """
+import re
 import json
 
 
@@ -15,7 +16,7 @@ def dsl_command_snippets():
          "Переменная: int/float/\"строка\"/true/false/[список]/{словарь}; можно %(имя)X внутри."),
         ("CALC", "CALC(X, Y, operation[, opt]) AS Z",
          'CALC(a, b, "PLUS") AS result',
-         "Операции: PLUS/MINUS/MULT/DEV/POW; TRIM/CONCAT/SPLIT/RE_SEARCH/RE_SUBSTRING; DATETIME_*."),
+         "Операция задаётся 3-м аргументом. Ниже — отдельные записи по каждой операции CALC."),
         ("GET", "GET <source>:<func>(params) AS data",
          'GET source_name:function(param="value") AS data',
          "Вызов источника. Точные функции/параметры — в разделе «Функции источников»."),
@@ -44,8 +45,34 @@ def dsl_command_snippets():
          'NOTIFY my_notifier("текст уведомления")',
          "Отправка уведомления через объект-notifier."),
     ]
-    return [{"group": "DSL", "label": label, "signature": signature, "snippet": snippet, "doc": doc}
-            for label, signature, snippet, doc in items]
+    entries = [{"group": "DSL", "label": label, "signature": signature, "snippet": snippet, "doc": doc}
+               for label, signature, snippet, doc in items]
+    return entries + calc_operation_snippets()
+
+
+def calc_operation_snippets():
+    """Отдельная запись на каждую операцию CALC — чтобы все были находимы поиском (не только PLUS).
+    Формат execute_calc: CALC(X, Y, operation[, optional]) AS Z."""
+    ops = [
+        ("PLUS", 'CALC(a, b, "PLUS") AS sum', "Сложение чисел X+Y."),
+        ("MINUS", 'CALC(a, b, "MINUS") AS diff', "Вычитание X-Y."),
+        ("MULT", 'CALC(a, b, "MULT") AS product', "Умножение X*Y."),
+        ("DEV", 'CALC(a, b, "DEV") AS quotient', "Деление X/Y."),
+        ("POW", 'CALC(a, b, "POW") AS power', "Степень: X в степени Y (или optional)."),
+        ("TRIM", 'CALC(text, "", "TRIM") AS trimmed', "Обрезка строки X; optional — набор символов (по умолчанию пробелы). Y игнорируется."),
+        ("CONCAT", 'CALC(a, b, "CONCAT", " ") AS joined', "Конкатенация X+Y; optional — разделитель."),
+        ("SPLIT", 'CALC(text, ",", "SPLIT") AS parts', "Разбить X по разделителю Y -> список; optional — maxsplit."),
+        ("RE_SEARCH", 'CALC(text, "regex", "RE_SEARCH") AS found', "Поиск regex Y в X -> bool."),
+        ("RE_SUBSTRING", 'CALC(text, "regex", "RE_SUBSTRING") AS match', "Первое совпадение regex Y в X; optional — номер группы."),
+        ("DATETIME_FORMAT", 'CALC(dt, "%Y-%m-%d", "DATETIME_FORMAT", "%d.%m.%Y") AS formatted',
+         "Переформатировать дату-строку X из формата Y в формат optional."),
+        ("UNIXTIME_TO_DATETIME", 'CALC(ts, "%Y-%m-%d %H:%M:%S", "UNIXTIME_TO_DATETIME", "UTC") AS dt',
+         "Unixtime X -> дата-строка в формате Y; optional — таймзона."),
+        ("DATETIME_TO_UNIXTIME", 'CALC(dt, "%Y-%m-%d %H:%M:%S", "DATETIME_TO_UNIXTIME", "UTC") AS ts',
+         "Дата-строка X формата Y -> unixtime (int); optional — таймзона."),
+    ]
+    return [{"group": "CALC", "label": f"CALC {op}", "signature": snippet, "snippet": snippet, "doc": doc}
+            for op, snippet, doc in ops]
 
 
 def format_dsl_literal(value):
@@ -150,6 +177,17 @@ def filter_entries(entries, query):
         if query in haystack:
             result.append(entry)
     return result
+
+
+def extract_search_token(text):
+    """Токен для авто-поиска подсказок из текущего ввода: последнее «слово» последней строки
+    (буквы/цифры/подчёркивание/двоеточие — покрывает source:func). Пусто -> ''.
+    Курсор в обёртке codemirror недоступен, поэтому берём конец текста (типовой ввод — в конце)."""
+    if not text:
+        return ""
+    last_line = text.replace("\r", "").split("\n")[-1]
+    match = re.search(r"[\w:]+$", last_line)
+    return match.group(0) if match else ""
 
 
 def insert_snippet(current_text, snippet):

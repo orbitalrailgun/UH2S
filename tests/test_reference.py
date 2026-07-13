@@ -1,9 +1,9 @@
 """Офлайн-тесты справочника редактора Harvester (app/reference): каталог, сниппеты, фильтр, вставка."""
 import unittest
 
-from app.reference import (dsl_command_snippets, format_dsl_literal, source_function_snippet,
-                           source_function_entries, script_object_entries, knowledge_entries,
-                           filter_entries, insert_snippet)
+from app.reference import (dsl_command_snippets, calc_operation_snippets, format_dsl_literal,
+                           source_function_snippet, source_function_entries, script_object_entries,
+                           knowledge_entries, filter_entries, insert_snippet, extract_search_token)
 
 
 class TestDslSnippets(unittest.TestCase):
@@ -15,6 +15,18 @@ class TestDslSnippets(unittest.TestCase):
     def test_entry_shape(self):
         for e in dsl_command_snippets():
             self.assertEqual(set(e.keys()), {"group", "label", "signature", "snippet", "doc"})
+
+    def test_calc_operations_all_present_and_searchable(self):
+        # каждая операция CALC — отдельная находимая запись (не только PLUS)
+        entries = dsl_command_snippets()
+        for op in ("MINUS", "MULT", "DEV", "POW", "TRIM", "CONCAT", "SPLIT",
+                   "RE_SEARCH", "RE_SUBSTRING", "DATETIME_FORMAT", "UNIXTIME_TO_DATETIME", "DATETIME_TO_UNIXTIME"):
+            self.assertTrue(filter_entries(entries, op), f"CALC {op} должна находиться поиском")
+
+    def test_calc_snippets_have_operation_in_quotes(self):
+        for e in calc_operation_snippets():
+            op = e["label"].split(" ", 1)[1]
+            self.assertIn(f'"{op}"', e["snippet"])
 
 
 class TestFormatLiteral(unittest.TestCase):
@@ -82,6 +94,18 @@ class TestInsertSnippet(unittest.TestCase):
 
     def test_append_trailing_newline(self):
         self.assertEqual(insert_snippet("DEF 1 AS x\n", "GET a:b() AS d"), "DEF 1 AS x\n| GET a:b() AS d")
+
+
+class TestExtractSearchToken(unittest.TestCase):
+    def test_last_word_of_last_line(self):
+        self.assertEqual(extract_search_token("DEF 1 AS x\nGET duckdb_im:quer"), "duckdb_im:quer")
+
+    def test_stops_at_non_word_chars(self):
+        self.assertEqual(extract_search_token('CALC(a, b, "CON'), "CON")
+
+    def test_empty_and_trailing_space(self):
+        self.assertEqual(extract_search_token(""), "")
+        self.assertEqual(extract_search_token("GET a:b() "), "")
 
 
 if __name__ == "__main__":
