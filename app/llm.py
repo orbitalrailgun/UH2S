@@ -82,7 +82,8 @@ PROJECT_DOC = """\
     fan-out: для КАЖДОЙ строки таблицы <data> берётся <колонка> как переменная <x> и подставляется в вызов.
     <unique> — JSON-МАССИВ колонок для дедупликации результата ([] = без дедупа). На выходе к строкам
     добавляются столбцы applied_<x> (исходные значения). ВНИМАНИЕ: скобки [] обязательны.
-- PRINT(имя | "текст") — markdown-вывод. SHOW(table, table|matplotlib[, {params}]) — таблица/график.
+- PRINT(имя | "текст") — markdown-вывод. SHOW(table, table|matplotlib|tree[, {params}]) — таблица/график/дерево.
+  tree: {"transmit":"parent_id_col","receive":"node_id_col","title":"name_col","description":["f1","f2"]}.
 - SAVE(table | [t1,t2], xlsx|csv_in_zip|json_in_zip) [AS file] — скачивание.
 - LOAD(key[, ttl_ignore]) AS d / SAVE(d, storage[, ttl]) AS key — persistent-кэш (TTL).
 - NOTIFY notifier("текст") — уведомление.

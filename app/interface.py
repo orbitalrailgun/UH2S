@@ -16,6 +16,7 @@ from engine import commands_executor
 from app.engine import command_parser, list_source_types, describe_source_functions, list_source_types_struct, describe_source_functions_struct
 from app.ai_pipeline import AGENT_ACTIONS, extract_action, extract_final_harvester, parse_save_object, parse_memory_save, rank_notes_by_query
 from app.tabular import parse_table_file
+from app.tree_builder import build_tree, tree_to_text
 from app.reference import (dsl_command_snippets, source_function_entries, script_object_entries,
                            knowledge_entries, object_get_entries, filter_entries, insert_snippet,
                            extract_search_token)
@@ -465,6 +466,21 @@ def execute_script_api(script_text, current_state):
                     plot_index += 1
                     files.append((f"plot_{plot_index}_{_safe_filename(table)}.png",
                                   _b64.b64decode(plot["b64"]), "image/png"))
+                elif show_type == "tree":
+                    # интерактивного дерева в API нет -> ASCII-дерево в текст
+                    params_raw = (command.get("show_params") or "").strip()
+                    params = json.loads(params_raw) if (params_raw and json_validate(params_raw)) else {}
+                    transmit = (params.get("transmit") or "").strip()
+                    receive = (params.get("receive") or "").strip()
+                    if not transmit or not receive:
+                        text_parts.append("*SHOW tree: нужны параметры transmit и receive*")
+                    else:
+                        description_fields = params.get("description")
+                        if isinstance(description_fields, str):
+                            description_fields = [description_fields]
+                        roots, _meta = build_tree(data, transmit, receive, params.get("title"),
+                                                  description_fields, params.get("separator", " | "))
+                        text_parts.append("```\n" + tree_to_text(roots) + "\n```")
                 else:  # table -> markdown в текст
                     text_parts.append(records_to_markdown(data))
 
@@ -2881,6 +2897,43 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                     command["_info"] = f"matplotlib error: {str(plot_error)}"
                     ui.markdown(f"*SHOW {_md_escape(command['_info'])}*")
                     return False
+            elif show_type == "tree":
+                # SHOW(table, tree, {"transmit":"parent_id_col","receive":"node_id_col",
+                #                    "title":"name_col","description":["f1","f2"],"separator":" | "})
+                if not params_raw or not json_validate(params_raw):
+                    command["_info"] = tr("harv.show.tree_params")
+                    ui.markdown(f"*SHOW: {_md_escape(command['_info'])}*")
+                    return False
+                params = json.loads(params_raw)
+                transmit = (params.get("transmit") or "").strip()
+                receive = (params.get("receive") or "").strip()
+                if not transmit or not receive:
+                    command["_info"] = tr("harv.show.tree_params")
+                    ui.markdown(f"*SHOW: {_md_escape(command['_info'])}*")
+                    return False
+                description_fields = params.get("description")
+                if isinstance(description_fields, str):
+                    description_fields = [description_fields]
+                try:
+                    roots, meta = build_tree(data, transmit, receive, params.get("title"),
+                                             description_fields, params.get("separator", " | "))
+                except BaseException as tree_error:
+                    command["_info"] = f"tree error: {str(tree_error)}"
+                    ui.markdown(f"*SHOW: {_md_escape(command['_info'])}*")
+                    return False
+                if not roots:
+                    command["_info"] = tr("harv.show.tree_empty")
+                    ui.markdown(f"*SHOW: {_md_escape(command['_info'])}*")
+                    return False
+                tree = ui.tree(roots, label_key="label", node_key="id").classes('w-full')
+                # описание узла показывается при раскрытии (default-body slot); пустое не рендерим
+                tree.add_slot('default-body', '''
+                    <div v-if="props.node.description" class="text-xs" style="opacity:0.75; white-space:pre-wrap">
+                        {{ props.node.description }}
+                    </div>
+                ''')
+                command["_info"] = tr("harv.show.tree_info", nodes=meta["nodes"], roots=meta["roots"])
+                return True
             else:
                 command["_info"] = tr("harv.show.bad_type", type=show_type)
                 ui.markdown(f"*SHOW: {_md_escape(command['_info'])}*")

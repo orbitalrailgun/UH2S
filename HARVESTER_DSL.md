@@ -172,9 +172,18 @@ SHOW(<таблица>, <тип>[, <optional_params>])
 - `type = matplotlib` → график; `optional_params` — JSON: `kind` (line/bar/…), `x`, `y` (можно список),
   `title`, `figsize=[w,h]`, `dpi` (по умолчанию 150). Несколько слоёв/типов, вторая ось Y и пороговые
   линии (`layers`, `secondary_y`, `hlines`/`vlines`) — см. подробную доку [`SHOW_MATPLOTLIB.md`](SHOW_MATPLOTLIB.md).
+- `type = tree` → дерево (`ui.tree`) из табличных данных по связям parent→child. `optional_params` — JSON:
+  - `transmit` — столбец с id РОДИТЕЛЯ; `receive` — столбец с id САМОГО узла (обязательные); ребро
+    transmit→receive = родитель→потомок;
+  - `title` — столбец с именем узла (по умолчанию — сам id);
+  - `description` — список столбцов, значения которых конкатенируются через `separator` и показываются
+    при раскрытии узла; `separator` — разделитель (по умолчанию ` | `).
+  Узлы без родителя в наборе — корни (получается лес). Дубли `receive`, само-ссылки и циклы обрабатываются
+  безопасно. В HTTP API дерево выводится ASCII-списком с отступами.
 ```
 SHOW(alerts, table)
 SHOW(by_sev, matplotlib, {"kind":"bar","x":"severity","y":"cnt","title":"По severity","dpi":200})
+SHOW(procs, tree, {"transmit":"process.parent.pid","receive":"process.pid","title":"process.name","description":["user.name","@timestamp"],"separator":" | "})
 ```
 
 ### SAVE — скачивание файла
