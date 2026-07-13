@@ -226,6 +226,9 @@ TRANSLATIONS = {
         # Harvester
         "harv.tab.scripts": "Scripts", "harv.tab.datavars": "Data/Variables", "harv.tab.analysis": "Analysis",
         "harv.script": "Script", "harv.steps": "Execution steps", "harv.execute": "Execute",
+        "harv.ref.title": "Reference & hints", "harv.ref.search": "Search: DSL, source functions, notes, scripts",
+        "harv.ref.insert": "Insert", "harv.ref.empty": "Nothing found",
+        "harv.ref.hint": "Click «Insert» to add a snippet to the script (new commands are joined with |).",
         "harv.analyze": "Analyze execution", "harv.analyze_error": "Analysis error: {error}",
         "harv.export_svg": "Export SVG", "harv.export_png": "Export PNG", "harv.export_mmd": "Save Mermaid",
         "harv.export_empty": "Run the analysis first — there is no graph to export.",
@@ -464,6 +467,9 @@ TRANSLATIONS = {
         # Harvester
         "harv.tab.scripts": "Скрипты", "harv.tab.datavars": "Данные/Переменные", "harv.tab.analysis": "Анализ выполнения",
         "harv.script": "Скрипт", "harv.steps": "Шаги выполнения", "harv.execute": "Выполнить",
+        "harv.ref.title": "Справочник и подсказки", "harv.ref.search": "Поиск: команды DSL, функции источников, заметки, скрипты",
+        "harv.ref.insert": "Вставить", "harv.ref.empty": "Ничего не найдено",
+        "harv.ref.hint": "«Вставить» добавляет сниппет в скрипт (новые команды соединяются через |).",
         "harv.analyze": "Анализ выполнения", "harv.analyze_error": "Ошибка анализа: {error}",
         "harv.export_svg": "Экспорт SVG", "harv.export_png": "Экспорт PNG", "harv.export_mmd": "Сохранить Mermaid",
         "harv.export_empty": "Сначала выполните анализ — экспортировать нечего.",

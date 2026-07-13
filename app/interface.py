@@ -8,13 +8,16 @@ import json
 import uuid
 import time
 import threading
+import re
 from nicegui import ui, app, Client, run
 from app.logging import get_log_message, logger_log, currentFuncName, currentTimestamp
 from typing import Dict, Any, Tuple
 from engine import commands_executor
-from app.engine import command_parser, list_source_types, describe_source_functions
+from app.engine import command_parser, list_source_types, describe_source_functions, list_source_types_struct, describe_source_functions_struct
 from app.ai_pipeline import AGENT_ACTIONS, extract_action, extract_final_harvester, parse_save_object, parse_memory_save, rank_notes_by_query
 from app.tabular import parse_table_file
+from app.reference import (dsl_command_snippets, source_function_entries, script_object_entries,
+                           knowledge_entries, filter_entries, insert_snippet)
 from app.i18n import translate, resolve_language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE
 from app.analyzer import build_execution_mermaid
 from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE, REGEX_USERNAME_RULE
@@ -3206,6 +3209,73 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                             with ui.row().classes('gap-2'):
                                 button_script = ui.button(tr("harv.execute"), icon='rocket_launch').on_click(button_script_click)
                                 button_analyze = ui.button(tr("harv.analyze"), icon='account_tree').on_click(analyze_click)
+
+                        # сворачиваемый справочник: команды DSL + функции источников (из реестра) + заметки БЗ +
+                        # сохранённые скрипты; поиск и вставка сниппета в редактор. Свёрнут по умолчанию (место).
+                        def _build_reference_entries():
+                            entries = list(dsl_command_snippets())
+                            try:
+                                entries += source_function_entries(list_source_types_struct(), describe_source_functions_struct)
+                            except BaseException:
+                                pass
+                            # сохранённые скрипты (доступные пользователю по ролям)
+                            try:
+                                roles = current_state.get("roles") or []
+                                all_objects = get_all_actual_objects(current_state)
+                                scripts = []
+                                for obj in (all_objects[3] if all_objects[0] else []):
+                                    if obj.get("type") != "script":
+                                        continue
+                                    if not ("fullmaster" in roles or any(r in roles for r in (obj.get("roles") or []))):
+                                        continue
+                                    full = get_actual_object_by_name(obj["name"], "('script')", current_state)
+                                    script_json = full[3].get("json", {}) if full[0] else {}
+                                    def_names = re.findall(r"\bAS\s+(\w+)", str(script_json.get("script") or ""))
+                                    scripts.append({"name": obj["name"], "params_summary": ", ".join(dict.fromkeys(def_names)),
+                                                    "return": script_json.get("return", "")})
+                                entries += script_object_entries(scripts)
+                            except BaseException:
+                                pass
+                            # заметки базы знаний
+                            try:
+                                kb = knowledge_list(current_state)
+                                entries += knowledge_entries(kb[3] if kb[0] else [])
+                            except BaseException:
+                                pass
+                            return entries
+
+                        with ui.expansion(tr("harv.ref.title"), icon='menu_book', value=False).classes('w-full'):
+                            ui.label(tr("harv.ref.hint")).classes('text-xs opacity-60')
+                            ref_search = ui.input(tr("harv.ref.search")).props('dense clearable').classes('w-full')
+                            ref_list = ui.element('div').classes('w-full').style('max-height: 40vh; overflow-y: auto; padding: 2px 4px')
+                            reference_entries = _build_reference_entries()
+
+                            def _render_reference():
+                                ref_list.clear()
+                                matched = filter_entries(reference_entries, ref_search.value)
+                                with ref_list:
+                                    if not matched:
+                                        ui.label(tr("harv.ref.empty")).classes('text-sm opacity-60')
+                                        return
+                                    for entry in matched[:200]:  # верхняя граница на случай большого каталога
+                                        with ui.row().classes('items-center gap-2 no-wrap w-full'):
+                                            snippet = entry["snippet"]
+                                            ui.button(tr("harv.ref.insert"), icon='add').props('dense flat').on_click(
+                                                lambda s=snippet: _insert_reference(s))
+                                            with ui.column().classes('gap-0'):
+                                                ui.label(f"{entry['group']} · {entry['label']}").classes('text-sm').style(
+                                                    "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);")
+                                                ui.label(entry.get("signature", "")).classes('text-xs opacity-70').style(
+                                                    "font-family: monospace;")
+
+                            def _insert_reference(snippet):
+                                codemirror_script.value = insert_snippet(codemirror_script.value, snippet)
+
+                            ref_search.on('keydown.enter', lambda: _render_reference())
+                            ref_search.on('blur', lambda: _render_reference())
+                            ui.button(tr("harv.ref.search"), icon='search').props('dense flat').on_click(lambda: _render_reference())
+                            _render_reference()
+
                         # сворачиваемый блок прогресса шагов (вариант A): список команд со статусами
                         with ui.expansion(tr("harv.steps"), icon='list', value=True).classes('w-full'):
                             steps_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
