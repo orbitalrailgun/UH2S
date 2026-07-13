@@ -123,6 +123,46 @@ def source_function_entries(source_types, describe_fn):
     return entries
 
 
+def object_get_entries(objects, describe_fn):
+    """GET-подсказки по РЕАЛЬНО существующим объектам (по их именам). objects — список нормализованных
+    записей: {name, type, source_type?, def_params?, ret?}. describe_fn(source_type) -> структура функций.
+    - type=source: для каждой функции типа источника -> GET <name>:<func>(обяз. параметры);
+    - type=llm:    функции типа 'llm' (line_analysis/data_analysis) -> GET <name>:<func>(...);
+    - type=script: GET script:<name>(...).
+    Именно эти цели можно реально вызвать (в отличие от возможных ТИПОВ источников из реестра)."""
+    entries = []
+    for obj in objects or []:
+        name = obj.get("name")
+        obj_type = obj.get("type")
+        if not name:
+            continue
+        if obj_type == "script":
+            params = obj.get("def_params") or ""
+            ret = obj.get("ret") or ""
+            doc = (f"параметры: {params}" if params else "без параметров")
+            if ret:
+                doc += f" | return: {ret}"
+            entries.append({"group": "объект: script", "label": f"script:{name}",
+                            "signature": f"GET script:{name}(...)", "snippet": f"GET script:{name}() AS data", "doc": doc})
+            continue
+        # source / llm — резолвим функции через реестр по типу коннектора
+        registry_type = obj.get("source_type") if obj_type == "source" else ("llm" if obj_type == "llm" else None)
+        if not registry_type:
+            continue
+        described = describe_fn(registry_type) or {}
+        for func in described.get("functions", []) or []:
+            fname = func.get("function")
+            required = func.get("required") or {}
+            entries.append({
+                "group": f"объект: {registry_type}",
+                "label": f"{name}:{fname}",
+                "signature": f"GET {name}:{fname}({_params_signature(required)})",
+                "snippet": source_function_snippet(name, fname, required),
+                "doc": f"реальный объект «{name}» (тип {registry_type})",
+            })
+    return entries
+
+
 def script_object_entries(scripts):
     """Каталог сохранённых script-объектов. scripts — список {name, params_summary?, return?}."""
     entries = []

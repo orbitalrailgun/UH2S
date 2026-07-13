@@ -3,7 +3,8 @@ import unittest
 
 from app.reference import (dsl_command_snippets, calc_operation_snippets, format_dsl_literal,
                            source_function_snippet, source_function_entries, script_object_entries,
-                           knowledge_entries, filter_entries, insert_snippet, extract_search_token)
+                           object_get_entries, knowledge_entries, filter_entries, insert_snippet,
+                           extract_search_token)
 
 
 class TestDslSnippets(unittest.TestCase):
@@ -66,6 +67,40 @@ class TestScriptAndKnowledgeEntries(unittest.TestCase):
         e = knowledge_entries([{"title": "T", "content": "escape quotes", "tags": ["sql"]}])[0]
         self.assertTrue(e["snippet"].startswith("/*"))
         self.assertTrue(e["snippet"].endswith("*/"))
+
+
+class TestObjectGetEntries(unittest.TestCase):
+    @staticmethod
+    def _describe(source_type):
+        catalog = {
+            "elastic_requests": {"functions": [
+                {"function": "query", "required": {"url": {"type": "string", "example": "https://x"}}, "optional": {}}]},
+            "llm": {"functions": [
+                {"function": "line_analysis", "required": {"data": {"type": "string", "example": "t"}}, "optional": {}},
+                {"function": "data_analysis", "required": {"data": {"type": "string", "example": "t"}}, "optional": {}}]},
+        }
+        return catalog.get(source_type, {})
+
+    def test_source_object_uses_object_name(self):
+        entries = object_get_entries(
+            [{"name": "my_elastic_prod", "type": "source", "source_type": "elastic_requests"}], self._describe)
+        self.assertEqual(entries[0]["label"], "my_elastic_prod:query")
+        self.assertTrue(entries[0]["snippet"].startswith("GET my_elastic_prod:query("))
+
+    def test_llm_object_functions(self):
+        entries = object_get_entries([{"name": "gigachat", "type": "llm"}], self._describe)
+        labels = [e["label"] for e in entries]
+        self.assertIn("gigachat:line_analysis", labels)
+        self.assertIn("gigachat:data_analysis", labels)
+
+    def test_script_object(self):
+        entries = object_get_entries(
+            [{"name": "triage", "type": "script", "def_params": "limit", "ret": "out"}], self._describe)
+        self.assertEqual(entries[0]["snippet"], "GET script:triage() AS data")
+        self.assertIn("limit", entries[0]["doc"])
+
+    def test_unknown_type_skipped(self):
+        self.assertEqual(object_get_entries([{"name": "x", "type": "notifier"}], self._describe), [])
 
 
 class TestFilter(unittest.TestCase):

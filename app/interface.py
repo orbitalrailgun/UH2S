@@ -17,7 +17,8 @@ from app.engine import command_parser, list_source_types, describe_source_functi
 from app.ai_pipeline import AGENT_ACTIONS, extract_action, extract_final_harvester, parse_save_object, parse_memory_save, rank_notes_by_query
 from app.tabular import parse_table_file
 from app.reference import (dsl_command_snippets, source_function_entries, script_object_entries,
-                           knowledge_entries, filter_entries, insert_snippet, extract_search_token)
+                           knowledge_entries, object_get_entries, filter_entries, insert_snippet,
+                           extract_search_token)
 from app.i18n import translate, resolve_language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE
 from app.analyzer import build_execution_mermaid
 from app.validation import json_validate, validate_itemname, validate_comment, check_regex_rule, REGEX_PASSWORD_RULE, REGEX_USERNAME_RULE
@@ -3210,39 +3211,57 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                                 button_script = ui.button(tr("harv.execute"), icon='rocket_launch').on_click(button_script_click)
                                 button_analyze = ui.button(tr("harv.analyze"), icon='account_tree').on_click(analyze_click)
 
-                        # сворачиваемый справочник: команды DSL + функции источников (из реестра) + заметки БЗ +
-                        # сохранённые скрипты; поиск и вставка сниппета в редактор. Свёрнут по умолчанию (место).
+                        # Справочник = ДВЕ секции: (1) реально доступное сейчас — GET по существующим объектам
+                        # (source/llm/script) + команды DSL + заметки БЗ; (2) после разделителя — ВОЗМОЖНЫЕ типы
+                        # источников из реестра (их можно добавить как объект в разделе «Объекты»).
                         def _build_reference_entries():
-                            entries = list(dsl_command_snippets())
+                            roles = current_state.get("roles") or []
+
+                            def _allowed(object_roles):
+                                return "fullmaster" in roles or any(r in roles for r in (object_roles or []))
+
+                            # нормализуем реальные объекты (по ролям): имя + тип + тип источника/DEF-параметры
+                            real_objects = []
                             try:
-                                entries += source_function_entries(list_source_types_struct(), describe_source_functions_struct)
-                            except BaseException:
-                                pass
-                            # сохранённые скрипты (доступные пользователю по ролям)
-                            try:
-                                roles = current_state.get("roles") or []
                                 all_objects = get_all_actual_objects(current_state)
-                                scripts = []
                                 for obj in (all_objects[3] if all_objects[0] else []):
-                                    if obj.get("type") != "script":
+                                    obj_type = obj.get("type")
+                                    if obj_type not in ("source", "llm", "script") or not _allowed(obj.get("roles")):
                                         continue
-                                    if not ("fullmaster" in roles or any(r in roles for r in (obj.get("roles") or []))):
-                                        continue
-                                    full = get_actual_object_by_name(obj["name"], "('script')", current_state)
-                                    script_json = full[3].get("json", {}) if full[0] else {}
-                                    def_names = re.findall(r"\bAS\s+(\w+)", str(script_json.get("script") or ""))
-                                    scripts.append({"name": obj["name"], "params_summary": ", ".join(dict.fromkeys(def_names)),
-                                                    "return": script_json.get("return", "")})
-                                entries += script_object_entries(scripts)
+                                    full = get_actual_object_by_name(
+                                        obj["name"], "('source', 'llm', 'script')", current_state)
+                                    obj_json = full[3].get("json", {}) if full[0] else {}
+                                    record = {"name": obj["name"], "type": obj_type}
+                                    if obj_type == "source":
+                                        record["source_type"] = obj_json.get("type")
+                                    elif obj_type == "script":
+                                        def_names = re.findall(r"\bAS\s+(\w+)", str(obj_json.get("script") or ""))
+                                        record["def_params"] = ", ".join(dict.fromkeys(def_names))
+                                        record["ret"] = obj_json.get("return", "")
+                                    real_objects.append(record)
                             except BaseException:
                                 pass
-                            # заметки базы знаний
+
+                            # секция 1 — доступно сейчас: реальные GET-цели -> команды DSL -> заметки БЗ
+                            primary = []
+                            try:
+                                primary += object_get_entries(real_objects, describe_source_functions_struct)
+                            except BaseException:
+                                pass
+                            primary += list(dsl_command_snippets())
                             try:
                                 kb = knowledge_list(current_state)
-                                entries += knowledge_entries(kb[3] if kb[0] else [])
+                                primary += knowledge_entries(kb[3] if kb[0] else [])
                             except BaseException:
                                 pass
-                            return entries
+
+                            # секция 2 — возможные типы источников (шаблоны реестра)
+                            possible = []
+                            try:
+                                possible = source_function_entries(list_source_types_struct(), describe_source_functions_struct)
+                            except BaseException:
+                                pass
+                            return primary, possible
 
                         ref_expansion = ui.expansion(tr("harv.ref.title"), icon='menu_book', value=False).classes('w-full')
                         with ref_expansion:
@@ -3250,26 +3269,37 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                             # debounce — не перерисовывать список на каждое нажатие клавиши слишком часто
                             ref_search = ui.input(tr("harv.ref.search")).props('dense clearable debounce=150').classes('w-full')
                             ref_list = ui.element('div').classes('w-full').style('max-height: 40vh; overflow-y: auto; padding: 2px 4px')
-                            reference_entries = _build_reference_entries()
+                            primary_entries, possible_entries = _build_reference_entries()
+
+                            def _render_entry(entry):
+                                with ui.row().classes('items-center gap-2 no-wrap w-full'):
+                                    snippet = entry["snippet"]
+                                    # стандартная кнопка (не flat) — следует настраиваемой палитре
+                                    ui.button(tr("harv.ref.insert"), icon='add').props('dense').on_click(
+                                        lambda s=snippet: _insert_reference(s))
+                                    with ui.column().classes('gap-0'):
+                                        ui.label(f"{entry['group']} · {entry['label']}").classes('text-sm').style(
+                                            "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);")
+                                        ui.label(entry.get("signature", "")).classes('text-xs opacity-70').style(
+                                            "font-family: monospace;")
 
                             def _render_reference():
                                 ref_list.clear()
-                                matched = filter_entries(reference_entries, ref_search.value)
+                                primary = filter_entries(primary_entries, ref_search.value)
+                                possible = filter_entries(possible_entries, ref_search.value)
                                 with ref_list:
-                                    if not matched:
+                                    if not primary and not possible:
                                         ui.label(tr("harv.ref.empty")).classes('text-sm opacity-60')
                                         return
-                                    for entry in matched[:100]:  # верхняя граница на случай большого каталога
-                                        with ui.row().classes('items-center gap-2 no-wrap w-full'):
-                                            snippet = entry["snippet"]
-                                            # стандартная кнопка (не flat) — следует настраиваемой палитре
-                                            ui.button(tr("harv.ref.insert"), icon='add').props('dense').on_click(
-                                                lambda s=snippet: _insert_reference(s))
-                                            with ui.column().classes('gap-0'):
-                                                ui.label(f"{entry['group']} · {entry['label']}").classes('text-sm').style(
-                                                    "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);")
-                                                ui.label(entry.get("signature", "")).classes('text-xs opacity-70').style(
-                                                    "font-family: monospace;")
+                                    for entry in primary[:100]:
+                                        _render_entry(entry)
+                                    if possible:
+                                        # визуальный разделитель: ниже — возможные типы источников (не существующие объекты)
+                                        ui.separator()
+                                        ui.label(tr("harv.ref.possible")).classes('text-xs opacity-70').style(
+                                            "font-weight:700; color: var(--accent-color); padding: 2px 0;")
+                                        for entry in possible[:100]:
+                                            _render_entry(entry)
 
                             def _insert_reference(snippet):
                                 codemirror_script.value = insert_snippet(codemirror_script.value, snippet)
