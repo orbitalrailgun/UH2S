@@ -3220,7 +3220,8 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                             def _allowed(object_roles):
                                 return "fullmaster" in roles or any(r in roles for r in (object_roles or []))
 
-                            # нормализуем реальные объекты (по ролям): имя + тип + тип источника/DEF-параметры
+                            # нормализуем реальные объекты (по ролям): имя + тип + тип источника/DEF-параметры.
+                            # json объектов приходит одним запросом из get_all_actual_objects (без N доп. запросов).
                             real_objects = []
                             try:
                                 all_objects = get_all_actual_objects(current_state)
@@ -3228,9 +3229,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                                     obj_type = obj.get("type")
                                     if obj_type not in ("source", "llm", "script") or not _allowed(obj.get("roles")):
                                         continue
-                                    full = get_actual_object_by_name(
-                                        obj["name"], "('source', 'llm', 'script')", current_state)
-                                    obj_json = full[3].get("json", {}) if full[0] else {}
+                                    obj_json = obj.get("json") or {}
                                     record = {"name": obj["name"], "type": obj_type}
                                     if obj_type == "source":
                                         record["source_type"] = obj_json.get("type")
@@ -3744,12 +3743,11 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                         if type_filter and o.get("type") != type_filter:
                             continue
                         line = f"- {o['name']} ({o.get('type', '?')})"
-                        # для скриптов добавляем параметры (DEF) с дефолтами и return
+                        # для скриптов добавляем параметры (DEF) с дефолтами и return.
+                        # json приходит из get_all_actual_objects одним запросом (без доп. запроса на объект)
                         if o.get("type") == "script":
-                            full = get_actual_object_by_name(o["name"], "('script')", current_state)
-                            if full[0]:
-                                script_json = full[3].get("json", {}) or {}
-                                line += f" — параметры (DEF с дефолтами): {_script_params_summary(script_json)}; return: {script_json.get('return', '?')}"
+                            script_json = o.get("json") or {}
+                            line += f" — параметры (DEF с дефолтами): {_script_params_summary(script_json)}; return: {script_json.get('return', '?')}"
                         lines.append(line)
                     return "\n".join(lines) if lines else "объектов нет"
 

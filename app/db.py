@@ -444,9 +444,9 @@ def get_all_actual_objects(current_state):
                 FROM objects
                 GROUP BY name
             )
-            SELECT objects.name, objects.roles, objects.version, objects.timestamp, objects.type, objects.owner/*, objects.json */
-            FROM objects JOIN actual_version ON objects.name = actual_version.name 
-            WHERE objects.version = actual_version.version 
+            SELECT objects.name, objects.roles, objects.version, objects.timestamp, objects.type, objects.owner, objects.json
+            FROM objects JOIN actual_version ON objects.name = actual_version.name
+            WHERE objects.version = actual_version.version
             ORDER BY  objects.type, objects.name;
         """
         cursor = connection.cursor()
@@ -458,14 +458,22 @@ def get_all_actual_objects(current_state):
         if not result:
             logger_log(syslog.LOG_ERR, get_log_message("object not found", currentFuncName(), current_state))
             return False, "object not found", currentFuncName(), []
-        
+
         actual_objects = []
 
+        # json объектов включён в выборку одним запросом (иначе вызывающему пришлось бы делать
+        # get_actual_object_by_name на каждый объект — N запросов вместо одного). Битый json не роняет список.
         for object_line in result:
-            columns = ["name", "roles", "version", "timestamp", "type", "owner"]
+            columns = ["name", "roles", "version", "timestamp", "type", "owner", "json"]
             selected_object = dict(zip(columns, object_line))
-            selected_object["roles"] = json.loads(selected_object["roles"])
-            #selected_object["json"] = json.loads(selected_object["json"])
+            try:
+                selected_object["roles"] = json.loads(selected_object["roles"])
+            except BaseException:
+                selected_object["roles"] = []
+            try:
+                selected_object["json"] = json.loads(selected_object["json"]) if selected_object["json"] else {}
+            except BaseException:
+                selected_object["json"] = {}
             actual_objects.append(selected_object)
 
         return True, "Ok", currentFuncName(), actual_objects
