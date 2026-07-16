@@ -45,6 +45,12 @@ class TestGetVariableType(unittest.TestCase):
     def test_float(self):
         self.assertEqual(get_variable_type("3.14", CS)[3], ("float", 3.14))
 
+    def test_negative_int(self):
+        self.assertEqual(get_variable_type("-10", CS)[3], ("integer", -10))
+
+    def test_negative_float(self):
+        self.assertEqual(get_variable_type("-3.14", CS)[3], ("float", -3.14))
+
     def test_string_quoted(self):
         self.assertEqual(get_variable_type('"hi"', CS)[3], ("string", "hi"))
 
@@ -69,6 +75,19 @@ class TestDef(unittest.TestCase):
         self.assertEqual(c["variable_name"], "pi")
         self.assertEqual(c["variable_type"], "float")
         self.assertEqual(c["variable_value"], 3.14)
+
+    def test_negative_int(self):
+        c = one("DEF -10 AS test_integer")
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["variable_name"], "test_integer")
+        self.assertEqual(c["variable_type"], "integer")
+        self.assertEqual(c["variable_value"], -10)
+
+    def test_negative_float(self):
+        c = one("DEF -3.14 AS neg")
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["variable_type"], "float")
+        self.assertEqual(c["variable_value"], -3.14)
 
     def test_string_with_comma(self):
         c = one('DEF "hello, world" AS greeting')

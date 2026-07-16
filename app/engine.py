@@ -1081,11 +1081,11 @@ def get_variable_type(text:str, current_state:dict):
     # bool false
     if text == "False" or text == "false":
         return True, "empty", currentFuncName(),("boolean", False)
-    # integer
-    if re.search(r"^\d+$", text):
+    # integer (с опциональным ведущим минусом: -10)
+    if re.search(r"^-?\d+$", text):
         return True, "empty", currentFuncName(),("integer", int(text))
-    # float
-    if re.search(r"^\d+\.\d*$", text):
+    # float (с опциональным ведущим минусом: -3.14)
+    if re.search(r"^-?\d+\.\d*$", text):
         return True, "empty", currentFuncName(),("float", float(text))
     # list
     if re.search(r"^\[.*\]$", text, flags=re.DOTALL):
