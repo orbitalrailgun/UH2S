@@ -2,6 +2,18 @@ import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 import app.sources.additional.elastic2python as elastic2python
 
+
+def _make_debug_logger(current_state, func_name):
+    """Callback для пустого результата data_taxi: логирует matched (hits.total), подсказку и фрагмент
+    ответа elastic, чтобы понять «почему 0» — фильтр ничего не нашёл или потеряны fields при _source:false.
+    Диагностика идёт только в лог (не в stdout)."""
+    def debug_log(meta):
+        logger_log(syslog.LOG_WARNING, get_log_message(
+            f"elastic returned 0 rows: matched={meta.get('matched')} ({meta.get('hint')}); "
+            f"response sample: {meta.get('response_sample')}", func_name, current_state))
+    return debug_log
+
+
 # execution_function
 def execute_elasctic_query_via_client(parameters, source_object, data_map, current_state):
     source = source_object
@@ -54,9 +66,10 @@ def execute_elasctic_query_via_client(parameters, source_object, data_map, curre
                 sort = query["sort"], 
                 fields = query["fields"], 
                 size = query["size"], 
-                search_after_shift = query["search_after_shift"], 
+                search_after_shift = query["search_after_shift"],
                 limit = query["limit"],
-                debug = False
+                debug = False,
+                debug_log = _make_debug_logger(current_state, currentFuncName())
         )
         if data_taxi_status[0] == False:
             error_message = f"data_taxi_status is false: {data_taxi_status[1]}"

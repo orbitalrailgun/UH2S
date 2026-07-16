@@ -136,7 +136,7 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                     "fields":["@timestamp", "message"],
                     "sort":["@timestamp:desc"],
                     #"size":1000, # опционально
-                    "limit":-1,
+                    #"limit":-1,
                     #"search_after_shift":-10 # опционально
                 },
                 "unrequired":{

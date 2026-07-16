@@ -217,10 +217,12 @@ def get_data_aggs(input_, request_aggs): # можно доработать им�
         output.append(node)
     return output
 
-def data_taxi(elastic_client, index, query, sort, fields, size, search_after_shift, limit, debug = False):
+def data_taxi(elastic_client, index, query, sort, fields, size, search_after_shift, limit, debug = False, debug_log = None):
     import pandas
     try:
         output_data = []
+        matched_total = None  # hits.total (сколько совпало по фильтру) — для диагностики «почему 0»
+        first_response = None  # сырой ответ первого запроса — для фрагмента в диагностике
         debug_flag = debug
         if debug_flag:
             print("Получаем первичные данные")
@@ -239,8 +241,10 @@ def data_taxi(elastic_client, index, query, sort, fields, size, search_after_shi
                              "_source":False
                         }
             )
-            output_data = get_data(dict(response))
-            current_sort = get_sort(dict(response))
+            first_response = dict(response)
+            matched_total = _hits_total(first_response)
+            output_data = get_data(first_response)
+            current_sort = get_sort(first_response)
         except BaseException as e:
             return False, f"elastic2python first query fail:{str(e)}", "data_taxi", []
         # проверяем первый полученный кусок данных, если данных столько, сколько указано в size
@@ -285,9 +289,25 @@ def data_taxi(elastic_client, index, query, sort, fields, size, search_after_shi
                     break
                 taxi_step = taxi_step + 1    
             
-        result_data = pandas.DataFrame(output_data).drop_duplicates("_id").to_dict('records')
-        return True, f"OK", "data_taxi", result_data
-    
+        if output_data:
+            result_data = pandas.DataFrame(output_data).drop_duplicates("_id").to_dict('records')
+        else:
+            result_data = []
+
+        # диагностика «почему 0»: matched (hits.total) vs rows (извлечено).
+        # matched==0 -> фильтр ничего не нашёл; matched>0, rows==0 -> данные есть,
+        # но поля из `fields` отсутствуют в документах (при _source:false) — проверьте fields.
+        if not result_data and debug_log:
+            try:
+                debug_log({"matched": matched_total, "rows": 0,
+                           "hint": ("filter matched nothing" if not matched_total
+                                    else "matched but no values for requested `fields` (check fields/_source)"),
+                           "response_sample": json.dumps(first_response, ensure_ascii=False)[:1500]})
+            except BaseException:
+                pass
+
+        return True, f"OK (matched {matched_total}, rows {len(result_data)})", "data_taxi", result_data
+
     except BaseException as e:
         return False, f"elastic2python fail:{str(e)}", "data_taxi", []
 
