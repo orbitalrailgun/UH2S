@@ -3544,7 +3544,10 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     ui.button(tr("history.refresh"), icon='refresh').on_click(lambda: update_history_grid())
                     search_history_input = ui.input(tr("history.search")).classes('grow').on('keydown.enter', lambda: apply_history_filter())
                     ui.button(icon='search').on_click(lambda: apply_history_filter())
-                grid_history = ui.aggrid({}).classes('w-full').style('height: 35vh')
+                # shrink-0 + min-height: грид — flex-ребёнок колонки; без этого выбор запуска с большим
+                # скриптом раздувает codemirror/панель шагов, и flexbox сжимает таблицу до полоски
+                # пагинации (строки становятся недоступны для выбора). Фикс высоты вместо сжатия.
+                grid_history = ui.aggrid({}).classes('w-full shrink-0').style('height: 35vh; min-height: 35vh')
                 grid_history.on("selectionChanged", grid_history_click)
                 ui.label(tr("history.script_label"))
                 codemirror_history = make_codemirror(current_state).classes('w-full').style('max-height: 25vh')
