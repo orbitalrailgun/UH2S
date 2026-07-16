@@ -12,7 +12,7 @@
 import importlib.util
 import unittest
 
-from app.engine import command_parser, get_variable_type, execute_calc
+from app.engine import command_parser, get_variable_type, execute_calc, strip_comments
 
 try:
     from app.engine import split_top_level
@@ -289,6 +289,32 @@ class TestComments(unittest.TestCase):
         self.assertTrue(c["parsed"])
         self.assertEqual(c["variable_name"], "x")
         self.assertEqual(c["variable_value"], 5)
+
+    def test_comment_marker_inside_quotes_preserved(self):
+        """/* */ внутри строкового значения параметра — данные, не комментарий
+        (Elastic index pattern *idx* в url даёт .../*idx*/...)."""
+        c = one('GET elastic_requests:query(url="https://h/api/console/proxy?path=/*idx*/_search") AS d')
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["parameters"]["url"], '"https://h/api/console/proxy?path=/*idx*/_search"')
+
+    def test_comment_marker_inside_single_quotes_preserved(self):
+        c = one("DEF '/*keep*/' AS s")
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["variable_value"], "/*keep*/")
+
+    def test_strip_comments_outside_quotes(self):
+        # вне кавычек — по-прежнему вырезается
+        self.assertEqual(strip_comments('a /* x */ b'), 'a  b')
+
+    def test_strip_comments_keeps_quoted_marker(self):
+        self.assertEqual(strip_comments('x="/*keep*/"'), 'x="/*keep*/"')
+
+    def test_strip_comments_preserves_line_count(self):
+        # многострочный комментарий заменяется равным числом \n (нумерация строк ошибок)
+        self.assertEqual(strip_comments('a/*\n\n*/b'), 'a\n\nb')
+
+    def test_strip_comments_unterminated_left_asis(self):
+        self.assertEqual(strip_comments('a /* no close'), 'a /* no close')
 
 
 class TestPrint(unittest.TestCase):
