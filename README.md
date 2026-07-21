@@ -80,7 +80,8 @@ python front.py --host 127.0.0.1 --port 8082
 ```
 
 Полезные аргументы `front.py`: `--host`, `--port`, `--db_conf_object`,
-`--nicegui_storage_key_object`, `--ssl_certfile`, `--ssl_keyfile`, `--keycloak_url` и др.
+`--nicegui_storage_key_object`, `--ssl_certfile`, `--ssl_keyfile`, `--keycloak_url`,
+`--download_inline_max_mb` (порог inline-скачивания SAVE, см. TLS) и др.
 (`python front.py --help`).
 
 ## TLS
@@ -90,6 +91,14 @@ python front.py --host 127.0.0.1 --port 8082
 - **HTTP за обратным прокси** (по умолчанию в контейнере): TLS терминирует внешний nginx/traefik.
 - **In-app HTTPS**: если рядом есть `crt.pem` и `key.pem` (или заданы `--ssl_certfile/--ssl_keyfile`),
   приложение само отдаёт HTTPS. В контейнере примонтируйте сертификаты (см. [DOCKER.md](DOCKER.md)).
+
+**Скачивание `SAVE` и TLS.** Небольшие выгрузки (≤ `--download_inline_max_mb` /
+`UH2S_DOWNLOAD_INLINE_MAX_MB`, деф. 50 МБ) отдаются blob'ом через websocket и работают даже с
+**самоподписанным** сертификатом. Файлы больше порога отдаются потоковым роутом `/download` (мимо
+websocket) — это обычный HTTP(S)-запрос, поэтому под самоподписанным сертификатом браузер рвёт такое
+скачивание («проверьте подключение»). Для больших экспортов используйте **доверенный TLS** (валидный
+сертификат или обратный прокси с терминацией TLS) либо поднимите порог. Каталог temp-файлов экспорта —
+`UH2S_EXPORT_DIR` (деф. системный tempdir; файлы удаляются после отдачи).
 
 ## Данные и состояние
 
