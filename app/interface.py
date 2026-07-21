@@ -2631,6 +2631,28 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
             pass
         return False, str(e), currentFuncName(), None
 
+def _script_output_names(body, current_state):
+    """Имена-выходы, которые производит тело DSL-скрипта — для автоподсказки поля output (return)
+    в форме script-объекта. Парсит тело (command_parser; команды разделяются '|') и собирает AS-имена
+    успешно распарсенных команд: DEF->variable_name, CALC->result_name, GET/LOAD->data_name.
+    Возвращает отсортированный список уникальных имён (пустой при пустом/некорректном теле)."""
+    if not body or not body.strip():
+        return []
+    try:
+        parsed = command_parser(body, current_state)
+    except BaseException:
+        return []
+    names = set()
+    for command in parsed:
+        if not command.get("parsed", False):
+            continue
+        for key in ("data_name", "variable_name", "result_name"):
+            value = command.get(key)
+            if value:
+                names.add(value)
+    return sorted(names)
+
+
 def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[bool, str, str, None]:
     try:
         logger_log(syslog.LOG_INFO, get_log_message("Starting", currentFuncName(), current_state))
@@ -2780,6 +2802,17 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
             label_edit_object_name.text = selected_object_version["name"]
             select_edit_object_type.set_value(selected_object_version["type"])
             input_edit_object_roles.value = json.dumps(selected_object_version["roles"], indent=0, ensure_ascii=False)
+            # script-объект: заполняем удобные поля тело+output (из json.script/json.return)
+            if selected_object_version["type"] == "script":
+                obj_json = selected_object_version["json"] if isinstance(selected_object_version["json"], dict) else {}
+                body = obj_json.get("script", "") or ""
+                codemirror_script_body_edit.value = body
+                ret = obj_json.get("return", "") or ""
+                options = _script_output_names(body, current_state)
+                if ret and ret not in options:
+                    options = sorted(set(options) | {ret})
+                select_output_edit.set_options(options, value=(ret or None))
+            _toggle_editor()
 
         # кнопка сохранения новой версии объекта
         async def save_button_of_object_editor():
@@ -2798,20 +2831,32 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
             if not json_validate(input_edit_object_roles.value):
                 ui.notify(tr("objects.roles_invalid"), type="negative")
                 return
-            # проверяем, что в codemirror валидный json
-            if not json_validate(codemirror_edit_object_version.value):
-                ui.notify(tr("objects.json_invalid"), type="negative")
-                return
-            # проверяем, что в codemirror именно dict
-            if not isinstance(json.loads(codemirror_edit_object_version.value), dict):
-                ui.notify(tr("objects.json_not_dict"), type="negative")
-                return
+            # для script — собираем JSON из тела+output; для остальных — из raw-JSON codemirror
+            if select_edit_object_type.value == "script":
+                body = (codemirror_script_body_edit.value or "").strip()
+                if not body:
+                    ui.notify(tr("objects.script_body_empty"), type="negative")
+                    return
+                new_json = {"script": codemirror_script_body_edit.value}
+                output = (select_output_edit.value or "").strip() if select_output_edit.value else ""
+                if output:
+                    new_json["return"] = output
+            else:
+                # проверяем, что в codemirror валидный json
+                if not json_validate(codemirror_edit_object_version.value):
+                    ui.notify(tr("objects.json_invalid"), type="negative")
+                    return
+                # проверяем, что в codemirror именно dict
+                if not isinstance(json.loads(codemirror_edit_object_version.value), dict):
+                    ui.notify(tr("objects.json_not_dict"), type="negative")
+                    return
+                new_json = json.loads(codemirror_edit_object_version.value)
             # проверяем, есть ли изменения
-            if selected_object_version["type"] == select_edit_object_type.value and selected_object_version["roles"] == json.loads(input_edit_object_roles.value) and json.dumps(selected_object_version["json"], indent=4, ensure_ascii=False) == codemirror_edit_object_version.value:
+            if selected_object_version["type"] == select_edit_object_type.value and selected_object_version["roles"] == json.loads(input_edit_object_roles.value) and selected_object_version["json"] == new_json:
                 # полное совпадение, изменений нет
                 ui.notify(tr("objects.no_changes"), type="negative")
             else:
-                create_new_object_version_result = create_new_object_version(selected_object_version["name"], select_edit_object_type.value, json.loads(input_edit_object_roles.value), json.loads(codemirror_edit_object_version.value), current_state)
+                create_new_object_version_result = create_new_object_version(selected_object_version["name"], select_edit_object_type.value, json.loads(input_edit_object_roles.value), new_json, current_state)
                 if not create_new_object_version_result[0]:
                     ui.notify(f"{create_new_object_version_result[1]}", type="negative")
                     return
@@ -2851,15 +2896,27 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
             if not len(json.loads(input_new_object_roles.value)) > 0:
                 ui.notify(tr("objects.empty_roles_list"), type="negative")
                 return
-            # проверяем, что в codemirror валидный json
-            if not json_validate(codemirror_create_new_object.value):
-                ui.notify(tr("objects.json_invalid"), type="negative")
-                return
-            # проверяем, что в codemirror именно dict
-            if not isinstance(json.loads(codemirror_create_new_object.value), dict):
-                ui.notify(tr("objects.json_not_dict"), type="negative")
-                return
-            
+            # для script — собираем JSON из тела+output (валидный JSON гарантирован); иначе — raw-JSON
+            if select_new_object_type.value == "script":
+                body = (codemirror_script_body_create.value or "").strip()
+                if not body:
+                    ui.notify(tr("objects.script_body_empty"), type="negative")
+                    return
+                new_obj_json = {"script": codemirror_script_body_create.value}
+                output = (select_output_create.value or "").strip() if select_output_create.value else ""
+                if output:
+                    new_obj_json["return"] = output
+            else:
+                # проверяем, что в codemirror валидный json
+                if not json_validate(codemirror_create_new_object.value):
+                    ui.notify(tr("objects.json_invalid"), type="negative")
+                    return
+                # проверяем, что в codemirror именно dict
+                if not isinstance(json.loads(codemirror_create_new_object.value), dict):
+                    ui.notify(tr("objects.json_not_dict"), type="negative")
+                    return
+                new_obj_json = json.loads(codemirror_create_new_object.value)
+
             # проверяем, есть ли объект с таким именем
             get_all_object_versions_result = get_all_object_versions(input_new_object_name.value, current_state)
             if get_all_object_versions_result[0] == True:
@@ -2871,13 +2928,43 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     return
                 else:
                     # имя точно уникальное, записываем в базу новый объект
-                    create_new_object_result = create_new_object(input_new_object_name.value, select_new_object_type.value, json.loads(input_new_object_roles.value), json.loads(codemirror_create_new_object.value), current_state)
+                    create_new_object_result = create_new_object(input_new_object_name.value, select_new_object_type.value, json.loads(input_new_object_roles.value), new_obj_json, current_state)
                     if not create_new_object_result[0]:
                         ui.notify(tr("objects.create_error"), type="negative")
                         return
                     ui.notify(tr("objects.done"), type="positive")
                     update_grid_objects_list(grid_objects_list, current_state)
-            
+
+        # обновить опции комбобокса output из тела скрипта (сохранив текущее значение, в т.ч. ручной ввод)
+        def _refresh_outputs_create():
+            current = select_output_create.value
+            options = _script_output_names(codemirror_script_body_create.value, current_state)
+            if current and current not in options:
+                options = sorted(set(options) | {current})
+            select_output_create.set_options(options, value=current)
+
+        def _refresh_outputs_edit():
+            current = select_output_edit.value
+            options = _script_output_names(codemirror_script_body_edit.value, current_state)
+            if current and current not in options:
+                options = sorted(set(options) | {current})
+            select_output_edit.set_options(options, value=current)
+
+        # показать удобные script-виджеты (тело+output) для типа script, иначе — raw-JSON редактор
+        def _toggle_creator():
+            is_script = select_new_object_type.value == "script"
+            script_box_create.set_visibility(is_script)
+            codemirror_create_new_object.set_visibility(not is_script)
+            if is_script:
+                _refresh_outputs_create()
+
+        def _toggle_editor():
+            is_script = select_edit_object_type.value == "script"
+            script_box_edit.set_visibility(is_script)
+            codemirror_edit_object_version.set_visibility(not is_script)
+            if is_script:
+                _refresh_outputs_edit()
+
         with interface_container:
             with ui.tabs().classes('w-full') as tabs:
                 tab_objects_list = ui.tab('Objects list', label=tr("objects.tab.list"))
@@ -2899,24 +2986,50 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     with ui.row():
                         label_edit_object_name = ui.label(tr("objects.field.name"))
                         select_edit_object_type = ui.select(["script", "source", "notifier", "llm"], value="script")
+                        select_edit_object_type.on_value_change(lambda: _toggle_editor())
                         input_edit_object_roles = ui.input(label=tr("objects.field.roles"))
                         button_save_new_object_version = ui.button(tr("objects.btn.save"))
                         button_save_new_object_version.on_click(save_button_of_object_editor)
                         button_delete_object = ui.button(tr("objects.btn.delete"))
                         #button_delete_object.on_click(save_button_of_object_editor)
+                    # script: удобные поля тело+output (собирают валидный JSON при сохранении)
+                    with ui.column().classes('w-full') as script_box_edit:
+                        with ui.row().classes('items-center gap-2 w-full no-wrap'):
+                            select_output_edit = ui.select([], value=None, label=tr("objects.field.output"),
+                                                           with_input=True, new_value_mode='add-unique',
+                                                           clearable=True).classes('grow')
+                            select_output_edit.tooltip(tr("objects.output_hint"))
+                            ui.button(icon='refresh').props('flat dense').on_click(lambda: _refresh_outputs_edit()) \
+                                .tooltip(tr("objects.btn.refresh_outputs"))
+                        codemirror_script_body_edit = make_codemirror(current_state, line_wrapping=True).classes('w-full uh-cm-wrap')
+                        codemirror_script_body_edit.on_value_change(lambda: _refresh_outputs_edit())
+                    # не-script: raw-JSON редактор (как раньше)
                     codemirror_edit_object_version = make_codemirror(current_state)
-                    
 
                 with ui.tab_panel(tab_object_creator):
                     with ui.row():
                         input_new_object_name = ui.input(label=tr("objects.field.name"))
                         select_new_object_type = ui.select(["script", "source", "notifier", "llm"], value="script")
+                        select_new_object_type.on_value_change(lambda: _toggle_creator())
                         input_new_object_roles = ui.input(label=tr("objects.field.roles"))
                         input_new_object_roles.value = '["default"]'
                         button_create_new_object = ui.button(tr("objects.btn.create"))
                         button_create_new_object.on_click(create_button_object)
+                    with ui.column().classes('w-full') as script_box_create:
+                        with ui.row().classes('items-center gap-2 w-full no-wrap'):
+                            select_output_create = ui.select([], value=None, label=tr("objects.field.output"),
+                                                             with_input=True, new_value_mode='add-unique',
+                                                             clearable=True).classes('grow')
+                            select_output_create.tooltip(tr("objects.output_hint"))
+                            ui.button(icon='refresh').props('flat dense').on_click(lambda: _refresh_outputs_create()) \
+                                .tooltip(tr("objects.btn.refresh_outputs"))
+                        codemirror_script_body_create = make_codemirror(current_state, line_wrapping=True).classes('w-full uh-cm-wrap')
+                        codemirror_script_body_create.on_value_change(lambda: _refresh_outputs_create())
                     codemirror_create_new_object = make_codemirror(current_state)
 
+        # начальная видимость по умолчанию (creator по умолчанию script; editor до выбора версии — тоже)
+        _toggle_creator()
+        _toggle_editor()
         update_grid_objects_list(grid_objects_list, current_state)
 
         return True, "OK", currentFuncName(), None
