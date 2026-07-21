@@ -1679,6 +1679,40 @@ def process_injections(node, parameters:dict, current_state:dict):
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), {}
     
+# сообщение-сентинел отмены прогона пользователем (UI отличает отмену от ошибки по _cancel_event,
+# но константа даёт единообразный текст в логах/истории)
+CANCELLED_MSG = "execution cancelled by user"
+
+
+def is_cancelled(current_state):
+    """Запрошена ли отмена текущего прогона. Сигнал носится в current_state['_cancel_event']
+    (threading.Event), общем на сессию и прокинутом во все раннеры (в т.ч. вложенные скрипты
+    и APPLY fan-out). Отсутствие Event -> никогда не отменено (безопасно для scheduler/API-путей)."""
+    event = current_state.get("_cancel_event")
+    return bool(event is not None and event.is_set())
+
+
+@contextlib.contextmanager
+def _track_request(current_state, source, function):
+    """Регистрирует активное обращение к источнику в реестре current_state['_active_requests']
+    (для живого списка активных запросов в UI). Реестр — dict id->{source,function} под
+    current_state['_active_lock']. Если реестра нет (не-UI путь) — no-op."""
+    registry = current_state.get("_active_requests")
+    lock = current_state.get("_active_lock")
+    if registry is None or lock is None:
+        yield
+        return
+    with lock:
+        request_id = current_state.get("_active_seq", 0) + 1
+        current_state["_active_seq"] = request_id
+        registry[request_id] = {"source": source, "function": function}
+    try:
+        yield
+    finally:
+        with lock:
+            registry.pop(request_id, None)
+
+
 @contextlib.contextmanager
 def _acquire_source(current_state, source_name):
     """Ограничивает одновременные обращения к одному источнику (по-источниковый семафор из
@@ -1764,7 +1798,8 @@ def run_command(command, data_map, current_state):
                 # истёк без флага -> падаем на источник (не удаляем: свежий результат перезапишет)
 
     # вызов источника — под по-источниковым семафором (контроль нагрузки на источник)
-    with _acquire_source(current_state, command.get("source")):
+    with _acquire_source(current_state, command.get("source")), \
+         _track_request(current_state, command.get("source"), command.get("function")):
         result = command["function_object"](command["parameters"], command["source_object"]['json'], data_map, current_state)
     if not result[0]:
         error_message = f"{currentFuncName()} error: {result[1]}"
@@ -1804,11 +1839,16 @@ def run_apply_command(command, data_map, current_state):
     workers = max(1, workers)
 
     def _run_row(i, line):
+        # кооперативная отмена: строки, ещё стоящие в очереди пула, при отмене мгновенно
+        # возвращают сентинел, не обращаясь к источнику -> очередь «сливается» за доли секунды
+        if is_cancelled(current_state):
+            return i, (False, CANCELLED_MSG, currentFuncName(), [])
         row_variables = {column["as"]: line[column['column']] for column in command['apply']['columns']}
         injection = process_injections(command["parameters"], row_variables, current_state)
         if injection[0] == False:
             return i, (False, f"apply var injection error: {injection[1]}", currentFuncName(), [])
-        with _acquire_source(current_state, command.get("source")):
+        with _acquire_source(current_state, command.get("source")), \
+             _track_request(current_state, command.get("source"), command.get("function")):
             shard_result = command["function_object"](injection[3], command["source_object"]['json'], data_map, current_state)
         return i, shard_result
 
@@ -1832,6 +1872,9 @@ def run_apply_command(command, data_map, current_state):
     data = []
     for i, shard_result in enumerate(shard_by_index):
         if not shard_result[0]:
+            # отмена пользователем -> возвращаем сентинел без «iteration error» обёртки
+            if shard_result[1] == CANCELLED_MSG or is_cancelled(current_state):
+                return False, CANCELLED_MSG, currentFuncName(), {}
             error_message = f"{currentFuncName()} {i} iteration error: {shard_result[1]}"
             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
             return False, error_message, currentFuncName(), {}

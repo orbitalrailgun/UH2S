@@ -513,7 +513,7 @@ def execute_script_api(script_text, current_state):
         return False, str(e), currentFuncName(), None
 
 
-STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌", "rejected": "⛔", "warning": "⚠️"}
+STEP_ICONS = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌", "rejected": "⛔", "warning": "⚠️", "cancelled": "⏹️"}
 
 def _step_label(command):
     """Человекочитаемая подпись шага для панели прогресса выполнения.
@@ -3026,17 +3026,52 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         ui.label(f"{_step_label(command)}{suffix}").classes('text-sm').style(
                             "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);")
 
+                # живой список активных обращений к источникам (реестр наполняется движком через
+                # _track_request); группируем по источнику: «🔄 source ×N (fn, …)»
+                registry = current_state.get("_active_requests")
+                lock = current_state.get("_active_lock")
+                active = []
+                if registry is not None and lock is not None:
+                    with lock:
+                        active = list(registry.values())
+                if active:
+                    grouped = {}
+                    for entry in active:
+                        source = entry.get("source") or "?"
+                        grouped.setdefault(source, []).append(entry.get("function") or "?")
+                    ui.label(tr("harv.active_requests")).classes('text-sm text-bold').style(
+                        "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif); margin-top: 4px;")
+                    for source, functions in grouped.items():
+                        fns = ", ".join(sorted(set(functions)))
+                        with ui.row().classes('items-center gap-2 no-wrap'):
+                            ui.spinner(size='sm')
+                            ui.label(f"{source} ×{len(functions)} ({fns})").classes('text-sm').style(
+                                "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);")
+
         async def button_script_click():
             execution_start = time.monotonic()
             spinner = current_state.get("ui_spinner")
             status = current_state.get("ui_status")
+            stop_btn = current_state.get("ui_stop_btn")
             steps_timer = None
+            # сигнал кооперативной отмены (движок читает current_state['_cancel_event']) + реестр
+            # активных обращений к источникам (наполняется _track_request, читается _render_steps)
+            cancel_event = threading.Event()
+            current_state["_cancel_event"] = cancel_event
+            current_state["_active_requests"] = {}
+            current_state["_active_lock"] = threading.Lock()
+            current_state["_active_seq"] = 0
             # нулевой шаг — валидация скрипта (отражает ошибки, найденные до выполнения шагов)
             validation_step = {"command": "VALIDATE", "_status": "running", "_info": ""}
             current_state["ui_steps"] = [validation_step]
             _render_steps()
             if spinner is not None:
                 spinner.visible = True
+            if stop_btn is not None:
+                stop_btn.enable()
+                stop_btn.visible = True
+            if button_script is not None:
+                button_script.disable()
             if status is not None:
                 status.set_text(tr("harv.running"))
             try:
@@ -3069,6 +3104,19 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
 
                 commands_executor_result = await run.io_bound(commands_executor, parsed_command, current_state)
                 if not commands_executor_result[0]:
+                    # прерывание пользователем: не ошибка — отдельный статус «прервано»
+                    if cancel_event.is_set():
+                        logger_log(syslog.LOG_INFO, get_log_message("execution cancelled by user", currentFuncName(), current_state))
+                        for command in parsed_command:
+                            if command.get("_status") in ("pending", "running"):
+                                command["_status"] = "cancelled"
+                        if status is not None:
+                            status.set_text(tr("harv.cancelled"))
+                        card_results.clear()
+                        with card_results:
+                            ui.markdown(f"*⏹️ {_md_escape(tr('harv.cancelled'))}*")
+                        ui.notify(tr("harv.cancelled"), type="warning")
+                        return
                     logger_log(syslog.LOG_ERR, get_log_message(commands_executor_result[1], currentFuncName(), current_state))
                     # если конкретный шаг уже помечен error — ошибка на нём, валидация остаётся done;
                     # иначе это ошибка пре-флайта/резолва -> помечаем валидацию
@@ -3115,24 +3163,43 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 ui.notify(tr("harv.done"), type="positive")
 
             except BaseException as e:
-                error_message = f"fail: {str(e)}"
-                logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
-                if validation_step["_status"] == "running":
-                    validation_step["_status"] = "error"
-                    validation_step["_info"] = error_message
-                # оставшиеся шаги отклонены; зависший на running помечаем error (не крутится вечно)
-                try:
-                    for command in parsed_command:
-                        if command.get("_status") == "pending":
-                            command["_status"] = "rejected"
-                        elif command.get("_status") == "running":
-                            command["_status"] = "error"
-                            if not command.get("_info"):
-                                command["_info"] = error_message
-                except NameError:
-                    pass
-                ui.notify(error_message, type="negative")
+                # исключение во время прерванного прогона -> трактуем как отмену, не как ошибку
+                if cancel_event.is_set():
+                    try:
+                        for command in parsed_command:
+                            if command.get("_status") in ("pending", "running"):
+                                command["_status"] = "cancelled"
+                    except NameError:
+                        pass
+                    ui.notify(tr("harv.cancelled"), type="warning")
+                else:
+                    error_message = f"fail: {str(e)}"
+                    logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+                    if validation_step["_status"] == "running":
+                        validation_step["_status"] = "error"
+                        validation_step["_info"] = error_message
+                    # оставшиеся шаги отклонены; зависший на running помечаем error (не крутится вечно)
+                    try:
+                        for command in parsed_command:
+                            if command.get("_status") == "pending":
+                                command["_status"] = "rejected"
+                            elif command.get("_status") == "running":
+                                command["_status"] = "error"
+                                if not command.get("_info"):
+                                    command["_info"] = error_message
+                    except NameError:
+                        pass
+                    ui.notify(error_message, type="negative")
             finally:
+                # снимаем сигнал отмены и реестр активных запросов; восстанавливаем кнопки
+                current_state.pop("_cancel_event", None)
+                current_state.pop("_active_requests", None)
+                current_state.pop("_active_lock", None)
+                current_state.pop("_active_seq", None)
+                if stop_btn is not None:
+                    stop_btn.visible = False
+                if button_script is not None:
+                    button_script.enable()
                 if steps_timer is not None:
                     try:
                         steps_timer.cancel()
@@ -3151,8 +3218,12 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         "status": step_command.get("_status", "pending"),
                         "info": step_command.get("_info", ""),
                     } for step_command in (current_state.get("ui_steps") or [])]
-                    execution_success = 1 if all(s["status"] not in ("error", "rejected") for s in history_steps) else 0
-                    create_execution(str(uuid.uuid4()), current_state.get("username", "unknown"), execution_success,
+                    # статус прогона в истории: 2 = остановлено пользователем, 1 = успех, 0 = сбой
+                    if any(s["status"] == "cancelled" for s in history_steps):
+                        execution_status = 2
+                    else:
+                        execution_status = 1 if all(s["status"] not in ("error", "rejected") for s in history_steps) else 0
+                    create_execution(str(uuid.uuid4()), current_state.get("username", "unknown"), execution_status,
                                      {"script": codemirror_script.value, "steps": history_steps,
                                       "duration_seconds": round(time.monotonic() - execution_start, 3)}, current_state)
                     history_refresh = current_state.get("ui_history_refresh")
@@ -3258,11 +3329,29 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 with ui.tab_panels(tabs, value=tab_script).classes('w-full') as harvester_panels:
                     with ui.tab_panel(tab_script):
                         # сворачиваемый блок скрипта (вместе с кнопками Execute/Анализ) — освобождает место под результаты
+                        def button_stop_click():
+                            # прерывание всего прогона: взводим Event, движок остановит планирование
+                            # новых шагов/строк на ближайшем checkpoint (кооперативно, быстро)
+                            cancel_event = current_state.get("_cancel_event")
+                            if cancel_event is None:
+                                return
+                            cancel_event.set()
+                            stop_btn_ref = current_state.get("ui_stop_btn")
+                            if stop_btn_ref is not None:
+                                stop_btn_ref.disable()
+                            status_ref = current_state.get("ui_status")
+                            if status_ref is not None:
+                                status_ref.set_text(tr("harv.cancelling"))
+                            ui.notify(tr("harv.stop_requested"), type="warning")
+
                         with ui.expansion(tr("harv.script"), icon='code', value=True).classes('w-full'):
                             codemirror_script = make_codemirror(current_state, line_wrapping=True).classes('w-full uh-cm-wrap uh-cm-resize')
                             with ui.row().classes('gap-2'):
                                 button_script = ui.button(tr("harv.execute"), icon='rocket_launch').on_click(button_script_click)
                                 button_analyze = ui.button(tr("harv.analyze"), icon='account_tree').on_click(analyze_click)
+                                button_stop = ui.button(tr("harv.stop"), icon='stop', color='negative').on_click(button_stop_click)
+                                button_stop.visible = False
+                                current_state["ui_stop_btn"] = button_stop
 
                         # Справочник = ДВЕ секции: (1) реально доступное сейчас — GET по существующим объектам
                         # (source/llm/script) + команды DSL + заметки БЗ; (2) после разделителя — ВОЗМОЖНЫЕ типы
@@ -3473,6 +3562,14 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
         is_fullmaster = "fullmaster" in current_state.get("roles", [])
         history_cache = {"executions": []}   # кэш загруженных записей (для поиска без обращений в БД)
 
+        def _status_text(status_value):
+            # статус прогона: 1 = успех, 2 = остановлено пользователем, иначе — сбой
+            if status_value == 1:
+                return tr("history.status.ok")
+            if status_value == 2:
+                return tr("history.status.cancelled")
+            return tr("history.status.fail")
+
         def apply_history_filter():
             search_text = (search_history_input.value or "").strip().lower()
             grid_data = []
@@ -3485,7 +3582,7 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     "timestamp": e["timestamp"],
                     "owner": e["owner"],
                     "source": tr("history.source.agent") if e.get("agent") else tr("history.source.manual"),
-                    "status": tr("history.status.ok") if e["status"] == 1 else tr("history.status.fail"),
+                    "status": _status_text(e["status"]),
                     "duration": f'{e["duration"]:.3f}' if isinstance(e.get("duration"), (int, float)) else "",
                     "script": preview,
                     "id": e["id"],
@@ -3529,7 +3626,7 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
             with steps_history_panel:
                 duration = execution_json.get("duration_seconds")
                 duration_text = tr("history.dur_suffix", sec=duration) if isinstance(duration, (int, float)) else ""
-                ui.markdown(tr("history.detail", status=(tr("history.status.ok") if execution['status'] == 1 else tr("history.status.fail")), owner=execution.get('owner', '?'), ts=execution['timestamp'], dur=duration_text))
+                ui.markdown(tr("history.detail", status=_status_text(execution['status']), owner=execution.get('owner', '?'), ts=execution['timestamp'], dur=duration_text))
                 for step in execution_json.get("steps", []):
                     icon = STEP_ICONS.get(step.get("status", "pending"), "·")
                     info = step.get("info", "")

@@ -6,7 +6,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from app.logging import get_log_message, logger_log, currentFuncName
 #from app.validation import json_validate
-from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, run_load_command, run_save_storage_command, get_variable_type, get_notifier_function, execute_calc
+from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, run_load_command, run_save_storage_command, get_variable_type, get_notifier_function, execute_calc, is_cancelled, CANCELLED_MSG
 from app.db import get_actual_object_by_name, get_secret, get_source_threads_pool, get_user_by_username
 
 
@@ -322,6 +322,10 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
     result_map = {}
     stage = 0
     while True:
+        # кооперативная отмена: на границе стадии прекращаем планирование новых шагов
+        # (in-flight шаги текущей стадии уже дорабатывают в своём пуле — потоки не убиваем)
+        if is_cancelled(current_state):
+            return False, CANCELLED_MSG, currentFuncName(), commands
         # выделяем такие задачи, для которых зависимостей нет или они все доступны, и при этом они ещё не были выполнены
         stage_execute_commands = []
         for command in commands:
@@ -401,6 +405,9 @@ def commands_executor(commands:list,current_state:dict,injected_variables:dict=N
 
     # надо сделать системную переменную с результатом работы _execution_result_
     # Уведомления делаются в последнюю очередь
+    # кооперативная отмена: не отправляем уведомления по прерванному прогону
+    if is_cancelled(current_state):
+        return False, CANCELLED_MSG, currentFuncName(), commands
     for command in commands:
         if command["command"] == "NOTIFY":
             if command.get("_status") == "pending":
@@ -567,6 +574,9 @@ def run_apply_script_command(command, data_map, current_state):
 
         data = []
         for i, line in enumerate(applyed_data):
+            # кооперативная отмена: прекращаем ставить новые под-скрипты
+            if is_cancelled(current_state):
+                return False, CANCELLED_MSG, currentFuncName(), {}
             # параметры строки -> инъекция в параметры вызова скрипта
             row_variables = {column["as"]: line[column['column']] for column in command['apply']['columns']}
             injection = process_injections(command["parameters"], row_variables, current_state)
