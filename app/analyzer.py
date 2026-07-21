@@ -32,6 +32,14 @@ def _short(value, limit=48):
 def _refs(command, known_names):
     """Имена ранее объявленных переменных/таблиц, на которые ссылается команда."""
     text = command.get("line", "") or ""
+    # для GET убираем токен '<source>:<function>' из текста поиска — иначе имя переменной,
+    # совпавшее с именем функции/источника (напр. DEF ... AS query при GET duckdb_im:query(...)),
+    # давало бы ложное ребро. Реальные ссылки (%(query)s в параметрах, FROM query в SQL) остаются.
+    if command.get("command") == "GET":
+        source = command.get("source")
+        function = command.get("function")
+        if source and function:
+            text = text.replace(f"{source}:{function}", " ")
     apply_block = command.get("apply")
     if isinstance(apply_block, dict):
         text += " " + str(apply_block.get("data", ""))
@@ -111,20 +119,28 @@ def _build_scope(script_text, current_state, ctx, depth, visited):
             script_name = command.get("function", "")
             if script_name and script_name not in visited and depth < MAX_SCRIPT_DEPTH:
                 obj = get_actual_object_by_name(script_name, "('script')", current_state)
-                body = (obj[3].get("json", {}) or {}).get("script") if obj[0] else None
+                obj_json = (obj[3].get("json", {}) or {}) if obj[0] else {}
+                body = obj_json.get("script")
                 if body:
                     sub_id = f"sg{ctx['counter']}"
                     ctx["lines"].append(f'    subgraph {sub_id}["script: {script_name}"]')
-                    _build_scope(body, current_state, ctx, depth + 1, visited | {script_name})
+                    # внутри субграфа — сверху вниз, как во внешнем графе (иначе Mermaid рисует LR)
+                    ctx["lines"].append("    direction TB")
+                    _sub_first, sub_defs = _build_scope(body, current_state, ctx, depth + 1, visited | {script_name})
                     ctx["lines"].append("    end")
                     ctx["lines"].append(f"    {node_id} --> {sub_id}")
+                    # что скрипт отдаёт наружу: ребро от узла-return к вызывающему узлу (в его data_name)
+                    return_name = obj_json.get("return")
+                    if return_name and return_name in sub_defs:
+                        ret_label = _short(return_name, 24).replace("|", "/").replace('"', "'")
+                        ctx["lines"].append(f'    {sub_defs[return_name]} -->|"return: {ret_label}"| {node_id}')
 
         # регистрируем объявляемое имя
         defined = command.get("data_name") or command.get("variable_name") or command.get("result_name")
         if defined:
             defs[defined] = node_id
 
-    return first_id
+    return first_id, defs
 
 
 def build_execution_mermaid(script_text, current_state):
@@ -132,8 +148,11 @@ def build_execution_mermaid(script_text, current_state):
     ctx = {"counter": 0, "lines": [], "classes": {}}
     _build_scope(script_text or "", current_state, ctx, depth=0, visited=set())
 
-    # init-директива: светлее линии/стрелки (чтобы не сливались с тёмным фоном)
-    out = ['%%{init: {"theme": "base", "themeVariables": {"lineColor": "#94a3b8"}}}%%', "flowchart TD"]
+    # init-директива: светлые линии/стрелки + ТЁМНЫЙ фон субграфов (script: ...), чтобы блок скрипта
+    # не был белым на тёмной теме (clusterBkg/clusterBorder/titleColor — переменные Mermaid для кластеров)
+    out = ['%%{init: {"theme": "base", "themeVariables": {'
+           '"lineColor": "#94a3b8", "clusterBkg": "#0f172a", "clusterBorder": "#475569", '
+           '"titleColor": "#e5e7eb", "tertiaryColor": "#0f172a"}}}%%', "flowchart TD"]
     if not ctx["lines"]:
         out.append('    empty["(пустой скрипт)"]')
         return "\n".join(out)
