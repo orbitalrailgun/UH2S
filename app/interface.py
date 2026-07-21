@@ -5,6 +5,7 @@ from app.llm import llm_health_check, llm_context_window, build_agent_system_pro
 import syslog
 import asyncio
 import json
+import os
 import uuid
 import time
 import threading
@@ -316,7 +317,8 @@ def _safe_filename(name):
 
 
 def _normalize_for_tabular(data):
-    """Для xlsx/csv: вложенные dict/list сериализуем в JSON-строку, скаляры — как есть."""
+    """Для xlsx: вложенные dict/list сериализуем в JSON-строку, скаляры — как есть.
+    Материализует полную копию — использовать только для xlsx (объём ограничен лимитом листа)."""
     rows = []
     for row in data:
         if isinstance(row, dict):
@@ -325,6 +327,27 @@ def _normalize_for_tabular(data):
         else:
             rows.append({"value": row})
     return rows
+
+
+def _normalize_row(row):
+    """Одна строка для CSV: вложенные dict/list -> JSON-строка, скаляры как есть; не-dict -> {'value': ...}."""
+    if isinstance(row, dict):
+        return {k: (json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v)
+                for k, v in row.items()}
+    return {"value": row}
+
+
+def _union_fieldnames(data):
+    """Объединение имён столбцов по всем строкам с сохранением порядка первого появления.
+    Один проход, память O(число уникальных ключей) — строки elastic могут иметь разный набор полей."""
+    fieldnames, seen = [], set()
+    for row in data:
+        keys = row.keys() if isinstance(row, dict) else ("value",)
+        for k in keys:
+            if k not in seen:
+                seen.add(k)
+                fieldnames.append(k)
+    return fieldnames
 
 
 def _safe_sheet_name(name, used):
@@ -355,12 +378,23 @@ def _unique_zip_name(stem, ext, used):
     return name
 
 
+# Жёсткий предел строк на один лист .xlsx (включая строку заголовка) — формат Office Open XML.
+# Больше этого лист физически не вмещает, поэтому SAVE(..., xlsx) с таким объёмом откатывается на csv_in_zip.
+EXCEL_MAX_ROWS = 1_048_576
+
+
 def records_to_download(tables_data, fmt, base_name):
-    """Подготовить (content_bytes, filename, media_type) для скачивания одной или нескольких таблиц.
+    """Собрать файл выгрузки НА ДИСКЕ и вернуть (path, filename, media_type, warning).
 
     tables_data — dict {table_name: list_of_dicts} (порядок сохраняется).
-    Форматы: xlsx (лист на таблицу) | csv_in_zip | json_in_zip (файл на таблицу в zip)."""
+    Форматы: xlsx (лист на таблицу) | csv_in_zip | json_in_zip (файл на таблицу в zip).
+    warning — None или dict {rows, limit} при авто-откате xlsx→csv_in_zip (таблица не влезает в лист Excel).
+
+    Пишем в temp-файл (не в RAM) и отдаём потоком с диска (см. app/downloads + роут /download) — иначе на
+    гигабайтах рвётся websocket NiceGUI и результат теряется. Вызывающий отвечает за удаление файла
+    (роут /download удаляет после отдачи; при ошибке сборки файл удаляем здесь)."""
     import io
+    from app.downloads import export_tempfile
     fmt = (fmt or "").strip().strip('"\'').lower()
     base = _safe_filename(base_name)
     for ext in (".xlsx", ".csv.zip", ".json.zip", ".zip", ".csv", ".json"):
@@ -369,44 +403,121 @@ def records_to_download(tables_data, fmt, base_name):
             break
     base = base or "export"
 
+    warning = None
+    # xlsx не вмещает больше EXCEL_MAX_ROWS строк на лист (вкл. заголовок): при превышении хотя бы одной
+    # таблицей молча откатываемся на csv_in_zip и возвращаем warning, чтобы предупредить пользователя.
     if fmt == "xlsx":
-        import pandas
-        buffer = io.BytesIO()
-        used = set()
-        with pandas.ExcelWriter(buffer, engine="openpyxl") as writer:
-            for table_name, data in tables_data.items():
-                sheet = _safe_sheet_name(table_name, used)
-                pandas.DataFrame(_normalize_for_tabular(data)).to_excel(writer, index=False, sheet_name=sheet)
-        return (buffer.getvalue(), f"{base}.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        max_rows = max((len(data) for data in tables_data.values()), default=0)
+        if max_rows > EXCEL_MAX_ROWS - 1:  # -1 на строку заголовка
+            warning = {"rows": max_rows, "limit": EXCEL_MAX_ROWS}
+            fmt = "csv_in_zip"
 
-    if fmt == "csv_in_zip":
-        import zipfile
-        import pandas
-        zip_buffer = io.BytesIO()
-        used = set()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for table_name, data in tables_data.items():
-                fname = _unique_zip_name(_safe_filename(table_name), ".csv", used)
-                zf.writestr(fname, pandas.DataFrame(_normalize_for_tabular(data)).to_csv(index=False).encode("utf-8-sig"))
-        return zip_buffer.getvalue(), f"{base}.csv.zip", "application/zip"
+    if fmt not in ("xlsx", "csv_in_zip", "json_in_zip"):
+        raise ValueError(f"unknown format '{fmt}' (xlsx | csv_in_zip | json_in_zip)")
 
-    if fmt == "json_in_zip":
+    suffix = {"xlsx": ".xlsx", "csv_in_zip": ".csv.zip", "json_in_zip": ".json.zip"}[fmt]
+    path = export_tempfile(suffix)
+    try:
+        if fmt == "xlsx":
+            import pandas
+            used = set()
+            with pandas.ExcelWriter(path, engine="openpyxl") as writer:
+                for table_name, data in tables_data.items():
+                    sheet = _safe_sheet_name(table_name, used)
+                    pandas.DataFrame(_normalize_for_tabular(data)).to_excel(writer, index=False, sheet_name=sheet)
+            return (path, f"{base}.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", warning)
+
+        if fmt == "csv_in_zip":
+            import csv
+            import zipfile
+            used = set()
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for table_name, data in tables_data.items():
+                    fname = _unique_zip_name(_safe_filename(table_name), ".csv", used)
+                    fieldnames = _union_fieldnames(data)
+                    # потоковая запись СТРОКА-ЗА-СТРОКОЙ прямо в zip-энтри: без полной копии, без pandas
+                    # DataFrame и без гигантской строки-CSV. Пик памяти ~O(1) от числа строк.
+                    with zf.open(fname, "w") as raw:
+                        wrapper = io.TextIOWrapper(raw, encoding="utf-8-sig", newline="")
+                        writer = csv.DictWriter(wrapper, fieldnames=fieldnames, extrasaction="ignore")
+                        writer.writeheader()
+                        for row in data:
+                            writer.writerow(_normalize_row(row))
+                        wrapper.flush()
+                        wrapper.detach()  # не закрывать нижележащий поток zip-энтри раньше времени
+            return path, f"{base}.csv.zip", "application/zip", warning
+
+        # json_in_zip
         import zipfile
-        zip_buffer = io.BytesIO()
         used = set()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
             for table_name, data in tables_data.items():
                 fname = _unique_zip_name(_safe_filename(table_name), ".json", used)
-                zf.writestr(fname, json.dumps(data, ensure_ascii=False, indent=2, default=str).encode("utf-8"))
-        return zip_buffer.getvalue(), f"{base}.json.zip", "application/zip"
+                # потоковый валидный JSON-массив (по объекту на строку) — без построения одной большой
+                # строки в памяти. Компактнее прежнего indent=2, зато не падает по OOM на больших наборах.
+                with zf.open(fname, "w") as raw:
+                    wrapper = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+                    wrapper.write("[")
+                    for idx, row in enumerate(data):
+                        wrapper.write(("," if idx else "") + "\n" + json.dumps(row, ensure_ascii=False, default=str))
+                    wrapper.write("\n]" if data else "]")
+                    wrapper.flush()
+                    wrapper.detach()
+        return path, f"{base}.json.zip", "application/zip", warning
+    except BaseException:
+        # не оставляем недописанный temp-файл при ошибке сборки
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise
 
-    raise ValueError(f"unknown format '{fmt}' (xlsx | csv_in_zip | json_in_zip)")
+
+# порог inline-скачивания: файлы <= порога отдаём blob'ом (bytes через ui.download), иначе — потоковым
+# роутом /download. Blob работает БЕЗ отдельного HTTP-запроса, поэтому не зависит от доверия браузера к
+# TLS-сертификату сервера (при самоподписанном cert download-подсистема Chrome рвёт скачивание по URL
+# с «проверьте подключение»). Роут /download нужен только для действительно больших выгрузок (там уже
+# требуется доверенный TLS в деплое). Порог настраивается через UH2S_DOWNLOAD_INLINE_MAX_MB.
+try:
+    DOWNLOAD_INLINE_MAX_BYTES = int(float(os.environ.get("UH2S_DOWNLOAD_INLINE_MAX_MB", "50")) * 1024 * 1024)
+except (TypeError, ValueError):
+    DOWNLOAD_INLINE_MAX_BYTES = 50 * 1024 * 1024
+
+
+def _serve_download(path, filename, media_type=""):
+    """Инициировать скачивание готового temp-файла с диска. Небольшие файлы (<= DOWNLOAD_INLINE_MAX_BYTES)
+    отдаём blob'ом через websocket (надёжно, не зависит от доверия к TLS-сертификату); большие — потоковым
+    роутом /download/{token} (мимо websocket, но требует доверенного TLS в деплое). Temp-файл в любом случае
+    удаляется после отдачи. Возвращает токен роута (или None, если ушло blob'ом) — для тестов/диагностики."""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = None
+
+    if size is not None and size <= DOWNLOAD_INLINE_MAX_BYTES:
+        try:
+            with open(path, "rb") as handle:
+                content = handle.read()
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        ui.download(content, filename, media_type or "application/octet-stream")
+        return None
+
+    # большой файл: потоковая отдача с диска (файл удалит роут после отдачи, см. front.py)
+    from app.downloads import register_download
+    token = register_download(path, filename, media_type)
+    ui.download.from_url(f"/download/{token}", filename)
+    return token
 
 
 def execute_script_api(script_text, current_state):
     """Выполнить DSL-скрипт для API (без UI). Возвращает (ok, msg, payload), где payload:
-    {"text": <PRINT и SHOW table в markdown>, "files": [(filename, bytes, media_type), ...]}.
+    {"text": <PRINT и SHOW table в markdown>, "files": [(filename, temp_path, media_type), ...]}.
+    files несут ПУТИ к temp-файлам на диске (не байты) — front.py стримит их в result.zip и удаляет.
     PRINT -> текст; SHOW matplotlib -> PNG-файл; SHOW table -> markdown-таблица в текст; SAVE -> файл(ы)."""
     try:
         parsed = command_parser(script_text, current_state)
@@ -463,9 +574,13 @@ def execute_script_api(script_text, current_state):
                         params = json.loads(params_raw)
                     plot = render_plot_png_b64(data, params)
                     import base64 as _b64
+                    from app.downloads import export_tempfile
                     plot_index += 1
-                    files.append((f"plot_{plot_index}_{_safe_filename(table)}.png",
-                                  _b64.b64decode(plot["b64"]), "image/png"))
+                    # единый контракт files -> путь к temp-файлу (front.py стримит и удалит)
+                    png_path = export_tempfile(".png")
+                    with open(png_path, "wb") as png_file:
+                        png_file.write(_b64.b64decode(plot["b64"]))
+                    files.append((f"plot_{plot_index}_{_safe_filename(table)}.png", png_path, "image/png"))
                 elif show_type == "tree":
                     # интерактивного дерева в API нет -> ASCII-дерево в текст
                     params_raw = (command.get("show_params") or "").strip()
@@ -503,8 +618,12 @@ def execute_script_api(script_text, current_state):
                     text_parts.append(f"*SAVE: нет табличных данных: {', '.join(missing)}*")
                     continue
                 base_name = command.get("save_filename") or (tables[0] if len(tables) == 1 else "export")
-                content, filename, media_type = records_to_download(tables_data, fmt, base_name)
-                files.append((filename, content, media_type))
+                # путь к temp-файлу на диске (не байты) — front.py стримит его в result.zip и удалит
+                path, filename, media_type, warning = records_to_download(tables_data, fmt, base_name)
+                if warning:
+                    text_parts.append(f"*SAVE: {warning['rows']} строк не помещаются в xlsx "
+                                      f"(лимит листа Excel — {warning['limit']}); сохранено как csv_in_zip*")
+                files.append((filename, path, media_type))
 
         return True, "Ok", currentFuncName(), {"text": "\n\n".join(p for p in text_parts if p is not None), "files": files}
 
@@ -1570,14 +1689,17 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 if data is None:
                     return
                 try:
-                    content, filename, media_type = records_to_download({key: data}, fmt_select.value, key)
+                    # сборка файла — в отдельном потоке; результат — путь к temp-файлу на диске
+                    path, filename, media_type, warning = await run.io_bound(
+                        records_to_download, {key: data}, fmt_select.value, key)
                 except BaseException as download_error:
                     ui.notify(str(download_error), type="negative")
                     return
-                try:
-                    ui.download(content, filename, media_type)
-                except TypeError:
-                    ui.download(content, filename)
+                if warning:
+                    ui.notify(tr("harv.save.xlsx_overflow", rows=warning["rows"], limit=warning["limit"]),
+                              type="warning")
+                # отдаём потоком с диска (мимо websocket) — файл удалится после скачивания
+                _serve_download(path, filename, media_type)
 
             async def delete_entry():
                 key = await _selected_key()
@@ -2939,7 +3061,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 ui.markdown(f"*SHOW: {_md_escape(command['_info'])}*")
                 return False
 
-        def _render_save(command, variables, result_map):
+        async def _render_save(command, variables, result_map):
             # SAVE→storage исполняется движком (commands_executor), не как файловая выгрузка:
             # статус/сообщение уже проставлены, здесь только показываем результат.
             if command.get("save_is_storage"):
@@ -2975,16 +3097,22 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
             base_name = save_filename or (tables[0] if len(tables) == 1 else "export")
 
             try:
-                content, filename, media_type = records_to_download(tables_data, fmt, base_name)
+                # тяжёлая сборка файла (pandas + xlsx/csv + zip) — в отдельном потоке, чтобы не
+                # блокировать event loop NiceGUI; результат — путь к temp-файлу на диске (не байты в RAM)
+                path, filename, media_type, warning = await run.io_bound(
+                    records_to_download, tables_data, fmt, base_name)
             except BaseException as save_error:
                 command["_info"] = str(save_error)
                 ui.markdown(f"*SAVE error: {_md_escape(command['_info'])}*")
                 return False
 
-            try:
-                ui.download(content, filename, media_type)
-            except TypeError:
-                ui.download(content, filename)
+            if warning:
+                overflow_msg = tr("harv.save.xlsx_overflow", rows=warning["rows"], limit=warning["limit"])
+                ui.markdown(f"*⚠️ {_md_escape(overflow_msg)}*")
+                ui.notify(overflow_msg, type="warning")
+
+            # отдаём потоком с диска (мимо websocket) — файл удалится после скачивания
+            _serve_download(path, filename, media_type)
             total = sum(len(d) for d in tables_data.values())
             ui.markdown(tr("harv.save.downloading", filename=_md_escape(filename), tables=len(tables_data), rows=total))
             return True
@@ -3151,7 +3279,7 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         elif command["command"] == "SHOW":
                             ok = _render_show(command, variables, result_map)
                         elif command["command"] == "SAVE":
-                            ok = _render_save(command, variables, result_map)
+                            ok = await _render_save(command, variables, result_map)
                         else:
                             continue
                         command["_status"] = "done" if ok else "error"

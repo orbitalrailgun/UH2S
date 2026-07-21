@@ -2,7 +2,8 @@ import argparse
 import os
 
 from fastapi import Request, Response, HTTPException
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse
+from starlette.background import BackgroundTask
 from starlette.middleware.base import BaseHTTPMiddleware
 from nicegui import app, ui, Client, run
 
@@ -88,6 +89,14 @@ def main():
         help="Количество параллельно выполняемых потоков"
     )
     parser.add_argument(
+        "--download_inline_max_mb",
+        type=int,
+        default=None,
+        help="Порог inline-скачивания SAVE (МБ): файлы <= порога отдаются blob'ом через websocket "
+             "(надёжно при самоподписанном TLS), больше — потоковым роутом /download (нужен доверенный TLS). "
+             "Приоритет: аргумент -> env UH2S_DOWNLOAD_INLINE_MAX_MB -> 50"
+    )
+    parser.add_argument(
         "--host",
         type=str,
         default="127.0.0.1",
@@ -129,6 +138,20 @@ def main():
     # секреты/конфиг можно передать окружением (для контейнеров) — приоритет у явного аргумента
     args.db_conf_object = args.db_conf_object or os.environ.get("UH2S_DB_CONF", "")
     args.nicegui_storage_key_object = args.nicegui_storage_key_object or os.environ.get("UH2S_STORAGE_KEY", "")
+
+    # порог inline-скачивания SAVE (МБ): приоритет CLI -> env -> дефолт модуля (50).
+    # Проставляем в app.interface, откуда _serve_download читает его при отдаче файла.
+    _inline_mb = args.download_inline_max_mb
+    if _inline_mb is None:
+        env_mb = os.environ.get("UH2S_DOWNLOAD_INLINE_MAX_MB")
+        if env_mb not in (None, ""):
+            try:
+                _inline_mb = int(float(env_mb))
+            except (TypeError, ValueError):
+                _inline_mb = None
+    if _inline_mb is not None:
+        import app.interface as _app_interface
+        _app_interface.DOWNLOAD_INLINE_MAX_BYTES = max(0, _inline_mb) * 1024 * 1024
 
     NICEGUI_STORAGE_KEY = args.nicegui_storage_key_object
     ITSELF_LINK = args.itself_link
@@ -391,6 +414,29 @@ def main():
     async def healthz():
         return {"status": "ok", "app": APP_NAME, "version": APP_VERSION}
 
+    def _remove_files(*paths):
+        """Удалить temp-файлы (для BackgroundTask после отдачи ответа). Тихо игнорирует отсутствующие."""
+        for path in paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    ########################################
+    # Потоковая отдача больших выгрузок с диска (мимо websocket NiceGUI).
+    # token одноразовый и неугадываемый (см. app/downloads); файл удаляется после отдачи.
+    ########################################
+    @app.get("/download/{token}")
+    async def download(token: str):
+        from app.downloads import consume_download
+        entry = consume_download(token)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="download not found or expired")
+        path, filename, media_type = entry
+        return FileResponse(path, filename=filename,
+                            media_type=media_type or "application/octet-stream",
+                            background=BackgroundTask(_remove_files, path))
+
     ########################################
     # API: выполнение DSL-скрипта
     ########################################
@@ -456,10 +502,12 @@ def main():
         if not files:
             return Response(content=(text + "\n") if text else "\n", media_type="text/plain; charset=utf-8")
 
-        # есть файлы/изображения -> zip (output.txt + артефакты, имена уникализируются)
-        import io
+        # есть файлы/изображения -> zip (output.txt + артефакты, имена уникализируются).
+        # files несут ПУТИ к temp-файлам на диске -> собираем result.zip тоже на диске и стримим
+        # (zf.write читает артефакты с диска по кускам), чтобы не держать гигабайты в RAM.
         import zipfile
-        zip_buffer = io.BytesIO()
+        from app.downloads import export_tempfile
+        artifact_paths = [path for _filename, path, _media in files]
         used_names = set()
 
         def _unique(name):
@@ -472,15 +520,20 @@ def main():
             used_names.add(candidate)
             return candidate
 
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            if text and text.strip():
-                zf.writestr("output.txt", text.encode("utf-8"))
-            for filename, content, _media in files:
-                zf.writestr(_unique(filename), content)
-        return Response(
-            content=zip_buffer.getvalue(),
-            media_type="application/zip",
-            headers={"Content-Disposition": "attachment; filename=result.zip"},
+        zip_path = export_tempfile(".zip")
+        try:
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                if text and text.strip():
+                    zf.writestr("output.txt", text.encode("utf-8"))
+                for filename, path, _media in files:
+                    zf.write(path, _unique(filename))
+        except BaseException:
+            _remove_files(zip_path, *artifact_paths)
+            raise
+        # стрим с диска + удаление result.zip и всех артефактов после отдачи
+        return FileResponse(
+            zip_path, media_type="application/zip", filename="result.zip",
+            background=BackgroundTask(_remove_files, zip_path, *artifact_paths),
         )
 
     ########################################

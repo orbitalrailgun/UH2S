@@ -248,6 +248,7 @@ TRANSLATIONS = {
         "harv.save.no_data": "no table data: {tables}", "harv.save.no_tables": "no tables specified",
         "harv.save.downloading": "💾 Downloading **{filename}** ({tables} tbl., {rows} rows)",
         "harv.save.stored": "stored to '{name}'",
+        "harv.save.xlsx_overflow": "{rows} rows exceed the xlsx sheet limit ({limit}); saved as csv_in_zip instead",
         # History
         "history.title": "Run history", "history.refresh": "Refresh", "history.search": "Search by script text",
         "history.script_label": "Script",
@@ -495,6 +496,7 @@ TRANSLATIONS = {
         "harv.save.no_data": "нет табличных данных: {tables}", "harv.save.no_tables": "не указаны таблицы",
         "harv.save.downloading": "💾 Скачивание **{filename}** ({tables} табл., {rows} строк)",
         "harv.save.stored": "сохранено в '{name}'",
+        "harv.save.xlsx_overflow": "{rows} строк не помещаются в лист xlsx (лимит {limit}); сохранено как csv_in_zip",
         # History
         "history.title": "История запусков", "history.refresh": "Обновить", "history.search": "Поиск по тексту скрипта",
         "history.script_label": "Скрипт",
