@@ -1,15 +1,9 @@
-"""Офлайн-тесты data_taxi (нативный elastic-клиент): диагностика «0 строк» и устойчивость к пустому
-результату. Сеть не нужна — elastic_client подменяется фейком с каноничными ответами.
-data_taxi использует pandas, поэтому при его отсутствии тесты пропускаются (как APPLY-тесты)."""
+"""Офлайн-тесты data_taxi (нативный elastic-клиент): диагностика «0 строк», устойчивость к пустому
+результату и дедуп по _id. Сеть не нужна — elastic_client подменяется фейком с каноничными ответами.
+data_taxi больше не зависит от pandas (дедуп in-place), поэтому тесты идут и в core-only окружении."""
 import unittest
 
-try:
-    import pandas  # noqa: F401
-    HAS_PANDAS = True
-except ImportError:
-    HAS_PANDAS = False
-
-from app.sources.additional.elastic2python import data_taxi
+from app.sources.additional.elastic2python import data_taxi, dedup_by_id
 
 
 class FakeClient:
@@ -23,7 +17,6 @@ class FakeClient:
         return self._response
 
 
-@unittest.skipUnless(HAS_PANDAS, "pandas is required for data_taxi")
 class TestDataTaxiZeroRows(unittest.TestCase):
     def test_empty_result_no_keyerror(self):
         # фильтр ничего не нашёл: hits пустой. Раньше pandas.DataFrame([]).drop_duplicates("_id")
@@ -60,7 +53,6 @@ class TestDataTaxiZeroRows(unittest.TestCase):
         self.assertIn("filter matched nothing", captured.get("hint", ""))
 
 
-@unittest.skipUnless(HAS_PANDAS, "pandas is required for data_taxi")
 class TestDataTaxiHappyPath(unittest.TestCase):
     def test_rows_extracted_no_debug_log(self):
         # поля резолвятся -> строки извлекаются, debug_log НЕ зовётся, сообщение содержит matched/rows.
@@ -86,6 +78,36 @@ class TestDataTaxiHappyPath(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(data, [])
         self.assertEqual(client.calls, 0)
+
+
+class TestDedupById(unittest.TestCase):
+    """dedup_by_id не требует pandas — тестируем всегда."""
+    def test_keeps_first_occurrence_in_order(self):
+        rows = [{"_id": "a", "n": 1}, {"_id": "b", "n": 2}, {"_id": "a", "n": 3}, {"_id": "c", "n": 4}]
+        result = dedup_by_id(rows)
+        self.assertEqual([r["_id"] for r in result], ["a", "b", "c"])
+        self.assertEqual(result[0]["n"], 1)  # осталась именно первая строка с _id=a
+
+    def test_in_place_returns_same_list(self):
+        rows = [{"_id": "a"}, {"_id": "a"}]
+        result = dedup_by_id(rows)
+        self.assertIs(result, rows)          # тот же объект (in-place, без второй копии)
+        self.assertEqual(len(rows), 1)
+
+    def test_empty(self):
+        self.assertEqual(dedup_by_id([]), [])
+
+    def test_no_duplicates_unchanged(self):
+        rows = [{"_id": "a"}, {"_id": "b"}]
+        self.assertEqual(dedup_by_id(rows), [{"_id": "a"}, {"_id": "b"}])
+
+    def test_missing_id_collapse_to_one(self):
+        # строки без _id -> id=None -> схлопываются в одну (как drop_duplicates по NaN)
+        rows = [{"x": 1}, {"x": 2}, {"_id": "a"}]
+        result = dedup_by_id(rows)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], {"x": 1})
+        self.assertEqual(result[1], {"_id": "a"})
 
 
 if __name__ == "__main__":

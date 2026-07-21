@@ -1819,8 +1819,42 @@ def run_command(command, data_map, current_state):
     #data_map[command['data_name']] = records
     return True, info, currentFuncName(), records
 
+
+def _dedup_key_value(value):
+    """Сделать значение ячейки хэшируемым для ключа дедупликации: скаляры — как есть,
+    dict/list (нехэшируемые) — в детерминированную JSON-строку (sort_keys, чтобы равные
+    структуры давали равный ключ независимо от порядка вставки)."""
+    try:
+        hash(value)
+        return value
+    except TypeError:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def dedup_rows(rows, columns):
+    """Дедуп списка строк (list-of-dict) по набору колонок с сохранением порядка первого
+    появления — IN-PLACE, без pandas и без второй полной копии. Память ~O(число уникальных
+    ключей) вместо материализации DataFrame (важно для больших выгрузок — иначе OOM). Значение
+    отсутствующей колонки -> None в ключе (как NaN у drop_duplicates). В отличие от
+    pandas+to_dict('records') не приводит типы и не добавляет строкам недостающие колонки —
+    исходные словари сохраняются как есть. Возвращает тот же список rows, укороченный до уникальных."""
+    seen = set()
+    write = 0
+    for row in rows:
+        if isinstance(row, dict):
+            key = tuple(_dedup_key_value(row.get(column)) for column in columns)
+        else:
+            key = (_dedup_key_value(row),)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows[write] = row
+        write += 1
+    del rows[write:]
+    return rows
+
+
 def run_apply_command(command, data_map, current_state):
-    import pandas
     applyed_data = data_map[command['apply']['data']]
     if len(applyed_data) == 0:
         return True, "empty applyed data", currentFuncName(), []
@@ -1883,10 +1917,10 @@ def run_apply_command(command, data_map, current_state):
             for column in command['apply']['columns']:
                 shard_line[f"applied_{column['as']}"] = line[column['column']]
         data = data + shard_result[3]
-    # дедубликация при необходимости
+    # дедубликация при необходимости (in-place, без pandas — держит память на больших выгрузках)
     if "unique" in command["apply"]:
         if len(command["apply"]["unique"]) > 0:
-            data = pandas.DataFrame(data).drop_duplicates(command["apply"]["unique"]).to_dict('records')
+            data = dedup_rows(data, command["apply"]["unique"])
 
     #data_map[command['data_name']] = data
     return True, str(len(data)), currentFuncName(), data

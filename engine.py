@@ -6,7 +6,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from app.logging import get_log_message, logger_log, currentFuncName
 #from app.validation import json_validate
-from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, run_load_command, run_save_storage_command, get_variable_type, get_notifier_function, execute_calc, is_cancelled, CANCELLED_MSG
+from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, run_load_command, run_save_storage_command, get_variable_type, get_notifier_function, execute_calc, is_cancelled, CANCELLED_MSG, dedup_rows
 from app.db import get_actual_object_by_name, get_secret, get_source_threads_pool, get_user_by_username
 
 
@@ -562,7 +562,6 @@ def run_apply_script_command(command, data_map, current_state):
     """APPLY поверх вызова скрипта: под-скрипт исполняется для каждой строки apply-данных.
     Параметры строки инъектируются в параметры вызова, результаты помечаются applied_* и склеиваются."""
     try:
-        import pandas
         applyed_data = data_map[command['apply']['data']]
         if len(applyed_data) == 0:
             return True, "empty applyed data", currentFuncName(), []
@@ -599,9 +598,9 @@ def run_apply_script_command(command, data_map, current_state):
                         shard_line[f"applied_{column["as"]}"] = line[column['column']]
             data = data + shard_data
 
-        # дедубликация при необходимости
+        # дедубликация при необходимости (in-place, без pandas — держит память на больших выгрузках)
         if "unique" in command["apply"] and len(command["apply"]["unique"]) > 0:
-            data = pandas.DataFrame(data).drop_duplicates(command["apply"]["unique"]).to_dict('records')
+            data = dedup_rows(data, command["apply"]["unique"])
 
         return True, str(len(data)), currentFuncName(), data
 
