@@ -2050,7 +2050,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                         with ui.row().classes('gap-2 mt-2'):
                             ui.button(tr("settings.btn.save"), icon='save', on_click=save).classes('hover-glow')
-                            ui.button(tr("settings.btn.reset"), icon='restart_alt', on_click=reset_defaults).props('outline')
+                            ui.button(tr("settings.btn.reset"), icon='restart_alt', on_click=reset_defaults).props()
 
                         # ───────────────────────── Учётная запись (self-service) ─────────────────────────
 
@@ -2094,7 +2094,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             with ui.dialog() as confirm_dialog, ui.card():
                                 ui.label(tr("settings.account.confirm"))
                                 with ui.row().classes('justify-end w-full'):
-                                    ui.button(tr("settings.btn.cancel"), on_click=lambda: confirm_dialog.submit(False)).props('outline')
+                                    ui.button(tr("settings.btn.cancel"), on_click=lambda: confirm_dialog.submit(False)).props()
                                     ui.button(tr("settings.account.confirm_yes"), on_click=lambda: confirm_dialog.submit(True)).classes('hover-glow')
                             if not await confirm_dialog:
                                 return
@@ -2282,11 +2282,11 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                 refresh_users_grid()
 
                             with ui.row().classes('gap-2 flex-wrap'):
-                                block_user_button = ui.button(tr("settings.users.block"), icon='block', on_click=toggle_user_enabled).props('outline')
+                                block_user_button = ui.button(tr("settings.users.block"), icon='block', on_click=toggle_user_enabled).props()
                                 ui.button(tr("settings.users.save_roles"), icon='save', on_click=save_user_roles)
                                 ui.button(tr("settings.meta.savebtn"), icon='save', on_click=save_user_metadata)
-                                ui.button(tr("settings.users.reset_pw_btn"), icon='password', on_click=reset_user_password).props('outline')
-                                ui.button(tr("settings.btn.refresh"), icon='refresh', on_click=refresh_users_grid).props('flat')
+                                ui.button(tr("settings.users.reset_pw_btn"), icon='password', on_click=reset_user_password).props()
+                                ui.button(tr("settings.btn.refresh"), icon='refresh', on_click=refresh_users_grid).props()
 
                             grid_users.on("selectionChanged", on_user_selected)
 
@@ -2424,7 +2424,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                                 ai_log_grid.options["domLayout"] = "normal"
                                 ai_log_grid.update()
 
-                            ui.button(tr("settings.ai.refresh_log"), icon='refresh', on_click=refresh_ai_log).props('outline')
+                            ui.button(tr("settings.ai.refresh_log"), icon='refresh', on_click=refresh_ai_log).props()
                             refresh_ai_log()
 
                         # ──────────── Разрешённые сети (IP-whitelist) — роли fullmaster / netadmin ────────────
@@ -2510,8 +2510,8 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                             with ui.row().classes('gap-2 flex-wrap'):
                                 ui.button(tr("settings.net.add"), icon='add', on_click=add_network).classes('hover-glow')
-                                ui.button(tr("settings.net.delete"), icon='delete', on_click=delete_network).props('outline')
-                                ui.button(tr("settings.btn.refresh"), icon='refresh', on_click=refresh_net_grid).props('flat')
+                                ui.button(tr("settings.net.delete"), icon='delete', on_click=delete_network).props()
+                                ui.button(tr("settings.btn.refresh"), icon='refresh', on_click=refresh_net_grid).props()
 
                             refresh_net_grid()
 
@@ -2629,9 +2629,9 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
 
                             with ui.row().classes('gap-2 flex-wrap'):
                                 ui.button(tr("settings.api.create"), icon='vpn_key', on_click=create_api_key_action).classes('hover-glow')
-                                ui.button(tr("settings.api.toggle"), icon='power_settings_new', on_click=toggle_key_enabled).props('outline')
-                                ui.button(tr("settings.api.delete_key"), icon='delete', on_click=delete_api_key_action).props('outline')
-                                ui.button(tr("settings.btn.refresh"), icon='refresh', on_click=refresh_keys_grid).props('flat')
+                                ui.button(tr("settings.api.toggle"), icon='power_settings_new', on_click=toggle_key_enabled).props()
+                                ui.button(tr("settings.api.delete_key"), icon='delete', on_click=delete_api_key_action).props()
+                                ui.button(tr("settings.btn.refresh"), icon='refresh', on_click=refresh_keys_grid).props()
 
                             refresh_keys_grid()
 
@@ -3013,7 +3013,7 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
                                                            with_input=True, new_value_mode='add-unique',
                                                            clearable=True).classes('grow')
                             select_output_edit.tooltip(tr("objects.output_hint"))
-                            ui.button(icon='refresh').props('flat dense').on_click(lambda: _refresh_outputs_edit()) \
+                            ui.button(icon='refresh').props('dense').on_click(lambda: _refresh_outputs_edit()) \
                                 .tooltip(tr("objects.btn.refresh_outputs"))
                         codemirror_script_body_edit = make_codemirror(current_state, line_wrapping=True).classes('w-full uh-cm-wrap')
                         codemirror_script_body_edit.on_value_change(lambda: _refresh_outputs_edit())
@@ -3035,7 +3035,7 @@ def draw_objects(interface_container: ui.card, current_state: dict) -> Tuple[boo
                                                              with_input=True, new_value_mode='add-unique',
                                                              clearable=True).classes('grow')
                             select_output_create.tooltip(tr("objects.output_hint"))
-                            ui.button(icon='refresh').props('flat dense').on_click(lambda: _refresh_outputs_create()) \
+                            ui.button(icon='refresh').props('dense').on_click(lambda: _refresh_outputs_create()) \
                                 .tooltip(tr("objects.btn.refresh_outputs"))
                         codemirror_script_body_create = make_codemirror(current_state, line_wrapping=True).classes('w-full uh-cm-wrap')
                         codemirror_script_body_create.on_value_change(lambda: _refresh_outputs_create())
@@ -4074,7 +4074,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
 
                         with ui.row().classes('gap-2'):
                             ui.button(tr("ai.save.save"), icon='save', on_click=do_save)
-                            ui.button(tr("settings.btn.close"), on_click=dialog.close).props('flat')
+                            ui.button(tr("settings.btn.close"), on_click=dialog.close).props()
                     dialog.open()
 
                 def render_final_actions():
@@ -4104,7 +4104,7 @@ def draw_ai(interface_container: ui.card, current_state: dict) -> Tuple[bool, st
                         ui.markdown("```\n" + norm["json"]["script"] + "\n```", extras=['fenced-code-blocks'])
                         with ui.row().classes('gap-2'):
                             ui.button(tr("ai.saveobj.confirm"), icon='save', on_click=lambda: confirm_dialog.submit('confirm'))
-                            ui.button(tr("ai.saveobj.reject"), on_click=lambda: confirm_dialog.submit('reject')).props('flat')
+                            ui.button(tr("ai.saveobj.reject"), on_click=lambda: confirm_dialog.submit('reject')).props()
                     decision = await confirm_dialog
                     if decision != 'confirm':
                         return tr("ai.saveobj.user_rejected")
