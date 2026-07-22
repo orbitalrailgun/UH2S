@@ -869,6 +869,9 @@ def make_codemirror(current_state, **kwargs):
     if editor is None:
         editor = ui.codemirror()
     current_state.setdefault("ui_codemirrors", []).append(editor)
+    # все редакторы — растягиваемые по вертикали (grip в правом нижнем углу), как в Harvester:
+    # обёртка растёт в потоке и смещает нижние элементы вниз; CSS .uh-cm-resize — глобальный
+    editor.classes('uh-cm-resize')
     return editor
 
 
@@ -1332,6 +1335,11 @@ def main_page(keycloak_openid, current_state):
     # (устраняет мелькание/«сжатие» на пару кадров).
     ui.add_css(".uh-panel-offscreen { position: absolute !important; left: -100000px !important; top: 0 !important; width: 100% !important; }")
 
+    # растягиваемые редакторы (grip по вертикали) — глобально для всех codemirror; перенос длинных строк
+    ui.add_css(".uh-cm-resize { resize: vertical; overflow: auto; min-height: 120px; height: 30vh; max-height: 85vh; }"
+               " .uh-cm-resize .cm-editor { height: 100%; }"
+               " .uh-cm-wrap .cm-content, .uh-cm-wrap .cm-line { white-space: pre-wrap !important; overflow-wrap: anywhere; word-break: break-word; }")
+
     panel_settings = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
     panel_secrets = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
     panel_objects = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
@@ -1351,6 +1359,12 @@ def main_page(keycloak_openid, current_state):
     if is_schedules_admin:
         panel_schedules = ui.card().classes('w-full h-full uh-panel uh-panel-offscreen')
         panels["Schedules"] = panel_schedules
+
+    # все панели разделов прокручиваются одним вертикальным скроллбаром (q-card по умолчанию
+    # overflow:hidden) — чтобы растянутый codemirror смещал элементы вниз, а при выходе за экран
+    # появлялась прокрутка (как реализовано в Harvester). Inline-стиль перебивает утилиту h-full.
+    for _panel in panels.values():
+        _panel.style('height: calc(100vh - 110px); overflow-y: auto; overflow-x: hidden')
 
     def show_panel(name):
         for panel_name, panel in panels.items():
@@ -2104,7 +2118,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                         ui.markdown(tr("settings.account.meta_hint")).classes('text-xs opacity-60')
                         user_meta_result = get_user_by_username(username, current_state)
                         current_meta = user_meta_result[3].get("json", {}) if user_meta_result[0] else {}
-                        metadata_editor = make_codemirror(current_state).classes('w-full').style('max-height: 30vh')
+                        metadata_editor = make_codemirror(current_state).classes('w-full')
                         metadata_editor.value = json.dumps(current_meta, ensure_ascii=False, indent=2)
 
                         def save_metadata():
@@ -2137,7 +2151,7 @@ def draw_settings(interface_container: ui.card, current_state: dict) -> Tuple[bo
                             admin_roles_input = ui.input(label=tr("settings.users.roles"), value="[]").classes('w-full max-w-md')
                             admin_reset_pw_input = ui.input(label=tr("settings.users.resetpw"), password=True, password_toggle_button=True).classes('w-full max-w-md')
                             ui.label(tr("settings.users.meta")).classes('text-xs opacity-60')
-                            admin_meta_editor = make_codemirror(current_state).classes('w-full').style('max-height: 25vh')
+                            admin_meta_editor = make_codemirror(current_state).classes('w-full')
                             admin_selected = {"name": None, "enabled": None}
 
                             def refresh_users_grid():
@@ -3876,7 +3890,9 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
                         "font-family: var(--app-font, 'Orbitron', 'Roboto', sans-serif);")
 
         with interface_container:
-            with ui.column().classes('w-full no-wrap').style('height: calc(100vh - 130px); overflow-y: auto; overflow-x: hidden'):
+            # колонка по контенту (без фиксированной высоты) — иначе flexbox зажимает codemirror и
+            # не даёт resize менять высоту. Прокрутку при выходе за экран даёт сама панель (interface_container).
+            with ui.column().classes('w-full no-wrap'):
                 with ui.row().classes('items-center w-full'):
                     ui.label(tr("history.title")).classes('text-lg')
                     ui.button(tr("history.refresh"), icon='refresh').on_click(lambda: update_history_grid())
@@ -3888,7 +3904,7 @@ def draw_history(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 grid_history = ui.aggrid({}).classes('w-full shrink-0').style('height: 35vh; min-height: 35vh')
                 grid_history.on("selectionChanged", grid_history_click)
                 ui.label(tr("history.script_label"))
-                codemirror_history = make_codemirror(current_state).classes('w-full').style('max-height: 25vh')
+                codemirror_history = make_codemirror(current_state).classes('w-full')
                 steps_history_panel = ui.element('div').classes('w-full').style('padding: 4px 8px')
 
         # ссылку на обновление кладём в current_state — Harvester дёрнет её после запуска
