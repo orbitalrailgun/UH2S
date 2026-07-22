@@ -33,6 +33,46 @@ class TestParseTableFile(unittest.TestCase):
         self.assertTrue(ok, err)
         self.assertEqual(records, [])
 
+    def test_ndjson_basic(self):
+        content = b'{"host": "srv1", "ip": "10.0.0.1"}\n{"host": "srv2", "ip": "10.0.0.2"}\n'
+        ok, err, records = parse_table_file(content, "inv.ndjson")
+        self.assertTrue(ok, err)
+        self.assertEqual(records, [{"host": "srv1", "ip": "10.0.0.1"}, {"host": "srv2", "ip": "10.0.0.2"}])
+
+    def test_ndjson_skips_blank_lines(self):
+        content = b'\n{"a": 1}\n\n  \n{"a": 2}\n'
+        ok, err, records = parse_table_file(content, "x.ndjson")
+        self.assertTrue(ok, err)
+        self.assertEqual(records, [{"a": 1}, {"a": 2}])
+
+    def test_jsonl_synonym(self):
+        ok, err, records = parse_table_file(b'{"a": 1}\n', "x.jsonl")
+        self.assertTrue(ok, err)
+        self.assertEqual(records, [{"a": 1}])
+
+    def test_ndjson_bad_line_reports_line_number(self):
+        content = b'{"a": 1}\n{oops not json}\n'
+        ok, err, records = parse_table_file(content, "x.ndjson")
+        self.assertFalse(ok)
+        self.assertIn("строке 2", err)
+
+    def test_ndjson_non_object_line_rejected(self):
+        content = b'{"a": 1}\n[1, 2, 3]\n'
+        ok, err, records = parse_table_file(content, "x.ndjson")
+        self.assertFalse(ok)
+        self.assertIn("строка 2", err)
+
+    def test_ndjson_empty_gives_error(self):
+        ok, err, _ = parse_table_file(b"\n  \n", "x.ndjson")
+        self.assertFalse(ok)
+
+    def test_ndjson_nested_values_preserved(self):
+        content = b'{"id": 1, "tags": ["a", "b"], "meta": {"k": "v"}}\n'
+        ok, err, records = parse_table_file(content, "x.ndjson")
+        self.assertTrue(ok, err)
+        self.assertEqual(records[0]["tags"], ["a", "b"])
+        self.assertEqual(records[0]["meta"], {"k": "v"})
+
 
 if __name__ == "__main__":
     unittest.main()

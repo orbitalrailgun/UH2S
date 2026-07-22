@@ -1615,14 +1615,17 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                         except BaseException as read_error:
                             ui.notify(tr("storage.add.error", error=str(read_error)), type="negative")
                             return
-                        ok, err, records = parse_table_file(content, file_name)
+                        # парсинг + сохранение — в отдельном потоке (run.io_bound): на больших файлах
+                        # (напр. ndjson 600 МБ) синхронная обработка заблокировала бы event loop NiceGUI
+                        # и оборвала websocket клиента (выглядит как «падение браузера»)
+                        ok, err, records = await run.io_bound(parse_table_file, content, file_name)
                         if not ok:
                             ui.notify(tr("storage.add.error", error=err), type="negative")
                             return
                         if not records:
                             ui.notify(tr("storage.add.empty"), type="warning")
                             return
-                        save_result = storage_save(key, records, ttl, current_state)
+                        save_result = await run.io_bound(storage_save, key, records, ttl, current_state)
                         if not save_result[0]:
                             ui.notify(tr("settings.common.error", error=save_result[1]), type="negative")
                             return
@@ -1630,8 +1633,10 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                         add_dialog.close()
                         refresh_storage_grid()
 
-                    ui.upload(label=tr("storage.add.upload"), auto_upload=True, on_upload=handle_upload) \
-                        .props('accept=".csv,.xlsx,.xls"').classes('w-full')
+                    # max_file_size/max_total_size — чтобы большой файл (до ~1 ГБ) не отклонялся клиентом
+                    ui.upload(label=tr("storage.add.upload"), auto_upload=True, on_upload=handle_upload,
+                              max_file_size=1024 * 1024 * 1024, max_total_size=1024 * 1024 * 1024) \
+                        .props('accept=".csv,.xlsx,.xls,.ndjson,.jsonl"').classes('w-full')
                     ui.button(tr("settings.btn.close"), on_click=add_dialog.close).classes('hover-glow')
                 add_dialog.open()
 

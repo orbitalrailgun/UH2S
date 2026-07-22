@@ -16,9 +16,10 @@ def _decode_text(content):
 
 
 def parse_table_file(content, filename):
-    """bytes + имя файла -> (ok, error_or_none, records). Поддержка .csv (stdlib) и .xlsx/.xls (pandas).
-    CSV: значения — строки (инвентаризационные данные это устраивает). XLSX: типы через JSON-native
-    (NaN -> null, даты -> ISO). Возвращаемые записи JSON-сериализуемы (пригодны для storage)."""
+    """bytes + имя файла -> (ok, error_or_none, records). Поддержка .csv (stdlib), .xlsx/.xls (pandas)
+    и .ndjson/.jsonl (newline-delimited JSON, stdlib). CSV: значения — строки. XLSX: типы через
+    JSON-native (NaN -> null, даты -> ISO). NDJSON: по одному JSON-объекту на строку, пустые строки
+    пропускаются. Возвращаемые записи JSON-сериализуемы (пригодны для storage)."""
     name = (filename or "").strip().lower()
     if not content:
         return False, "пустой файл", []
@@ -33,6 +34,29 @@ def parse_table_file(content, filename):
         except BaseException as e:
             return False, f"ошибка разбора CSV: {e}", []
 
+    if name.endswith(".ndjson") or name.endswith(".jsonl"):
+        # newline-delimited JSON: по одному JSON-объекту на строку. Пустые строки пропускаем.
+        # Держим результат в RAM (для больших файлов вызов обёрнут в run.io_bound на стороне UI,
+        # чтобы не блокировать event loop). Ошибку сопровождаем номером строки для диагностики.
+        try:
+            records = []
+            for line_number, raw_line in enumerate(_decode_text(content).splitlines(), 1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError as parse_error:
+                    return False, f"ошибка ndjson в строке {line_number}: {parse_error}", []
+                if not isinstance(obj, dict):
+                    return False, f"строка {line_number} ndjson не является объектом JSON", []
+                records.append(obj)
+            if not records:
+                return False, "в ndjson нет записей", []
+            return True, None, records
+        except BaseException as e:
+            return False, f"ошибка разбора ndjson: {e}", []
+
     if name.endswith(".xlsx") or name.endswith(".xls"):
         try:
             import pandas
@@ -43,4 +67,4 @@ def parse_table_file(content, filename):
         except BaseException as e:
             return False, f"ошибка разбора XLSX: {e}", []
 
-    return False, "поддерживаются только .csv и .xlsx", []
+    return False, "поддерживаются только .csv, .xlsx, .ndjson", []
