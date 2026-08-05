@@ -53,9 +53,30 @@ def _refs(command, known_names):
     return refs
 
 
+def _apply_label(command):
+    """Префикс узла для APPLY: показывает источник строк и отображение колонок в параметры.
+
+    `APPLY owner_data(account→user_id):once` — видно, что узел исполняется построчно, по каким
+    данным идёт fan-out и что `:once` схлопывает повторяющиеся наборы параметров."""
+    apply_block = command.get("apply")
+    if not isinstance(apply_block, dict):
+        return ""
+    columns = ", ".join(f"{c.get('column')}→{c.get('as')}" for c in apply_block.get("columns") or [])
+    unique = apply_block.get("unique") or []
+    tail = ":once" if apply_block.get("once") else ""
+    if unique:
+        tail += f":unique[{', '.join(str(u) for u in unique)}]"
+    return f"APPLY {_short(apply_block.get('data', '?'), 24)}({_short(columns, 40)}){tail} "
+
+
 def _node_for(command):
     """(label, shape, css_class) для команды. shape: rect/round/stadium/subroutine."""
     kind = command.get("command")
+    # нераспарсенная строка: показываем причину, а не мнимый source:func (иначе опечатка в APPLY
+    # рисовалась как обычное обращение к источнику с именем APPLY)
+    if command.get("parsed") is False:
+        reason = _short(command.get("parsed_comment") or "parse error", 60)
+        return f"⚠ {_short(command.get('line', ''), 40)} — {reason}", "rect", "errc"
     if kind == "DEF":
         return f"DEF {command.get('variable_name', '?')} = {_short(command.get('variable_value', ''))}", "round", "defc"
     if kind == "CALC":
@@ -64,7 +85,7 @@ def _node_for(command):
         source = command.get("source", "?")
         func = command.get("function", "?")
         data_name = command.get("data_name", "?")
-        apply_prefix = "APPLY " if "apply" in command else ""
+        apply_prefix = _apply_label(command)
         if source == "script":
             return f"{apply_prefix}{data_name} ⟵ script:{func}", "subroutine", "scriptc"
         return f"{apply_prefix}{data_name} ⟵ {source}:{func}", "rect", "getc"
@@ -162,6 +183,7 @@ def build_execution_mermaid(script_text, current_state):
     out.append("    classDef getc fill:#064e3b,stroke:#34d399,color:#e5e7eb;")
     out.append("    classDef scriptc fill:#3730a3,stroke:#a5b4fc,color:#e5e7eb;")
     out.append("    classDef outc fill:#7c2d12,stroke:#fdba74,color:#ffffff;")
+    out.append("    classDef errc fill:#7f1d1d,stroke:#f87171,color:#fee2e2;")
     for css, ids in ctx["classes"].items():
         if ids:
             out.append(f"    class {','.join(ids)} {css};")
