@@ -599,7 +599,11 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                 "unrequired":{
                     "limit":50,
                     "cmdb_path":"/rest/insight/1.0/iql/objects",
-                    "flatten":False
+                    "shape":"table",        # table (колонка на атрибут по его имени) | long | flat | raw
+                    "sep":"; ",             # склейка мультизначных атрибутов (shape=table)
+                    "max_values":0,         # ограничение значений в ячейке, 0 — без ограничения (shape=table)
+                    "resolve_names":True,   # догружать имена атрибутов по типам объектов (/objecttype/{id}/attributes)
+                    "flatten":False         # устаревшее: то же, что shape="flat"
                 },
                 "functions":{
                     "query": execute_jira_search_cmdb,
@@ -616,7 +620,11 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                     "limit":50,
                     "search_path":"/rest/insight-am/1/search",
                     "timeout":60,                 # можно поднять для тяжёлого CMDB-поиска
-                    "flatten":False
+                    "shape":"table",              # table | long | flat | raw (как в search_cmdb)
+                    "sep":"; ",
+                    "max_values":0,
+                    "resolve_names":True,
+                    "flatten":False               # устаревшее: то же, что shape="flat"
                 },
                 "functions":{
                     "query": execute_jira_search_cmdb_freetext,

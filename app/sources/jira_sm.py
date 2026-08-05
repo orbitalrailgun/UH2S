@@ -1,6 +1,9 @@
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.sources.additional.flatten import flatten_data
+from app.sources.additional.cmdb import (attribute_name_map, attribute_names_from_objects,
+                                         cmdb_objects_to_long, cmdb_objects_to_table,
+                                         object_type_ids_with_unnamed_attributes)
 
 
 def _as_bool(value, default=False):
@@ -428,13 +431,104 @@ def execute_jira_get_issue_issuelinks(parameters, source_object, data_map, curre
         return False, error_message, currentFuncName(), []
 
 
+def _cmdb_shape(query):
+    """Форма вывода CMDB: table (по умолчанию) | long | flat | raw.
+
+    Старые параметры поддерживаются как синонимы: flatten=true -> flat, raw=true -> raw."""
+    shape = str(query.get("shape") or "").strip().lower()
+    if shape in ("table", "wide", "long", "tidy", "flat", "flatten", "raw"):
+        return {"wide": "table", "tidy": "long", "flatten": "flat"}.get(shape, shape)
+    if _as_bool(query.get("raw", False)):
+        return "raw"
+    if _as_bool(query.get("flatten", False)):
+        return "flat"
+    return "table"
+
+
+def _cmdb_api_base(cmdb_path):
+    """Базовый путь Insight/Assets API из пути поиска: /rest/insight/1.0/iql/objects -> /rest/insight/1.0.
+
+    Нужен для догрузки имён атрибутов (`/objecttype/{id}/attributes`)."""
+    path = (cmdb_path or "").rstrip("/")
+    for suffix in ("/iql/objects", "/aql/objects", "/objects"):
+        if path.endswith(suffix):
+            return path[: -len(suffix)]
+    return "/rest/insight/1.0"
+
+
+def _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, verify, timeout, current_state):
+    """Имена атрибутов типа объекта: GET {api_base}/objecttype/{id}/attributes -> {str(id): имя}.
+
+    id типа проверяется как целое (подстановка в путь URL); ошибка/недоступность не роняют выборку —
+    колонки останутся с именами `attr_<id>`."""
+    import requests
+    names = {}
+    try:
+        type_id = int(str(object_type_id).strip())
+    except (TypeError, ValueError):
+        logger_log(syslog.LOG_WARNING, get_log_message(
+            f"cmdb attribute names: non-numeric objectType id {object_type_id!r} skipped",
+            currentFuncName(), current_state))
+        return names
+    try:
+        response = requests.get(f"{url}{api_base}/objecttype/{type_id}/attributes",
+                                headers=headers, verify=verify, timeout=timeout)
+        if response.status_code != 200:
+            logger_log(syslog.LOG_WARNING, get_log_message(
+                f"cmdb attribute names for objectType {type_id}: http {response.status_code}",
+                currentFuncName(), current_state))
+            return names
+        for item in response.json() or []:
+            if isinstance(item, dict) and item.get("id") is not None:
+                label = item.get("name") or item.get("label")
+                if label:
+                    names[str(item["id"])] = str(label)
+    except Exception as e:
+        logger_log(syslog.LOG_WARNING, get_log_message(
+            f"cmdb attribute names for objectType {type_id} fail: {str(e)}",
+            currentFuncName(), current_state))
+    return names
+
+
+def _resolve_cmdb_attribute_names(objects, names, url, api_base, headers, verify, timeout, current_state):
+    """Дополнить карту id->имя: имена из самих объектов (Assets) + догрузка по типам, где имён не хватает."""
+    resolved = dict(names or {})
+    for attr_id, label in attribute_names_from_objects(objects).items():
+        resolved.setdefault(attr_id, label)
+    for object_type_id in object_type_ids_with_unnamed_attributes(objects, resolved):
+        fetched = _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, verify, timeout, current_state)
+        for attr_id, label in fetched.items():
+            resolved.setdefault(attr_id, label)
+    return resolved
+
+
+def _shape_cmdb_objects(objects, shape, names, query):
+    """Применить выбранную форму вывода к сырым объектам CMDB."""
+    if shape == "raw":
+        return objects
+    if shape == "flat":
+        return [flatten_data(obj) if isinstance(obj, dict) else {"value": obj} for obj in objects]
+    if shape == "long":
+        return cmdb_objects_to_long(objects, names)
+    sep = query.get("sep") if query.get("sep") not in (None, "") else "; "
+    try:
+        max_values = int(query["max_values"]) if query.get("max_values") else 0
+    except (TypeError, ValueError):
+        max_values = 0
+    return cmdb_objects_to_table(objects, names, sep=str(sep), max_values=max_values)
+
+
 def execute_jira_search_cmdb(parameters, source_object, data_map, current_state):
     """Поиск в CMDB JSM (Assets/Insight) по AQL.
 
     По умолчанию используется эндпоинт Insight Data Center: GET {cmdb_path}?iql=...&page=N&resultPerPage=...
     (cmdb_path = /rest/insight/1.0/iql/objects; для новых Assets -> /rest/assets/1.0/iql/objects).
     Параметры: aql -- запрос AQL/IQL; limit -- максимум объектов; cmdb_path -- (опц.) путь эндпоинта;
-    flatten -- (опц.) уплощить. Возврат: list of dict (objectEntries)."""
+    shape -- (опц.) форма вывода: table (по умолчанию, колонка на атрибут по его имени) | long
+    (строка на каждое значение) | flat (уплощение как раньше) | raw (исходный JSON);
+    sep/max_values -- (опц.) склейка и ограничение мультизначных атрибутов в форме table;
+    resolve_names -- (опц., по умолч. true) догружать имена атрибутов по типам объектов.
+    Возврат: list of dict."""
     import requests
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
@@ -447,34 +541,50 @@ def execute_jira_search_cmdb(parameters, source_object, data_map, current_state)
         except (TypeError, ValueError):
             limit = 50
         cmdb_path = query.get("cmdb_path") or source.get("cmdb_path") or "/rest/insight/1.0/iql/objects"
-        flatten_flag = _as_bool(query.get("flatten", False))
+        shape = _cmdb_shape(query)
+        named_shape = shape in ("table", "long")
+        resolve_names = _as_bool(query.get("resolve_names", True), default=True)
 
         verify = source["verify"] if "verify" in source else True
         timeout = source["timeout"] if "timeout" in source else 60
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
 
-        data = []
+        objects = []
+        names = {}
         page = 1
         result_per_page = min(limit, 100)
-        while len(data) < limit:
+        while len(objects) < limit:
             request_params = {"iql": aql, "page": page, "resultPerPage": result_per_page, "includeAttributes": "true"}
+            if named_shape:
+                # карта id -> имя атрибута приходит в том же ответе (иначе в атрибутах только objectTypeAttributeId)
+                request_params["includeTypeAttributes"] = "true"
             response = requests.get(f"{url}{cmdb_path}", headers=headers, params=request_params, verify=verify, timeout=timeout)
             if response.status_code != 200:
                 return False, f"jira search_cmdb http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
             entries = payload.get("objectEntries", [])
+            if named_shape:
+                for attr_id, label in attribute_name_map(payload).items():
+                    names.setdefault(attr_id, label)
             if not entries:
                 break
             for obj in entries:
-                data.append(flatten_data(obj) if flatten_flag else obj)
-                if len(data) >= limit:
+                objects.append(obj)
+                if len(objects) >= limit:
                     break
             if len(entries) < result_per_page:
                 break
             page += 1
 
-        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(data)} objects", currentFuncName(), current_state))
+        if named_shape and resolve_names:
+            # в выборке могут быть объекты разных типов (у каждого свои id атрибутов) -> добираем по типам
+            names = _resolve_cmdb_attribute_names(objects, names, url, _cmdb_api_base(cmdb_path),
+                                                  headers, verify, timeout, current_state)
+        data = _shape_cmdb_objects(objects, shape, names, query)
+
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(objects)} objects, {len(data)} rows ({shape})",
+                                                     currentFuncName(), current_state))
         return True, str(len(data)), currentFuncName(), data
 
     except Exception as e:
@@ -503,7 +613,8 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
     &schema=<id>&attributes=<list>&offset=N&limit=... (search_path по умолчанию /rest/insight-am/1/search).
     Параметры: freetext -- искомый текст (обяз.); schema -- (опц.) id схемы Insight; attributes -- (опц.)
     список/строка возвращаемых атрибутов; limit -- максимум объектов; search_path -- (опц.) путь эндпоинта;
-    flatten -- (опц.) уплощить. Возврат: list of dict."""
+    shape -- (опц.) форма вывода: table (по умолчанию) | long | flat | raw (как в search_cmdb).
+    Возврат: list of dict."""
     import requests
     try:
         logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
@@ -524,7 +635,10 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
         if isinstance(attributes, list):
             attributes = ",".join(str(a) for a in attributes)
         search_path = query.get("search_path") or source.get("insight_search_path") or "/rest/insight-am/1/search"
-        flatten_flag = _as_bool(query.get("flatten", False))
+        shape = _cmdb_shape(query)
+        named_shape = shape in ("table", "long")
+        resolve_names = _as_bool(query.get("resolve_names", True), default=True)
+        api_base = _cmdb_api_base(query.get("cmdb_path") or source.get("cmdb_path"))
 
         verify = source["verify"] if "verify" in source else True
         # таймаут можно поднять на вызов (FREETEXT-поиск CMDB тяжелее обычного search)
@@ -541,10 +655,11 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
                 "search_cmdb_freetext without 'schema' may be slow/time out — pass schema=<id>",
                 currentFuncName(), current_state))
 
-        data = []
+        objects = []
+        names = {}
         offset = 0
         page_size = min(limit, 50)   # FREETEXT тяжелее обычного search — меньшая страница безопаснее
-        while len(data) < limit:
+        while len(objects) < limit:
             request_params = {"criteria": freetext, "criteriaType": "FREETEXT",
                               "attributes": attributes, "offset": offset, "limit": page_size}
             if schema not in (None, ""):
@@ -552,18 +667,28 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
             response = requests.get(f"{url}{search_path}", headers=headers, params=request_params, verify=verify, timeout=timeout)
             if response.status_code != 200:
                 return False, f"jira search_cmdb_freetext http {response.status_code} ({response.text[:512]})", currentFuncName(), []
-            entries = _extract_cmdb_entries(response.json())
+            payload = response.json()
+            entries = _extract_cmdb_entries(payload)
+            if named_shape:
+                for attr_id, label in attribute_name_map(payload).items():
+                    names.setdefault(attr_id, label)
             if not entries:
                 break
             for obj in entries:
-                data.append(flatten_data(obj) if flatten_flag else obj)
-                if len(data) >= limit:
+                objects.append(obj)
+                if len(objects) >= limit:
                     break
             if len(entries) < page_size:
                 break
             offset += len(entries)
 
-        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(data)} objects", currentFuncName(), current_state))
+        if named_shape and resolve_names:
+            names = _resolve_cmdb_attribute_names(objects, names, url, api_base,
+                                                  headers, verify, timeout, current_state)
+        data = _shape_cmdb_objects(objects, shape, names, query)
+
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(objects)} objects, {len(data)} rows ({shape})",
+                                                     currentFuncName(), current_state))
         return True, str(len(data)), currentFuncName(), data
 
     except Exception as e:

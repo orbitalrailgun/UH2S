@@ -316,7 +316,16 @@ DEF 1719100000000 AS start
 `ENGINE_SOURCES_AND_FUNCTIONS_MAP` (`app/engine.py`). Каждый тип задаёт `required`-параметры
 (проверяются и типизируются) и `unrequired` (опциональные). Примеры:
 - `irp_thehive:get_alerts(filter, limit, [sort], [extra_data], [flatten])`
-- `jira_sm`: `search_issues(jql, [limit], [fields], [expand], [raw])`, `get_issue(issue_id, [expand], [raw])`, `get_issue_changelog(issue_id, [raw])`, `get_issue_comments(issue_id, [limit], [raw])`, `get_issue_worklogs(issue_id, [limit], [raw])`, `get_issue_attachments(issue_id, [raw])` (метаданные + ссылка `content`, тело не скачивается), `get_issue_issuelinks(issue_id, [raw])`, `search_cmdb(aql, [limit], [cmdb_path], [flatten])`. Заявки разворачиваются в плоские поля; коллекции (`comment`/`worklog`/`attachment`/`issuelinks`) сводятся к `*_count` (детали — отдельными функциями); `customfield_*` переименовываются в человекочитаемые имена (через `expand=names`); `raw=true` — исходный JSON
+- `jira_sm`: `search_issues(jql, [limit], [fields], [expand], [raw])`, `get_issue(issue_id, [expand], [raw])`, `get_issue_changelog(issue_id, [raw])`, `get_issue_comments(issue_id, [limit], [raw])`, `get_issue_worklogs(issue_id, [limit], [raw])`, `get_issue_attachments(issue_id, [raw])` (метаданные + ссылка `content`, тело не скачивается), `get_issue_issuelinks(issue_id, [raw])`, `search_cmdb(aql, [limit], [cmdb_path], [shape], [sep], [max_values], [resolve_names])`, `search_cmdb_freetext(freetext, [schema], [attributes], [limit], [search_path], [timeout], [shape])`. Заявки разворачиваются в плоские поля; коллекции (`comment`/`worklog`/`attachment`/`issuelinks`) сводятся к `*_count` (детали — отдельными функциями); `customfield_*` переименовываются в человекочитаемые имена (через `expand=names`); `raw=true` — исходный JSON
+  - **CMDB**: `shape` задаёт форму вывода. `table` (по умолчанию) — строка на объект, **колонка на атрибут по его имени**
+    (метаданные объекта: `objectKey`, `id`, `label`, `objectType`, `objectTypeId`, `created`, `updated`, `archived`, `url`);
+    ссылки сводятся к метке объекта, статусы — к имени статуса, даты берутся в машинном виде (ISO), мультизначные атрибуты
+    склеиваются через `sep` (по умолчанию `"; "`), `max_values=N` ограничивает число значений в ячейке (остаток — `… +N`).
+    `long` — строка на каждое значение (`attribute`, `attribute_id`, `value_index`, `value`, `ref_objectKey`/`ref_id`):
+    удобно, когда схемы объектов разные. `flat` — прежнее уплощение (`attributes_0_...`, нестабильные колонки),
+    `raw` — исходный JSON. Имена атрибутов берутся из ответа (`includeTypeAttributes=true`) и, если каких-то не хватает
+    (в выборке объекты разных типов), догружаются по `/objecttype/{id}/attributes` — отключается `resolve_names=false`
+    (тогда безымянные атрибуты дадут колонки `attr_<id>`)
 - `netbox:search(target, [object_types], [limit], [flatten])`, `netbox:search_cidr_by_ip(target, [flatten])`
 - `sqlite3_im:query(queries=[...])`, `duckdb_im:query(type, queries=[...])` — SQL поверх собранных данных
 - `pandas_im:aggr/dynamic_aggr/shift/union/...` — агрегации/преобразования
