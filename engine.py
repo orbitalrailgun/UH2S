@@ -1,3 +1,4 @@
+import copy
 import re
 import json
 import multiprocessing
@@ -6,7 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from app.logging import get_log_message, logger_log, currentFuncName
 #from app.validation import json_validate
-from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, run_load_command, run_save_storage_command, get_variable_type, get_notifier_function, execute_calc, is_cancelled, CANCELLED_MSG, dedup_rows
+from app.engine import command_parser, process_injections, get_source_function, get_command_dependency, run_command, run_apply_command, unique_apply_rows, run_load_command, run_save_storage_command, get_variable_type, get_notifier_function, execute_calc, is_cancelled, CANCELLED_MSG, dedup_rows
 from app.db import get_actual_object_by_name, get_secret, get_source_threads_pool, get_user_by_username
 
 
@@ -529,8 +530,13 @@ def _execute_script(command, injected_variables, current_state):
     sub_state = dict(current_state)
     sub_state["_script_stack"] = script_stack + [script_name]
 
-    # под-скрипт уже распарсен и провалидирован на этапе резолва
-    sub_commands = command.get("sub_commands") or command_parser(script_json["script"], sub_state)
+    # под-скрипт уже распарсен и провалидирован на этапе резолва, но исполнять надо КОПИЮ:
+    # commands_executor подставляет переменные в command['parameters'] на месте (%(x)s -> значение),
+    # поэтому повторный прогон того же списка (APPLY по строкам, вызов скрипта в цикле) шёл бы
+    # с параметрами первой итерации — все строки получали бы результат первой
+    cached_sub_commands = command.get("sub_commands")
+    sub_commands = copy.deepcopy(cached_sub_commands) if cached_sub_commands \
+        else command_parser(script_json["script"], sub_state)
     sub_result = commands_executor(sub_commands, sub_state, injected_variables)
     if not sub_result[0]:
         return False, f"script '{script_name}' error: {sub_result[1]}", currentFuncName(), {}
@@ -570,6 +576,13 @@ def run_apply_script_command(command, data_map, current_state):
             for column in command['apply']['columns']:
                 if column['column'] not in line:
                     return False, f"there is not column {column['column']} in {i} line of {command['apply']['data']}", currentFuncName(), []
+
+        # :once — одна итерация на уникальный набор подставляемых значений
+        original_total = len(applyed_data)
+        applyed_data = unique_apply_rows(applyed_data, command['apply']['columns'],
+                                         command['apply'].get("once"), current_state)
+        if len(applyed_data) != original_total:
+            command["_info"] = f"once {len(applyed_data)}/{original_total}"
 
         data = []
         for i, line in enumerate(applyed_data):

@@ -146,15 +146,22 @@ GET script:enrich_host(target="1.2.3.4") AS result
 
 ### GET APPLY — построчное применение (fan-out)
 ```
-GET APPLY:<данные>(<кол1> AS <x>[, <кол2> AS <y>]):[<unique>] <source:func | script:name>(... %(x)s ...) AS <данные>
+GET APPLY:<данные>(<кол1> AS <x>[, <кол2> AS <y>])[:[<unique>]][:once] <source:func | script:name>(... %(x)s ...) AS <данные>
 ```
 Для **каждой строки** входных данных значения колонок подставляются в параметры, вызывается
-источник **или скрипт**, результаты помечаются `applied_<x>` и склеиваются; при заданном `[unique]`
-(JSON-список колонок) — дедупликация. Работает и с `source:func`, и с `script:name`.
+источник **или скрипт**, результаты помечаются `applied_<x>` и склеиваются. Работает и с
+`source:func`, и с `script:name`. Оба спецификатора после скобок — опциональные:
+- `:[<unique>]` — JSON-список колонок для дедупликации **результата** (`:[]` = без дедупа, как если
+  спецификатор опущен);
+- `:once` — **одна итерация на уникальный набор подставляемых значений** (ключ — все apply-колонки).
+  По умолчанию итерация выполняется на каждую строку, даже если параметры повторяются: подкоманда
+  может иметь побочные эффекты, поэтому число вызовов молча не меняется. Сэкономленные итерации
+  видны в инфо шага (`once 7/100: k/total`) и в логе.
 ```
 GET netbox:search(target="rack-1") AS hosts
 | GET APPLY:hosts(address AS ip):["dns_name"] dns:query(target=%(ip)s) AS resolved
-| GET APPLY:hosts(address AS ip):[] script:enrich(target=%(ip)s) AS enriched
+| GET APPLY:hosts(address AS ip) script:enrich(target=%(ip)s) AS enriched
+| GET APPLY:hosts(owner AS user):once script:activity(user_id=%(user)s) AS activity
 ```
 
 ### PRINT — текст/таблица в markdown

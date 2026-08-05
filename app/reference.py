@@ -23,9 +23,10 @@ def dsl_command_snippets():
         ("GET script", "GET script:<имя>(params) AS data",
          'GET script:my_script(param="value") AS data',
          "Вызов сохранённого скрипта; параметры перекрывают его DEF."),
-        ("GET APPLY", "GET APPLY:<data>(<col> AS <x>):[<unique>] <src:func>(... %(x)s ...) AS d",
-         'GET APPLY:hosts(address AS ip):[] dns:query(target=%(ip)s) AS resolved',
-         "Fan-out по строкам таблицы. Скобки [] обязательны ([] = без дедупа)."),
+        ("GET APPLY", "GET APPLY:<data>(<col> AS <x>)[:[<unique>]][:once] <src:func | script:name>(... %(x)s ...) AS d",
+         'GET APPLY:hosts(address AS ip) dns:query(target=%(ip)s) AS resolved',
+         "Fan-out по строкам таблицы. :[<колонки>] — дедуп результата, :once — одна итерация "
+         "на уникальный набор параметров; оба спецификатора опциональны."),
         ("PRINT", "PRINT(имя | \"текст\")",
          'PRINT(data)',
          "Markdown-вывод: таблица/значение по имени или текст-комментарий в кавычках."),

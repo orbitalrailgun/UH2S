@@ -31,8 +31,10 @@ COMMANDS
                                      — call a configured source OBJECT by its NAME; `function` belongs to its
                                        source_type. Discover via list_objects(source) / get_source_functions.
 - GET script:<name>(params) AS data — run a saved script object; params override its DEF defaults.
-- GET APPLY:<data>(col AS x[, ...])[:unique] <source:func | script:name>(... %(x)s ...) AS d
+- GET APPLY:<data>(col AS x[, ...])[:[<unique>]][:once] <source:func | script:name>(... %(x)s ...) AS d
                                      — per-row fan-out: run the call once per row of `data`, injecting columns.
+                                       Optional: :[cols] dedups the RESULT, :once runs one iteration per
+                                       distinct set of injected values.
 - PRINT(name | "text")             — output a variable/table (as markdown) or literal text.
 - SHOW(table, table|matplotlib[, {params}]) — render a table or a matplotlib chart
                                      (params e.g. {"x":"col","y":"col","kind":"line","title":"...","dpi":150}).

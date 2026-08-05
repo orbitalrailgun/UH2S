@@ -78,10 +78,11 @@ PROJECT_DOC = """\
 - CALC(X, Y, operation[, optional]) AS Z — PLUS/MINUS/MULT/DEV/POW; TRIM/CONCAT/SPLIT/RE_SEARCH/RE_SUBSTRING; DATETIME_FORMAT/UNIXTIME_TO_DATETIME/DATETIME_TO_UNIXTIME.
 - GET <source>:<func>(параметры) AS data — вызов источника. ФУНКЦИИ И ПАРАМЕТРЫ уточняй через get_source_functions.
 - GET script:<имя>(параметры) AS data — вызов сохранённого скрипта; параметры перекрывают его DEF.
-- GET APPLY:<data>(<колонка> AS <x>):[<unique>] <source:func | script:name>(... %(x)s ...) AS d
+- GET APPLY:<data>(<колонка> AS <x>)[:[<unique>]][:once] <source:func | script:name>(... %(x)s ...) AS d
     fan-out: для КАЖДОЙ строки таблицы <data> берётся <колонка> как переменная <x> и подставляется в вызов.
-    <unique> — JSON-МАССИВ колонок для дедупликации результата ([] = без дедупа). На выходе к строкам
-    добавляются столбцы applied_<x> (исходные значения). ВНИМАНИЕ: скобки [] обязательны.
+    Спецификаторы после скобок опциональны: :[<unique>] — JSON-МАССИВ колонок для дедупликации
+    результата ([] = без дедупа), :once — одна итерация на уникальный набор подставляемых значений.
+    На выходе к строкам добавляются столбцы applied_<x> (исходные значения).
 - PRINT(имя | "текст") — markdown-вывод. SHOW(table, table|matplotlib|tree[, {params}]) — таблица/график/дерево.
   tree: {"transmit":"parent_id_col","receive":"node_id_col","title":"name_col","description":["f1","f2"]}.
 - SAVE(table | [t1,t2], xlsx|csv_in_zip|json_in_zip) [AS file] — скачивание.
@@ -92,9 +93,10 @@ PROJECT_DOC = """\
 1) SQL-агрегация над собранной таблицей:
 GET some_source:query(...) AS raw
 | GET sqlite3_im:query(queries=["SELECT host, COUNT(*) AS cnt FROM raw GROUP BY host"]) AS agg
-2) APPLY (правильный синтаксис — [] обязателен):
+2) APPLY (спецификаторы :[...] / :once опциональны):
 GET netbox:search(...) AS hosts
-| GET APPLY:hosts(address AS ip):[] dns:query(target=%(ip)s) AS resolved
+| GET APPLY:hosts(address AS ip) dns:query(target=%(ip)s) AS resolved
+| GET APPLY:hosts(owner AS user):once script:activity(user_id=%(user)s) AS activity
 3) Переменная с запятыми — через DEF + %(v)l:
 DEF ["a","b"] AS items | GET src:func(list=%(items)l) AS d
 4) Колонки с точками в имени — В ДВОЙНЫХ КАВЫЧКАХ + простой псевдоним:

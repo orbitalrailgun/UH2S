@@ -1363,13 +1363,18 @@ def command_parser(text:str, current_state:dict):
                     command["parsed_comment"] = "GET LOAD: expected :refresh:<int> or :not_refresh"
                     continue
 
-                # ищем возможный apply
-                match = re.search(r"^APPLY:([^\()]+)\(([^\)]+)\):(\[[^\]]*\])\s+", command["line"])
+                # ищем возможный apply: APPLY:<data>(<col> AS <x>[, ...])[:[<unique>]][:once]
+                # спецификаторы опциональны: без :[...] дедупа результата нет, без :once каждая
+                # строка данных даёт свою итерацию (даже если набор параметров повторяется)
+                match = re.match(r"^APPLY:(?P<data>[^\()]+)\((?P<columns>[^\)]+)\)"
+                                 r"(?:\s*:\s*(?P<unique>\[[^\]]*\]))?"
+                                 r"(?:\s*:\s*(?P<once>(?i:once)))?\s+", command["line"])
                 if match:
                     command["apply"] = {}
-                    command["apply"]["data"] = match.group(1).strip(" ")
-                    command["apply"]["raw_columns"] = match.group(2).strip(" ")
-                    command["apply"]["unique"] = match.group(3).strip(" ")
+                    command["apply"]["data"] = match.group("data").strip(" ")
+                    command["apply"]["raw_columns"] = match.group("columns").strip(" ")
+                    command["apply"]["once"] = match.group("once") is not None
+                    command["apply"]["unique"] = (match.group("unique") or "[]").strip(" ")
                     if json_validate(command["apply"]["unique"]) == False:
                         command["parsed"] = False
                         command["parsed_comment"] = f"incorrect unique for {i} command (apply)"
@@ -1383,7 +1388,14 @@ def command_parser(text:str, current_state:dict):
                             command["parsed_comment"] = f"AS name not found for {i} command (apply)"
                             continue
                         command["apply"]["columns"].append({"column":column_match.group("col").strip(" "), "as":column_match.group("alias").strip(" ")})
-                    command["line"] = re.sub(r"^APPLY:([^\()]+)\(([^\)]+)\):(\[[^\]]*\])\s+", "", command["line"], count=0, flags=re.DOTALL)
+                    command["line"] = command["line"][match.end():]
+                elif re.match(r"^APPLY\b", command["line"]):
+                    # похоже на APPLY, но префикс не разобрался — иначе строка ушла бы в разбор как
+                    # source:func(...) с source="APPLY" и падала на исполнении с «object not found»
+                    command["parsed"] = False
+                    command["parsed_comment"] = ("APPLY: expected APPLY:<data>(<column> AS <name>[, ...])"
+                                                 "[:[<unique columns>]][:once] <source:func | script:name>(...)")
+                    continue
 
                 match = re.search(r"^(.+)\s+(as|AS|As|aS)\s+(\S+)\s*$", command["line"])
                 #elements = re.split(r'\s+as|AS|As|aS\s+', command["line"])
@@ -1862,6 +1874,37 @@ def dedup_rows(rows, columns):
     return rows
 
 
+def unique_apply_rows(rows, columns, once, current_state=None):
+    """Для APPLY:...:once — строки с уникальными наборами значений apply-колонок (первое вхождение).
+
+    Набор подставляемых значений полностью определяет вызов, поэтому повторы дают идентичные строки
+    результата — запускать их незачем. Без `once` (по умолчанию) возвращается исходный список:
+    подкоманда может иметь побочные эффекты, и число итераций менять молча нельзя. Сколько итераций
+    сэкономлено — в лог (и в `_info` шага на стороне вызывающего), без «тихой» экономии."""
+    if not once:
+        return rows
+    seen = set()
+    unique = []
+    for row in rows:
+        key = tuple(_dedup_key_value(row.get(column["column"]) if isinstance(row, dict) else row)
+                    for column in columns)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    skipped = len(rows) - len(unique)
+    if skipped and current_state is not None:
+        logger_log(syslog.LOG_INFO, get_log_message(
+            f"apply once: {len(unique)} unique parameter sets of {len(rows)} rows ({skipped} iterations skipped)",
+            currentFuncName(), current_state))
+    return unique
+
+
+def _apply_once_note(original_total, kept_total):
+    """Пометка для `_info` шага, когда :once схлопнул часть итераций (иначе пустая строка)."""
+    return f"once {kept_total}/{original_total}: " if kept_total != original_total else ""
+
+
 def run_apply_command(command, data_map, current_state):
     applyed_data = data_map[command['apply']['data']]
     if len(applyed_data) == 0:
@@ -1871,6 +1914,11 @@ def run_apply_command(command, data_map, current_state):
         for column in command['apply']['columns']:
             if column['column'] not in line:
                 return False, f"there is not column {column['column']} in {i} line of {command['apply']['data']}", currentFuncName(), []
+    # :once — одна итерация на уникальный набор подставляемых значений
+    original_total = len(applyed_data)
+    applyed_data = unique_apply_rows(applyed_data, command['apply']['columns'],
+                                     command['apply'].get("once"), current_state)
+    once_note = _apply_once_note(original_total, len(applyed_data))
     # fan-out по строкам — параллельно (ограничено по-источниковым семафором), с сохранением порядка.
     # число воркеров: max_threads источника (если задан) либо глобальный processes.
     try:
@@ -1900,7 +1948,7 @@ def run_apply_command(command, data_map, current_state):
     # (панель шагов читает _info по таймеру). Порядок вывода сохраняем через shard_by_index.
     progress = {"done": 0}
     progress_lock = threading.Lock()
-    command["_info"] = f"0/{total}"
+    command["_info"] = f"{once_note}0/{total}"
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(_run_row, i, line) for i, line in enumerate(applyed_data)]
         for future in as_completed(futures):
@@ -1908,7 +1956,7 @@ def run_apply_command(command, data_map, current_state):
             shard_by_index[i] = shard_result
             with progress_lock:
                 progress["done"] += 1
-                command["_info"] = f"{progress['done']}/{total}"
+                command["_info"] = f"{once_note}{progress['done']}/{total}"
 
     # сбор в порядке строк; первая ошибка (в порядке строк) -> прогон падает
     data = []

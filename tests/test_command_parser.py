@@ -177,6 +177,45 @@ class TestApply(unittest.TestCase):
         self.assertTrue(c["parsed"])
         self.assertEqual(c["apply"]["columns"], [{"column": "GAS", "as": "g"}])
 
+    def test_unique_specifier_is_optional(self):
+        """Без :[...] строка тоже разбирается как APPLY (раньше уходила в source='APPLY'
+        и падала на исполнении с 'get object APPLY error: object not found')."""
+        c = one('GET APPLY:owner_data(account AS user_id) script:get_activity(user_id="%(user_id)s") AS out')
+        self.assertTrue(c["parsed"], c.get("parsed_comment"))
+        self.assertEqual(c["apply"]["data"], "owner_data")
+        self.assertEqual(c["apply"]["columns"], [{"column": "account", "as": "user_id"}])
+        self.assertEqual(c["apply"]["unique"], [])
+        self.assertFalse(c["apply"]["once"])
+        self.assertEqual(c["source"], "script")
+        self.assertEqual(c["function"], "get_activity")
+        self.assertEqual(c["data_name"], "out")
+
+    def test_once_specifier(self):
+        c = one("GET APPLY:d(a AS x):once s:f(p=%(x)s) AS o")
+        self.assertTrue(c["parsed"])
+        self.assertTrue(c["apply"]["once"])
+        self.assertEqual(c["apply"]["unique"], [])
+        self.assertEqual(c["source"], "s")
+
+    def test_unique_and_once_together_any_case(self):
+        c = one('GET APPLY:d(a AS x):["r"]:ONCE s:f(p=%(x)s) AS o')
+        self.assertTrue(c["parsed"])
+        self.assertEqual(c["apply"]["unique"], ["r"])
+        self.assertTrue(c["apply"]["once"])
+
+    def test_malformed_apply_reports_apply_error(self):
+        c = one("GET APPLY:d(a AS x):[bad s:f(p=%(x)s) AS o")
+        self.assertFalse(c["parsed"])
+        self.assertIn("APPLY:", c["parsed_comment"])
+        self.assertNotEqual(c.get("source"), "APPLY")   # не уходит в мнимый source:func
+
+    def test_load_prefix_with_apply_without_unique(self):
+        c = one("GET LOAD(k):not_refresh APPLY:d(x AS x) source:func(q=%(x)s) AS out")
+        self.assertTrue(c["parsed"], c.get("parsed_comment"))
+        self.assertEqual(c["load_cache"]["id"], "k")
+        self.assertEqual(c["apply"]["data"], "d")
+        self.assertEqual(c["source"], "source")
+
 
 class TestCalcParse(unittest.TestCase):
     def test_calc_basic(self):
@@ -429,10 +468,10 @@ class TestInjectedVariables(unittest.TestCase):
 class TestApplyExec(unittest.TestCase):
     """Исполнение APPLY (построчный fan-out) на фейковом источнике, без БД."""
 
-    def _apply_command(self, columns, parameters, unique, function_object):
+    def _apply_command(self, columns, parameters, unique, function_object, once=False):
         return {
             "command": "GET",
-            "apply": {"data": "src", "columns": columns, "unique": unique},
+            "apply": {"data": "src", "columns": columns, "unique": unique, "once": once},
             "parameters": parameters,
             "function_object": function_object,
             "source_object": {"json": {}},
@@ -487,6 +526,55 @@ class TestApplyExec(unittest.TestCase):
         res = run_apply_command(cmd, {"src": [{"ip": "1"}]}, CS)
         self.assertFalse(res[0])
 
+    def _counting_source(self, calls):
+        def fake(params, source_json, data_map, current_state):
+            calls.append(params["q"])
+            return True, "1", "fake", [{"r": params["q"]}]
+        return fake
+
+    def test_duplicate_parameters_run_per_row_by_default(self):
+        """Без :once каждая строка даёт итерацию — поведение подкоманды может быть с побочными эффектами."""
+        from app.engine import run_apply_command
+        calls = []
+        cmd = self._apply_command([{"column": "ip", "as": "x"}], {"q": "%(x)s"}, [], self._counting_source(calls))
+        res = run_apply_command(cmd, {"src": [{"ip": "1"}, {"ip": "1"}, {"ip": "2"}]}, CS)
+        self.assertTrue(res[0])
+        self.assertEqual(sorted(calls), ["1", "1", "2"])
+        self.assertEqual(len(res[3]), 3)
+
+    def test_once_runs_one_iteration_per_unique_parameter_set(self):
+        from app.engine import run_apply_command
+        calls = []
+        cmd = self._apply_command([{"column": "ip", "as": "x"}], {"q": "%(x)s"},
+                                  [], self._counting_source(calls), once=True)
+        data_map = {"src": [{"ip": "1"}, {"ip": "1"}, {"ip": "2"}, {"ip": "1"}]}
+        res = run_apply_command(cmd, data_map, CS)
+        self.assertTrue(res[0])
+        self.assertEqual(sorted(calls), ["1", "2"])            # 4 строки -> 2 запуска
+        self.assertEqual(res[3], [{"r": "1", "applied_x": "1"}, {"r": "2", "applied_x": "2"}])
+        self.assertTrue(cmd["_info"].startswith("once 2/4: "), cmd["_info"])   # экономия видна в инфо шага
+        self.assertEqual(data_map["src"], [{"ip": "1"}, {"ip": "1"}, {"ip": "2"}, {"ip": "1"}])  # вход не мутируем
+
+    def test_once_uses_all_apply_columns_for_the_key(self):
+        from app.engine import run_apply_command
+        calls = []
+        cmd = self._apply_command([{"column": "ip", "as": "x"}, {"column": "name", "as": "y"}],
+                                  {"q": "%(x)s-%(y)s"}, [], self._counting_source(calls), once=True)
+        rows = [{"ip": "1", "name": "a"}, {"ip": "1", "name": "b"}, {"ip": "1", "name": "a"}]
+        res = run_apply_command(cmd, {"src": rows}, CS)
+        self.assertTrue(res[0])
+        self.assertEqual(sorted(calls), ["1-a", "1-b"])        # различаются по второй колонке
+
+    def test_once_handles_unhashable_cell_values(self):
+        from app.engine import run_apply_command
+        calls = []
+        cmd = self._apply_command([{"column": "tags", "as": "x"}], {"q": "%(x)s"},
+                                  [], self._counting_source(calls), once=True)
+        rows = [{"tags": ["a", "b"]}, {"tags": ["a", "b"]}, {"tags": ["c"]}]
+        res = run_apply_command(cmd, {"src": rows}, CS)
+        self.assertTrue(res[0])
+        self.assertEqual(len(calls), 2)
+
 
 @requires_pandas
 class TestApplyScriptExec(unittest.TestCase):
@@ -512,6 +600,96 @@ class TestApplyScriptExec(unittest.TestCase):
             {"value": "abab", "applied_x": "ab"},
             {"value": "cdcd", "applied_x": "cd"},
         ])
+
+    def _script_command(self, once):
+        body = 'DEF "z" AS target | CALC(target, target, CONCAT) AS doubled'
+        return {
+            "command": "GET",
+            "apply": {"data": "src", "columns": [{"column": "v", "as": "x"}], "unique": [], "once": once},
+            "parameters": {"target": "%(x)s"},
+            "script_object": {"name": "s", "roles": ["default"], "json": {"script": body, "return": "doubled"}},
+            "sub_commands": command_parser(body, CS),
+            "data_name": "out",
+        }
+
+    def test_apply_over_script_runs_per_row_by_default(self):
+        from engine import run_apply_script_command
+        data_map = {"src": [{"v": "ab"}, {"v": "ab"}]}
+        res = run_apply_script_command(self._script_command(False), data_map, {**CS, "roles": [], "processes": 1})
+        self.assertTrue(res[0], res[1])
+        self.assertEqual(len(res[3]), 2)
+
+    def test_apply_over_script_once_collapses_duplicates(self):
+        from engine import run_apply_script_command
+        command = self._script_command(True)
+        data_map = {"src": [{"v": "ab"}, {"v": "ab"}, {"v": "cd"}]}
+        res = run_apply_script_command(command, data_map, {**CS, "roles": [], "processes": 1})
+        self.assertTrue(res[0], res[1])
+        self.assertEqual(res[3], [
+            {"value": "abab", "applied_x": "ab"},
+            {"value": "cdcd", "applied_x": "cd"},
+        ])
+        self.assertEqual(command["_info"], "once 2/3")
+
+
+class TestApplyScriptInjectionIsolation(unittest.TestCase):
+    """Регрессия: APPLY поверх скрипта не должен наследовать параметры первой итерации.
+
+    commands_executor подставляет переменные в command['parameters'] НА МЕСТЕ (%(x)s -> значение),
+    а под-скрипт распарсен один раз на этапе резолва. Без копии на итерацию строки 2..N уходили
+    в источник с параметрами строки 1 — тихо неверные данные при верных applied_* колонках."""
+
+    def _fake_env(self):
+        import engine as root_engine
+        seen = []
+
+        def fake_source_function(source_type, function, current_state):
+            def query(parameters, source_json, data_map, state):
+                seen.append(parameters["user"])
+                return True, "1", "fake", [{"user": parameters["user"]}]
+            return True, "ok", "f", ({}, query)
+
+        def fake_object(name, types, current_state):
+            if name == "fake_src" and "'source'" in types:
+                return True, "ok", "f", {"name": "fake_src", "type": "source",
+                                         "roles": ["default"], "json": {"type": "dns"}}
+            return False, "object not found", "f", {}
+
+        saved = (root_engine.get_actual_object_by_name, root_engine.get_source_function,
+                 root_engine.get_source_threads_pool)
+        root_engine.get_actual_object_by_name = fake_object
+        root_engine.get_source_function = fake_source_function
+        root_engine.get_source_threads_pool = lambda *a, **k: (True, "ok", "f", {})
+        return root_engine, seen, saved
+
+    def _restore(self, root_engine, saved):
+        (root_engine.get_actual_object_by_name, root_engine.get_source_function,
+         root_engine.get_source_threads_pool) = saved
+
+    def _command(self, body, once=False):
+        return {
+            "command": "GET",
+            "apply": {"data": "src", "columns": [{"column": "v", "as": "x"}], "unique": [], "once": once},
+            "parameters": {"user_id": "%(x)s"},
+            "script_object": {"name": "sub", "roles": ["default"],
+                              "json": {"script": body, "return": "probed"}},
+            "sub_commands": command_parser(body, CS),
+            "data_name": "out",
+        }
+
+    def test_each_row_queries_with_its_own_value(self):
+        body = 'DEF "" AS user_id | GET fake_src:probe(user="%(user_id)s") AS probed'
+        root_engine, seen, saved = self._fake_env()
+        try:
+            res = root_engine.run_apply_script_command(
+                self._command(body), {"src": [{"v": "ivanov"}, {"v": "petrov"}, {"v": "sidorov"}]},
+                {**CS, "roles": ["fullmaster"], "processes": 1})
+        finally:
+            self._restore(root_engine, saved)
+        self.assertTrue(res[0], res[1])
+        self.assertEqual(seen, ["ivanov", "petrov", "sidorov"])
+        self.assertEqual([row["applied_x"] for row in res[3]], ["ivanov", "petrov", "sidorov"])
+        self.assertEqual([row["user"] for row in res[3]], ["ivanov", "petrov", "sidorov"])
 
 
 class TestJiraUnfold(unittest.TestCase):
