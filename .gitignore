@@ -192,3 +192,6 @@ tests.ipynb
 secrets-replacements.txt
 secrets-scrub-backup/
 VERSION
+
+# для взаимодействия с агентом (образцы реальных выгрузок — не коммитим)
+agent_test_data/
