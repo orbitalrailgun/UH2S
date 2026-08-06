@@ -390,6 +390,77 @@ def _console_proxy_headers(user_agent, authorization, extra_headers=None):
     return headers
 
 
+ERROR_BODY_LIMIT = 1024      # сколько символов тела ответа тащить в сообщение об ошибке
+
+# заголовки ответа, полезные для отладки 5xx (proxy/кластер часто кладут сюда id запроса)
+_DIAGNOSTIC_HEADERS = ("content-type", "x-request-id", "x-opaque-id", "x-cloud-request-id",
+                       "x-found-handling-cluster", "retry-after")
+
+
+def _redact(text):
+    """Замаскировать креды в тексте перед логом/сообщением об ошибке.
+
+    Тело ошибки от прокси/Dashboards может содержать эхо запроса вместе с заголовком Authorization
+    или ссылку вида https://user:pass@host — в логи это попадать не должно (см. security-политику:
+    секреты не логируем). Маскируются схемы Authorization (ApiKey/Basic/Bearer), пары
+    api_key/password/token/secret в JSON и креды в URL."""
+    import re
+    if not text:
+        return ""
+    redacted = re.sub(r"(?i)\b(ApiKey|Basic|Bearer)\s+[A-Za-z0-9\-._~+/=]+", r"\1 ***", str(text))
+    redacted = re.sub(r"(?i)(\"?(?:api[_-]?key|password|passwd|token|secret|authorization)\"?\s*[:=]\s*\"?)[^\"',\s}]+",
+                      r"\1***", redacted)
+    redacted = re.sub(r"(?i)(https?://)[^/\s:@]+:[^/\s@]+@", r"\1***:***@", redacted)
+    return re.sub(r"\*\*\*(\s+\*\*\*)+", "***", redacted)   # 'Authorization: *** ***' -> одна маска
+
+
+def _response_detail(resp, body_limit=ERROR_BODY_LIMIT):
+    """Диагностика HTTP-ответа для сообщения об ошибке: статус, служебные заголовки, тело, время.
+
+    Именно этого не хватало на 502 от console-proxy: раньше в сообщение уходил только `status 502`,
+    а причина (обычно текст прокси или `{"statusCode":502,"message":...}`) терялась. Тело усечено
+    до `body_limit`, пробелы схлопнуты, креды замаскированы (`_redact`)."""
+    parts = []
+    status = getattr(resp, "status_code", None)
+    reason = (getattr(resp, "reason", None) or "").strip()
+    parts.append(f"HTTP {status} {reason}".strip() if status is not None else "HTTP ?")
+    url = getattr(resp, "url", None)
+    if url:
+        parts.append(f"url={_redact(url)}")
+    headers = getattr(resp, "headers", None) or {}
+    try:
+        for name in _DIAGNOSTIC_HEADERS:
+            value = headers.get(name)
+            if value:
+                parts.append(f"{name}={value}")
+    except BaseException:
+        pass
+    elapsed = getattr(resp, "elapsed", None)
+    if elapsed is not None:
+        try:
+            parts.append(f"elapsed={elapsed.total_seconds():.2f}s")
+        except BaseException:
+            pass
+    body = ""
+    try:
+        body = " ".join(str(resp.text or "").split())
+    except BaseException:
+        body = ""
+    if body:
+        if len(body) > body_limit:
+            body = f"{body[:body_limit]}… (+{len(body) - body_limit} chars)"
+        parts.append(f"body: {_redact(body)}")
+    else:
+        parts.append("body: (empty)")
+    return " | ".join(parts)
+
+
+def _attempts_note(max_retries):
+    """Пометка о числе выполненных попыток — чтобы по сообщению было видно, что ретраи отработали."""
+    attempts = max(1, int(max_retries) + 1)
+    return f" [attempts={attempts}]" if attempts > 1 else ""
+
+
 def _extract_body_error(body_json):
     """Разобрать тело-ошибку elastic/opensearch -> (status:int|None, reason:str).
     Учитывает оба формата: elastic {'error':{'reason':...},'status':4xx} и
@@ -448,7 +519,7 @@ def _extract_data_views(data):
 
 def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, sort, fields, size, search_after_shift, limit, debug = False,
                        max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None, debug_log=None,
-                       auth_type="api_key", auth_user=None):
+                       auth_type="api_key", auth_user=None, error_body_limit=ERROR_BODY_LIMIT):
     import requests
     from app.sources.additional.retry import retry_call, RetryableError
     output_data = []
@@ -469,7 +540,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
         if debug_flag:
             print(resp, resp.status_code, dict(resp.json()))
         if resp.status_code in retry_statuses:
-            raise RetryableError(f"status {resp.status_code}", resp.status_code)
+            raise RetryableError(_response_detail(resp, error_body_limit), resp.status_code)
         # elastic/opensearch может вернуть HTTP 200, но в теле ошибку — ловим это
         try:
             body_json = resp.json()
@@ -479,7 +550,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
             body_status, reason = _extract_body_error(body_json)
             if isinstance(body_status, int) and (body_status == 429 or body_status >= 500):
                 raise RetryableError(f"elastic body status {body_status}: {reason}", body_status)
-            raise ValueError(f"elastic error (status {body_status}): {reason}")
+            raise ValueError(f"elastic error (status {body_status}): {reason or _response_detail(resp, error_body_limit)}")
         return resp
 
     # сначала делаем первый запрос, получаем первый кусок данных
@@ -488,14 +559,14 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
         response = retry_call(lambda: post(first_body), attempts=max_retries + 1,
                               backoff=retry_backoff, retryable_exceptions=retryable, on_retry=on_retry)
         if response.status_code not in [200, 201]:
-            error_message = f"fail response code {response.status_code}: {response.text}"
+            error_message = f"fail response code: {_response_detail(response, error_body_limit)}"
             return False, error_message, "data_taxi_requests", None
         first_json = dict(response.json())
         matched_total = _hits_total(first_json)
         output_data = get_data(first_json)
         current_sort = get_sort(first_json)
     except BaseException as e:
-        return False, f"elastic2python first query fail:{str(e)}", "data_taxi_requests", []
+        return False, f"elastic2python first query fail:{str(e)}{_attempts_note(max_retries)}", "data_taxi_requests", []
     # проверяем первый полученный кусок данных, если данных столько, сколько указано в size
     # то скорее всего в запросе есть ещё, а значит надо сдвинуть поле search_after и повторить запрос
     try:
@@ -514,7 +585,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
                     response = retry_call(lambda: post(page_body), attempts=max_retries + 1,
                                           backoff=retry_backoff, retryable_exceptions=retryable, on_retry=on_retry)
                     if response.status_code not in [200, 201]:
-                        error_message = f"fail response code {response.status_code}: {response.text}"
+                        error_message = f"fail response code: {_response_detail(response, error_body_limit)}"
                         return False, error_message, "data_taxi_requests", None
                     new_data = get_data(dict(response.json()))
                     current_sort = get_sort(dict(response.json()))
@@ -550,11 +621,11 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
 
         return True, f"OK (matched {matched_total}, rows {len(result_data)})", "data_taxi_requests", result_data
     except BaseException as e:
-        return False, f"elastic2python query requests fail:{str(e)}", "data_taxi_requests", []
+        return False, f"elastic2python query requests fail:{str(e)}{_attempts_note(max_retries)}", "data_taxi_requests", []
 
 def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, query, aggs, debug = False, size = 0,
                             max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None,
-                            auth_type="api_key", auth_user=None):
+                            auth_type="api_key", auth_user=None, error_body_limit=ERROR_BODY_LIMIT):
     import requests
     from app.sources.additional.retry import retry_call, RetryableError
     if debug:
@@ -566,7 +637,7 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
         resp = requests.post(url, json={"query": query, "size": size, "aggs": aggs},
                              headers=headers, verify=verify_certs, timeout=timeout)
         if resp.status_code in retry_statuses:
-            raise RetryableError(f"status {resp.status_code}", resp.status_code)
+            raise RetryableError(_response_detail(resp, error_body_limit), resp.status_code)
         # HTTP 200 с телом-ошибкой (elastic или OpenSearch Dashboards)
         try:
             body_json = resp.json()
@@ -576,7 +647,7 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
             body_status, reason = _extract_body_error(body_json)
             if isinstance(body_status, int) and (body_status == 429 or body_status >= 500):
                 raise RetryableError(f"elastic body status {body_status}: {reason}", body_status)
-            raise ValueError(f"elastic error (status {body_status}): {reason}")
+            raise ValueError(f"elastic error (status {body_status}): {reason or _response_detail(resp, error_body_limit)}")
         return resp
 
     try:
@@ -584,18 +655,18 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
         if debug:
             print("lib", response)
         if response.status_code not in [200, 201]:
-            error_message = f"fail response code {response.status_code}: {response.text}"
+            error_message = f"fail response code: {_response_detail(response, error_body_limit)}"
             return False, error_message, "data_taxi_aggs_requests", None
 
         output_data = get_data_aggs(dict(response.json()), aggs)
         return True, "OK", "data_taxi_aggs_requests", output_data
     except BaseException as e:
-        return False, f"elastic2python aggs requests fail:{str(e)}", "data_taxi_aggs_requests", []
+        return False, f"elastic2python aggs requests fail:{str(e)}{_attempts_note(max_retries)}", "data_taxi_aggs_requests", []
 
 
 def data_taxi_list_requests(url, user_agent, api_key, verify_certs, timeout, debug=False,
                             max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None,
-                            auth_type="api_key", auth_user=None):
+                            auth_type="api_key", auth_user=None, error_body_limit=ERROR_BODY_LIMIT):
     """GET-запрос метаданных через console-proxy и нормализация ответа в list-of-dict.
     Метод (GET) и путь (напр. /_cat/indices?format=json, /_cat/aliases?format=json, /_resolve/index/*)
     закодированы в самом url (&method=GET) — тело не отправляем. Возврат (ok, msg, func, records)."""
@@ -609,7 +680,7 @@ def data_taxi_list_requests(url, user_agent, api_key, verify_certs, timeout, deb
         if debug:
             print(resp, resp.status_code)
         if resp.status_code in retry_statuses:
-            raise RetryableError(f"status {resp.status_code}", resp.status_code)
+            raise RetryableError(_response_detail(resp, error_body_limit), resp.status_code)
         try:
             body_json = resp.json()
         except BaseException:
@@ -619,9 +690,9 @@ def data_taxi_list_requests(url, user_agent, api_key, verify_certs, timeout, deb
             body_status, reason = _extract_body_error(body_json)
             if isinstance(body_status, int) and (body_status == 429 or body_status >= 500):
                 raise RetryableError(f"elastic body status {body_status}: {reason}", body_status)
-            raise ValueError(f"elastic error (status {body_status}): {reason}")
+            raise ValueError(f"elastic error (status {body_status}): {reason or _response_detail(resp, error_body_limit)}")
         if resp.status_code not in (200, 201):
-            raise ValueError(f"fail response code {resp.status_code}: {resp.text[:500]}")
+            raise ValueError(f"fail response code: {_response_detail(resp, error_body_limit)}")
         return body_json
 
     try:
@@ -629,12 +700,12 @@ def data_taxi_list_requests(url, user_agent, api_key, verify_certs, timeout, deb
                           retryable_exceptions=retryable, on_retry=on_retry)
         return True, "OK", "data_taxi_list_requests", _normalize_to_records(data)
     except BaseException as e:
-        return False, f"elastic2python list requests fail:{str(e)}", "data_taxi_list_requests", []
+        return False, f"elastic2python list requests fail:{str(e)}{_attempts_note(max_retries)}", "data_taxi_list_requests", []
 
 
 def data_taxi_saved_objects_requests(url, user_agent, api_key, verify_certs, timeout, debug=False,
                                      max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504),
-                                     on_retry=None, auth_type="api_key", auth_user=None, extra_headers=None):
+                                     on_retry=None, auth_type="api_key", auth_user=None, extra_headers=None, error_body_limit=ERROR_BODY_LIMIT):
     """GET к Kibana/OpenSearch Dashboards API (saved_objects/_find или data_views) — список data views /
     index patterns как list-of-dict. url — ПРЯМОЙ путь Dashboards API (НЕ console-proxy), напр.
     /api/saved_objects/_find?type=index-pattern&per_page=1000  или  /api/data_views.
@@ -651,7 +722,7 @@ def data_taxi_saved_objects_requests(url, user_agent, api_key, verify_certs, tim
         if debug:
             print(resp, resp.status_code)
         if resp.status_code in retry_statuses:
-            raise RetryableError(f"status {resp.status_code}", resp.status_code)
+            raise RetryableError(_response_detail(resp, error_body_limit), resp.status_code)
         try:
             body_json = resp.json()
         except BaseException:
@@ -660,9 +731,9 @@ def data_taxi_saved_objects_requests(url, user_agent, api_key, verify_certs, tim
             body_status, reason = _extract_body_error(body_json)
             if isinstance(body_status, int) and (body_status == 429 or body_status >= 500):
                 raise RetryableError(f"dashboards body status {body_status}: {reason}", body_status)
-            raise ValueError(f"dashboards error (status {body_status}): {reason}")
+            raise ValueError(f"dashboards error (status {body_status}): {reason or _response_detail(resp, error_body_limit)}")
         if resp.status_code not in (200, 201):
-            raise ValueError(f"fail response code {resp.status_code}: {resp.text[:500]}")
+            raise ValueError(f"fail response code: {_response_detail(resp, error_body_limit)}")
         return body_json
 
     try:
@@ -677,7 +748,7 @@ def data_taxi_saved_objects_requests(url, user_agent, api_key, verify_certs, tim
                        f"для OpenSearch с мультитенантностью задайте securitytenant в конфиге источника")
         return True, message, "data_taxi_saved_objects_requests", records
     except BaseException as e:
-        return False, f"elastic2python saved_objects requests fail:{str(e)}", "data_taxi_saved_objects_requests", []
+        return False, f"elastic2python saved_objects requests fail:{str(e)}{_attempts_note(max_retries)}", "data_taxi_saved_objects_requests", []
 
 
 def data_taxi_csv_downloader(elastic_client, index, query, sort, fields, size, search_after, search_after_shift, filename, writemode):

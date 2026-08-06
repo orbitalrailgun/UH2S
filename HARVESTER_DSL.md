@@ -340,6 +340,11 @@ DEF 1719100000000 AS start
   `json_valid(...)` в SQLite и `meta->>'$.owner'`/`json_extract` в DuckDB. Пропуски (`None`/`NaN`/`NaT`) — пустая строка
 - `pandas_im:aggr/dynamic_aggr/shift/union/...` — агрегации/преобразования
 - `elastic_requests` (через console-proxy Kibana/OpenSearch Dashboards): `query(url, query, fields, sort, [size], [limit])`, `aggs_query(url, query, aggs)`, `pid_hierarchy`/`pid_siblings`, `list_indices(url)` — индексы уровня ES (`_cat/indices?format=json`), `list_data_views(url)` — data views / index patterns из saved objects (`/api/saved_objects/_find?type=index-pattern`). `auth_type`: `api_key` (по умолч.) или `basic_auth` (логин в `key.account`). Для мультитенантного OpenSearch — `securitytenant` в конфиге источника
+  - **Отладка ошибок**: при 4xx/5xx в сообщение шага попадает диагностика ответа — статус с reason,
+    URL (виден целевой путь ES), `content-type`, `x-request-id`/`x-opaque-id`, `retry-after`, время ответа и
+    тело (усечено до `error_body_limit`, по умолчанию 1024 символа; креды маскируются). Если ретраи
+    отработали, в конце пометка `[attempts=N]`, а каждая попытка пишется в лог с тем же телом. Раньше
+    502 от прокси выглядел как `status 502` без причины
 - `postgresql/mysql/mssql:query(...)`, `elastic`/`opensearch:...`, `gitlab/youtrack/iris/dns/...`
 - **`llm`** (объект типа `llm` как источник данных — LLM-анализ/обогащение):
   - `line_analysis(data, instructions, [knowledge_base], [temp_notes=N])` — на **каждую строку** `data` вызов модели; сгенерированный JSON добавляется полями к строке (коллизия имён → префикс `llm_`). На выходе исходная таблица + новые столбцы. Ошибка отдельной строки не роняет прогон (поле `llm_error`). По умолчанию строки независимы и обрабатываются параллельно (`max_threads`). `temp_notes` — целое: `0` (по умолчанию) выключено; `N>0` включает **последовательный** проход с временными заметками прогона и задаёт ширину буфера (сколько последних заметок держать). Модель может вернуть служебное поле `_note` (наблюдение для следующих строк — кластеризация/корреляция), оно видно на последующих строках и НЕ попадает в столбцы результата. Заметки эфемерны (живут только в рамках вызова) — в отличие от `knowledge_base` (постоянная общая память).

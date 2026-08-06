@@ -216,7 +216,7 @@ master key, зашифрованный `db_conf`, имя пользовател�
 | Источник | Функции | Состояние |
 |----------|---------|-----------|
 | `elastic` (client) | generic_query, aggs_query, pid_hierarchy, pid_siblings | реализован |
-| `elastic_requests` | query, aggs_query, pid_hierarchy/pid_siblings, list_indices (индексы уровня ES через console-proxy), list_data_views (data views / index patterns из saved objects Kibana/OSD); `auth_type` api_key/basic_auth; совместим с Kibana и OpenSearch Dashboards (kbn-xsrf+osd-xsrf), для мультитенантного OSD — `securitytenant` | реализован |
+| `elastic_requests` | query, aggs_query, pid_hierarchy/pid_siblings, list_indices (индексы уровня ES через console-proxy), list_data_views (data views / index patterns из saved objects Kibana/OSD); `auth_type` api_key/basic_auth; совместим с Kibana и OpenSearch Dashboards (kbn-xsrf+osd-xsrf), для мультитенантного OSD — `securitytenant`; ошибки 4xx/5xx отдаются с диагностикой (статус, request-id, тело — усечено `error_body_limit`, креды замаскированы) | реализован |
 | `opensearch` | generic_query, aggs_query | реализован |
 | `manticoresearch` | sql_query | реализован |
 | `postgresql` / `mysql` / `mssql` | query (prep + final) | реализован |

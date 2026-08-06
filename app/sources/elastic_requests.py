@@ -4,10 +4,15 @@ import app.sources.additional.elastic2python as elastic2python
 
 
 def _make_retry_logger(current_state, func_name):
-    """Callback для retry_call: пишет факт каждого повтора запроса в лог (WARNING)."""
+    """Callback для retry_call: пишет факт каждого повтора запроса в лог (WARNING).
+
+    Пишем и текст ошибки (для транзиентных статусов это диагностика ответа: статус, request-id,
+    тело), а не только код — иначе причина 5xx теряется, и в логе остаётся одинокое «status 502»."""
     def on_retry(attempt, err, delay):
         status = getattr(err, "status", None)
-        detail = f"status {status}" if status else f"{type(err).__name__}: {err}"
+        detail = f"{type(err).__name__}: {err}"
+        if status:
+            detail = f"status {status} | {detail}"
         logger_log(syslog.LOG_WARNING, get_log_message(
             f"elastic request retry attempt {attempt} after {delay:.2f}s ({detail})", func_name, current_state))
     return on_retry
@@ -76,6 +81,7 @@ def execute_elastic_query(parameters, source_object, data_map, current_state):
             retry_backoff=source.get("retry_backoff_seconds", 0.5),
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
             on_retry=_make_retry_logger(current_state, currentFuncName()),
+            error_body_limit=source.get("error_body_limit", 1024),
             debug_log=_make_debug_logger(current_state, currentFuncName()),
             **auth_kwargs)
         if data_taxi_requests_result[0] == False:
@@ -112,6 +118,7 @@ def execute_elastic_aggs(parameters, source_object, data_map, current_state):
             retry_backoff=source.get("retry_backoff_seconds", 0.5),
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
             on_retry=_make_retry_logger(current_state, currentFuncName()),
+            error_body_limit=source.get("error_body_limit", 1024),
             **auth_kwargs)
 
         if data_taxi_aggs_requests_result[0] == False:
@@ -148,6 +155,7 @@ def execute_elastic_list_indices(parameters, source_object, data_map, current_st
             retry_backoff=source.get("retry_backoff_seconds", 0.5),
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
             on_retry=_make_retry_logger(current_state, currentFuncName()),
+            error_body_limit=source.get("error_body_limit", 1024),
             **auth_kwargs)
         if list_result[0] == False:
             error_message = f"list_result is false: {list_result[1]}"
@@ -184,6 +192,7 @@ def execute_elastic_list_data_views(parameters, source_object, data_map, current
             retry_backoff=source.get("retry_backoff_seconds", 0.5),
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
             on_retry=_make_retry_logger(current_state, currentFuncName()),
+            error_body_limit=source.get("error_body_limit", 1024),
             extra_headers=_extra_headers(source),
             **auth_kwargs)
         if data_views_result[0] == False:
