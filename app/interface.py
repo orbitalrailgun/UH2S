@@ -438,7 +438,9 @@ def records_to_download(tables_data, fmt, base_name):
                     fieldnames = _union_fieldnames(data)
                     # потоковая запись СТРОКА-ЗА-СТРОКОЙ прямо в zip-энтри: без полной копии, без pandas
                     # DataFrame и без гигантской строки-CSV. Пик памяти ~O(1) от числа строк.
-                    with zf.open(fname, "w") as raw:
+                    # force_zip64=True: при потоковой записи размер энтри неизвестен заранее, поэтому
+                    # zipfile не включает ZIP64 автоматически и падает на >2 ГиБ ("File size too large").
+                    with zf.open(fname, "w", force_zip64=True) as raw:
                         wrapper = io.TextIOWrapper(raw, encoding="utf-8-sig", newline="")
                         writer = csv.DictWriter(wrapper, fieldnames=fieldnames, extrasaction="ignore")
                         writer.writeheader()
@@ -456,7 +458,8 @@ def records_to_download(tables_data, fmt, base_name):
                 fname = _unique_zip_name(_safe_filename(table_name), ".json", used)
                 # потоковый валидный JSON-массив (по объекту на строку) — без построения одной большой
                 # строки в памяти. Компактнее прежнего indent=2, зато не падает по OOM на больших наборах.
-                with zf.open(fname, "w") as raw:
+                # force_zip64=True: размер энтри неизвестен заранее при потоковой записи (см. csv_in_zip).
+                with zf.open(fname, "w", force_zip64=True) as raw:
                     wrapper = io.TextIOWrapper(raw, encoding="utf-8", newline="")
                     wrapper.write("[")
                     for idx, row in enumerate(data):
