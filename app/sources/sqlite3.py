@@ -5,7 +5,7 @@ import ipaddress
 import datetime
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
-
+from app.sources.additional.sql_cells import normalize_object_columns
 
 
 def field_collision_cutter(df):
@@ -106,9 +106,9 @@ def execute_sqlite3(parameters, source_object, data_map, current_state):
                     input_df = field_collision_cutter(pandas.DataFrame(data_map[table]))
                     #print(list(input_df))
                     column_list  = list(input_df)
-                    # нормализация данных, чтобы то, что в пандасе, влезло в sqlite3    
-                    stringcols = input_df.select_dtypes(include='object').columns
-                    input_df[stringcols] = input_df[stringcols].fillna('').astype(str)
+                    # нормализация данных, чтобы то, что в пандасе, влезло в sqlite3; вложенные dict/list
+                    # -> валидный JSON (иначе .astype(str) даёт Python-repr с апострофами), строки не квотируем
+                    normalize_object_columns(input_df)
                     # method="multi" биндит chunksize * кол-во_столбцов переменных в один INSERT.
                     # SQLite ограничивает это SQLITE_MAX_VARIABLE_NUMBER (999 в старых сборках) ->
                     # подбираем chunksize от числа столбцов, иначе широкие таблицы дают

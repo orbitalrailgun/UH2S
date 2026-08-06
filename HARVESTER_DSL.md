@@ -334,7 +334,10 @@ DEF 1719100000000 AS start
     (в выборке объекты разных типов), догружаются по `/objecttype/{id}/attributes` — отключается `resolve_names=false`
     (тогда безымянные атрибуты дадут колонки `attr_<id>`)
 - `netbox:search(target, [object_types], [limit], [flatten])`, `netbox:search_cidr_by_ip(target, [flatten])`
-- `sqlite3_im:query(queries=[...])`, `duckdb_im:query(type, queries=[...])` — SQL поверх собранных данных
+- `sqlite3_im:query(queries=[...])`, `duckdb_im:query(type, queries=[...])` — SQL поверх собранных данных.
+  Вложенные значения (`dict`/`list` — например, из ndjson или CMDB) попадают в колонку **валидным JSON**,
+  поэтому по ним работают JSON-функции движка: `json_extract(meta, '$.owner')`, `json_array_length(tags)`,
+  `json_valid(...)` в SQLite и `meta->>'$.owner'`/`json_extract` в DuckDB. Пропуски (`None`/`NaN`/`NaT`) — пустая строка
 - `pandas_im:aggr/dynamic_aggr/shift/union/...` — агрегации/преобразования
 - `elastic_requests` (через console-proxy Kibana/OpenSearch Dashboards): `query(url, query, fields, sort, [size], [limit])`, `aggs_query(url, query, aggs)`, `pid_hierarchy`/`pid_siblings`, `list_indices(url)` — индексы уровня ES (`_cat/indices?format=json`), `list_data_views(url)` — data views / index patterns из saved objects (`/api/saved_objects/_find?type=index-pattern`). `auth_type`: `api_key` (по умолч.) или `basic_auth` (логин в `key.account`). Для мультитенантного OpenSearch — `securitytenant` в конфиге источника
 - `postgresql/mysql/mssql:query(...)`, `elastic`/`opensearch:...`, `gitlab/youtrack/iris/dns/...`

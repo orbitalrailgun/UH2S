@@ -5,6 +5,7 @@ import datetime
 import syslog
 import traceback
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
+from app.sources.additional.sql_cells import normalize_object_columns
 
 
 def _err_detail(exc):
@@ -134,9 +135,9 @@ def execute_duckdb(parameters, source_object, data_map, current_state):
 
                     input_df = field_collision_cutter(pandas.DataFrame(data_map[table]))
 
-                    # нормализация данных   
-                    stringcols = input_df.select_dtypes(include='object').columns
-                    input_df[stringcols] = input_df[stringcols].fillna('').astype(str)
+                    # нормализация данных: object-колонки -> строки; вложенные dict/list -> валидный JSON
+                    # (иначе .astype(str) даёт Python-repr с апострофами), простые строки не квотируем
+                    normalize_object_columns(input_df)
 
                     if data_representation_type == "view": # это используем, когда данные точно есть (невозможен ALTER VIEW +column)
                         df_list.append(input_df)
