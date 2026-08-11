@@ -204,8 +204,9 @@ class _FakeRequests:
     def __init__(self):
         self.calls = []
 
-    def get(self, url, headers=None, params=None, verify=None, timeout=None):
+    def get(self, url, headers=None, params=None, verify=None, timeout=None, **kwargs):
         self.calls.append((url, params))
+        self.last_kwargs = kwargs        # proxies и прочие сквозные параметры вызова
         if url.endswith("/iql/objects"):
             if (params or {}).get("page", 1) > 1:
                 return _FakeResponse({"objectEntries": []})

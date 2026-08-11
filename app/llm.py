@@ -1,5 +1,6 @@
 import syslog
 from app.logging import get_log_message, logger_log, currentFuncName
+from app.sources.additional.http_proxy import proxy_kwargs
 from app.db import get_secret, create_ai_log_entry
 
 # Объект типа llm (раздел Objects):
@@ -251,7 +252,7 @@ def llm_chat(llm_json, messages, current_state):
         if provider == "ollama":
             body = {"model": model, "messages": messages, "stream": False,
                     "options": {"num_ctx": llm_context_window(llm_json)}}
-            response = requests.post(f"{url}/api/chat", json=body, headers=headers, verify=verify, timeout=timeout)
+            response = requests.post(f"{url}/api/chat", json=body, headers=headers, verify=verify, timeout=timeout, **proxy_kwargs(llm_json))
             duration_ms = int((time.monotonic() - start) * 1000)
             if response.status_code not in (200, 201):
                 _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"http {response.status_code}")
@@ -263,7 +264,7 @@ def llm_chat(llm_json, messages, current_state):
 
         elif provider in ("openai", "openai_compatible"):
             body = {"model": model, "messages": messages, "stream": False}
-            response = requests.post(f"{url}/chat/completions", json=body, headers=headers, verify=verify, timeout=timeout)
+            response = requests.post(f"{url}/chat/completions", json=body, headers=headers, verify=verify, timeout=timeout, **proxy_kwargs(llm_json))
             duration_ms = int((time.monotonic() - start) * 1000)
             if response.status_code not in (200, 201):
                 _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"http {response.status_code}")
@@ -323,7 +324,7 @@ def llm_chat_stream(llm_json, messages, current_state, on_chunk):
         else:
             return False, f"неизвестный тип llm '{provider}' (ollama | openai)", _empty_usage()
 
-        with requests.post(endpoint, json=body, headers=headers, verify=verify, timeout=timeout, stream=True) as response:
+        with requests.post(endpoint, json=body, headers=headers, verify=verify, timeout=timeout, stream=True, **proxy_kwargs(llm_json)) as response:
             if response.status_code not in (200, 201):
                 duration_ms = int((time.monotonic() - start) * 1000)
                 _log_llm_request(current_state, syslog.LOG_ERR, model, provider, url, None, None, duration_ms, f"http {response.status_code}")
@@ -415,7 +416,7 @@ def llm_health_check(llm_json, current_state):
             return False, "в объекте llm не задан url"
 
         if provider == "ollama":
-            response = requests.get(f"{url}/api/tags", headers=headers, verify=verify, timeout=timeout)
+            response = requests.get(f"{url}/api/tags", headers=headers, verify=verify, timeout=timeout, **proxy_kwargs(llm_json))
             if response.status_code != 200:
                 return False, f"ollama /api/tags http {response.status_code}"
             available = [m.get("name") or m.get("model") for m in response.json().get("models", [])]
@@ -427,7 +428,7 @@ def llm_health_check(llm_json, current_state):
 
         if provider in ("openai", "openai_compatible"):
             # url уже включает /v1 -> обращаемся к {url}/models
-            response = requests.get(f"{url}/models", headers=headers, verify=verify, timeout=timeout)
+            response = requests.get(f"{url}/models", headers=headers, verify=verify, timeout=timeout, **proxy_kwargs(llm_json))
             if response.status_code != 200:
                 return False, f"openai {url}/models http {response.status_code} ({response.text[:200]})"
             data = response.json().get("data", [])

@@ -1,6 +1,7 @@
 import json
 import ipaddress
 import syslog
+from app.sources.additional.http_proxy import proxy_kwargs
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.sources.additional.flatten import flatten_data
 
@@ -95,7 +96,7 @@ def execute_netbox_search(parameters, source_object, data_map, current_state):
             page_size = min(limit, 1000)
             next_url = f"{base_url}/api/{object_type}/?q={target}&limit={page_size}"
             while next_url and collected < limit:
-                response = requests.get(next_url, headers=headers, verify=verify, timeout=timeout)
+                response = requests.get(next_url, headers=headers, verify=verify, timeout=timeout, **proxy_kwargs(source))
                 if response.status_code != 200:
                     # не валим весь поиск из-за одного типа (может быть 400/403) — логируем и идём дальше
                     logger_log(syslog.LOG_WARNING, get_log_message(
@@ -141,7 +142,7 @@ def execute_netbox_search_cidr_by_ipaddress(parameters, source_object, data_map,
         headers = _netbox_headers(source)
         base_url = source["url"].rstrip("/")
 
-        response = requests.get(f"{base_url}/api/ipam/prefixes/?contains={target}", headers=headers, verify=verify, timeout=timeout)
+        response = requests.get(f"{base_url}/api/ipam/prefixes/?contains={target}", headers=headers, verify=verify, timeout=timeout, **proxy_kwargs(source))
         if response.status_code != 200:
             return False, f"response.status_code is not 200: {response.status_code}", currentFuncName(), []
 

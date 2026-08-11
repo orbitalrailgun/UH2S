@@ -211,7 +211,11 @@ master key, зашифрованный `db_conf`, имя пользовател�
 ## 8. Источники данных (коннекторы)
 
 Реестр — `ENGINE_SOURCES_AND_FUNCTIONS_MAP` в `app/engine.py`. Как добавить и протестировать
-новый коннектор — см. [`ADDING_SOURCES.md`](ADDING_SOURCES.md). Заявлено:
+новый коннектор — см. [`ADDING_SOURCES.md`](ADDING_SOURCES.md).
+
+Общее для источников на `requests`: прокси задаётся в json объекта (`proxies` / `proxy` / `no_proxy`),
+разбор — `app/sources/additional/http_proxy.py`; без этих ключей вызов идёт как раньше (учитывается
+окружение `HTTP_PROXY`/`HTTPS_PROXY`). Заявлено:
 
 | Источник | Функции | Состояние |
 |----------|---------|-----------|

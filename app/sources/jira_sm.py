@@ -1,6 +1,7 @@
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.sources.additional.flatten import flatten_data
+from app.sources.additional.http_proxy import proxies_from_source, proxy_kwargs
 from app.sources.additional.cmdb import (attribute_name_map, attribute_names_from_objects,
                                          cmdb_objects_to_long, cmdb_objects_to_table,
                                          object_type_ids_with_unnamed_attributes)
@@ -122,7 +123,7 @@ def execute_jira_search_issues(parameters, source_object, data_map, current_stat
                 body["fields"] = fields
             if expand_parts:
                 body["expand"] = expand_parts
-            response = requests.post(f"{url}/rest/api/2/search", headers=headers, json=body, verify=verify, timeout=timeout)
+            response = requests.post(f"{url}/rest/api/2/search", headers=headers, json=body, verify=verify, timeout=timeout, **proxy_kwargs(source))
             if response.status_code != 200:
                 return False, f"jira search_issues http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
@@ -173,7 +174,7 @@ def execute_jira_get_issue(parameters, source_object, data_map, current_state):
         if request_expand:
             request_params["expand"] = request_expand
 
-        response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params=request_params, verify=verify, timeout=timeout)
+        response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source))
         if response.status_code != 200:
             return False, f"jira get_issue http {response.status_code} ({response.text[:512]})", currentFuncName(), []
 
@@ -208,7 +209,7 @@ def execute_jira_get_issue_changelog(parameters, source_object, data_map, curren
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
 
-        response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params={"expand": "changelog"}, verify=verify, timeout=timeout)
+        response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params={"expand": "changelog"}, verify=verify, timeout=timeout, **proxy_kwargs(source))
         if response.status_code != 200:
             return False, f"jira get_issue_changelog http {response.status_code} ({response.text[:512]})", currentFuncName(), []
 
@@ -272,7 +273,7 @@ def execute_jira_get_issue_comments(parameters, source_object, data_map, current
         page_size = min(limit, 100)
         while len(data) < limit:
             request_params = {"startAt": start_at, "maxResults": page_size}
-            response = requests.get(f"{url}/rest/api/2/issue/{issue_id}/comment", headers=headers, params=request_params, verify=verify, timeout=timeout)
+            response = requests.get(f"{url}/rest/api/2/issue/{issue_id}/comment", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source))
             if response.status_code != 200:
                 return False, f"jira get_issue_comments http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
@@ -329,7 +330,7 @@ def execute_jira_get_issue_worklogs(parameters, source_object, data_map, current
         page_size = min(limit, 100)
         while len(data) < limit:
             request_params = {"startAt": start_at, "maxResults": page_size}
-            response = requests.get(f"{url}/rest/api/2/issue/{issue_id}/worklog", headers=headers, params=request_params, verify=verify, timeout=timeout)
+            response = requests.get(f"{url}/rest/api/2/issue/{issue_id}/worklog", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source))
             if response.status_code != 200:
                 return False, f"jira get_issue_worklogs http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
@@ -372,7 +373,7 @@ def _fetch_issue_field_list(parameters, source_object, current_state, field_name
     url = source["url"].rstrip("/")
     headers = _jira_headers(source)
 
-    response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params={"fields": field_name}, verify=verify, timeout=timeout)
+    response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params={"fields": field_name}, verify=verify, timeout=timeout, **proxy_kwargs(source))
     if response.status_code != 200:
         return False, f"http {response.status_code} ({response.text[:512]})", []
 
@@ -456,7 +457,7 @@ def _cmdb_api_base(cmdb_path):
     return "/rest/insight/1.0"
 
 
-def _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, verify, timeout, current_state):
+def _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, verify, timeout, current_state, proxies=None):
     """Имена атрибутов типа объекта: GET {api_base}/objecttype/{id}/attributes -> {str(id): имя}.
 
     id типа проверяется как целое (подстановка в путь URL); ошибка/недоступность не роняют выборку —
@@ -472,7 +473,7 @@ def _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, v
         return names
     try:
         response = requests.get(f"{url}{api_base}/objecttype/{type_id}/attributes",
-                                headers=headers, verify=verify, timeout=timeout)
+                                headers=headers, verify=verify, timeout=timeout, proxies=proxies)
         if response.status_code != 200:
             logger_log(syslog.LOG_WARNING, get_log_message(
                 f"cmdb attribute names for objectType {type_id}: http {response.status_code}",
@@ -490,13 +491,13 @@ def _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, v
     return names
 
 
-def _resolve_cmdb_attribute_names(objects, names, url, api_base, headers, verify, timeout, current_state):
+def _resolve_cmdb_attribute_names(objects, names, url, api_base, headers, verify, timeout, current_state, proxies=None):
     """Дополнить карту id->имя: имена из самих объектов (Assets) + догрузка по типам, где имён не хватает."""
     resolved = dict(names or {})
     for attr_id, label in attribute_names_from_objects(objects).items():
         resolved.setdefault(attr_id, label)
     for object_type_id in object_type_ids_with_unnamed_attributes(objects, resolved):
-        fetched = _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, verify, timeout, current_state)
+        fetched = _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, verify, timeout, current_state, proxies)
         for attr_id, label in fetched.items():
             resolved.setdefault(attr_id, label)
     return resolved
@@ -559,7 +560,7 @@ def execute_jira_search_cmdb(parameters, source_object, data_map, current_state)
             if named_shape:
                 # карта id -> имя атрибута приходит в том же ответе (иначе в атрибутах только objectTypeAttributeId)
                 request_params["includeTypeAttributes"] = "true"
-            response = requests.get(f"{url}{cmdb_path}", headers=headers, params=request_params, verify=verify, timeout=timeout)
+            response = requests.get(f"{url}{cmdb_path}", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source))
             if response.status_code != 200:
                 return False, f"jira search_cmdb http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
@@ -580,7 +581,8 @@ def execute_jira_search_cmdb(parameters, source_object, data_map, current_state)
         if named_shape and resolve_names:
             # в выборке могут быть объекты разных типов (у каждого свои id атрибутов) -> добираем по типам
             names = _resolve_cmdb_attribute_names(objects, names, url, _cmdb_api_base(cmdb_path),
-                                                  headers, verify, timeout, current_state)
+                                                  headers, verify, timeout, current_state,
+                                                  proxies_from_source(source))
         data = _shape_cmdb_objects(objects, shape, names, query)
 
         logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(objects)} objects, {len(data)} rows ({shape})",
@@ -664,7 +666,7 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
                               "attributes": attributes, "offset": offset, "limit": page_size}
             if schema not in (None, ""):
                 request_params["schema"] = schema
-            response = requests.get(f"{url}{search_path}", headers=headers, params=request_params, verify=verify, timeout=timeout)
+            response = requests.get(f"{url}{search_path}", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source))
             if response.status_code != 200:
                 return False, f"jira search_cmdb_freetext http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
@@ -684,7 +686,8 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
 
         if named_shape and resolve_names:
             names = _resolve_cmdb_attribute_names(objects, names, url, api_base,
-                                                  headers, verify, timeout, current_state)
+                                                  headers, verify, timeout, current_state,
+                                                  proxies_from_source(source))
         data = _shape_cmdb_objects(objects, shape, names, query)
 
         logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(objects)} objects, {len(data)} rows ({shape})",

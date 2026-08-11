@@ -1,5 +1,6 @@
 import json
 import syslog
+from app.sources.additional.http_proxy import proxy_kwargs
 from app.logging import get_log_message, logger_log, currentFuncName
 
 def execute_manticoresearch_sql(parameters, source_object, data_map, current_state):
@@ -13,7 +14,7 @@ def execute_manticoresearch_sql(parameters, source_object, data_map, current_sta
             source["url"], 
             data=query["query"], 
             verify = source["verify"], 
-            timeout=source["timeout"])
+            timeout=source["timeout"], **proxy_kwargs(source))
         
         if response.status_code != 200:
             error_message = f"fail: manticoresearch response code is {response.status_code}"

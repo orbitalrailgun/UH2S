@@ -1,6 +1,7 @@
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 import app.sources.additional.elastic2python as elastic2python
+from app.sources.additional.http_proxy import proxies_from_source
 
 
 def _make_retry_logger(current_state, func_name):
@@ -82,6 +83,7 @@ def execute_elastic_query(parameters, source_object, data_map, current_state):
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
             on_retry=_make_retry_logger(current_state, currentFuncName()),
             error_body_limit=source.get("error_body_limit", 1024),
+            proxies=proxies_from_source(source),
             debug_log=_make_debug_logger(current_state, currentFuncName()),
             **auth_kwargs)
         if data_taxi_requests_result[0] == False:
@@ -119,6 +121,7 @@ def execute_elastic_aggs(parameters, source_object, data_map, current_state):
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
             on_retry=_make_retry_logger(current_state, currentFuncName()),
             error_body_limit=source.get("error_body_limit", 1024),
+            proxies=proxies_from_source(source),
             **auth_kwargs)
 
         if data_taxi_aggs_requests_result[0] == False:
@@ -156,6 +159,7 @@ def execute_elastic_list_indices(parameters, source_object, data_map, current_st
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
             on_retry=_make_retry_logger(current_state, currentFuncName()),
             error_body_limit=source.get("error_body_limit", 1024),
+            proxies=proxies_from_source(source),
             **auth_kwargs)
         if list_result[0] == False:
             error_message = f"list_result is false: {list_result[1]}"
@@ -193,6 +197,7 @@ def execute_elastic_list_data_views(parameters, source_object, data_map, current
             retry_statuses=tuple(source.get("retry_on_status", [429, 502, 503, 504])),
             on_retry=_make_retry_logger(current_state, currentFuncName()),
             error_body_limit=source.get("error_body_limit", 1024),
+            proxies=proxies_from_source(source),
             extra_headers=_extra_headers(source),
             **auth_kwargs)
         if data_views_result[0] == False:

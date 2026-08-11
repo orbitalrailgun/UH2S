@@ -1,6 +1,7 @@
 import re
 import json
 import syslog
+from app.sources.additional.http_proxy import proxy_kwargs
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.sources.additional.flatten import flatten_data
 
@@ -108,7 +109,7 @@ def execute_thehive_get_alerts(parameters, source_object, data_map, current_stat
             headers=headers,
             json=body,
             timeout=timeout,
-            verify=verify
+            verify=verify, **proxy_kwargs(source)
         )
 
         if response.status_code != 200:

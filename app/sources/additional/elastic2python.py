@@ -519,7 +519,7 @@ def _extract_data_views(data):
 
 def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, sort, fields, size, search_after_shift, limit, debug = False,
                        max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None, debug_log=None,
-                       auth_type="api_key", auth_user=None, error_body_limit=ERROR_BODY_LIMIT):
+                       auth_type="api_key", auth_user=None, error_body_limit=ERROR_BODY_LIMIT, proxies=None):
     import requests
     from app.sources.additional.retry import retry_call, RetryableError
     output_data = []
@@ -536,7 +536,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
     retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 
     def post(body):
-        resp = requests.post(url, json=body, headers=headers, verify=verify_certs, timeout=timeout)
+        resp = requests.post(url, json=body, headers=headers, verify=verify_certs, timeout=timeout, proxies=proxies)
         if debug_flag:
             print(resp, resp.status_code, dict(resp.json()))
         if resp.status_code in retry_statuses:
@@ -625,7 +625,7 @@ def data_taxi_requests(url, user_agent, api_key, verify_certs, timeout, query, s
 
 def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, query, aggs, debug = False, size = 0,
                             max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None,
-                            auth_type="api_key", auth_user=None, error_body_limit=ERROR_BODY_LIMIT):
+                            auth_type="api_key", auth_user=None, error_body_limit=ERROR_BODY_LIMIT, proxies=None):
     import requests
     from app.sources.additional.retry import retry_call, RetryableError
     if debug:
@@ -635,7 +635,7 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
 
     def post():
         resp = requests.post(url, json={"query": query, "size": size, "aggs": aggs},
-                             headers=headers, verify=verify_certs, timeout=timeout)
+                             headers=headers, verify=verify_certs, timeout=timeout, proxies=proxies)
         if resp.status_code in retry_statuses:
             raise RetryableError(_response_detail(resp, error_body_limit), resp.status_code)
         # HTTP 200 с телом-ошибкой (elastic или OpenSearch Dashboards)
@@ -666,7 +666,7 @@ def data_taxi_aggs_requests(url, user_agent, api_key, verify_certs, timeout, que
 
 def data_taxi_list_requests(url, user_agent, api_key, verify_certs, timeout, debug=False,
                             max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504), on_retry=None,
-                            auth_type="api_key", auth_user=None, error_body_limit=ERROR_BODY_LIMIT):
+                            auth_type="api_key", auth_user=None, error_body_limit=ERROR_BODY_LIMIT, proxies=None):
     """GET-запрос метаданных через console-proxy и нормализация ответа в list-of-dict.
     Метод (GET) и путь (напр. /_cat/indices?format=json, /_cat/aliases?format=json, /_resolve/index/*)
     закодированы в самом url (&method=GET) — тело не отправляем. Возврат (ok, msg, func, records)."""
@@ -676,7 +676,7 @@ def data_taxi_list_requests(url, user_agent, api_key, verify_certs, timeout, deb
     retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 
     def post():
-        resp = requests.post(url, headers=headers, verify=verify_certs, timeout=timeout)
+        resp = requests.post(url, headers=headers, verify=verify_certs, timeout=timeout, proxies=proxies)
         if debug:
             print(resp, resp.status_code)
         if resp.status_code in retry_statuses:
@@ -705,7 +705,7 @@ def data_taxi_list_requests(url, user_agent, api_key, verify_certs, timeout, deb
 
 def data_taxi_saved_objects_requests(url, user_agent, api_key, verify_certs, timeout, debug=False,
                                      max_retries=2, retry_backoff=0.5, retry_statuses=(429, 502, 503, 504),
-                                     on_retry=None, auth_type="api_key", auth_user=None, extra_headers=None, error_body_limit=ERROR_BODY_LIMIT):
+                                     on_retry=None, auth_type="api_key", auth_user=None, extra_headers=None, error_body_limit=ERROR_BODY_LIMIT, proxies=None):
     """GET к Kibana/OpenSearch Dashboards API (saved_objects/_find или data_views) — список data views /
     index patterns как list-of-dict. url — ПРЯМОЙ путь Dashboards API (НЕ console-proxy), напр.
     /api/saved_objects/_find?type=index-pattern&per_page=1000  или  /api/data_views.
@@ -718,7 +718,7 @@ def data_taxi_saved_objects_requests(url, user_agent, api_key, verify_certs, tim
     retryable = (RetryableError, requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 
     def do_get():
-        resp = requests.get(url, headers=headers, verify=verify_certs, timeout=timeout)
+        resp = requests.get(url, headers=headers, verify=verify_certs, timeout=timeout, proxies=proxies)
         if debug:
             print(resp, resp.status_code)
         if resp.status_code in retry_statuses:

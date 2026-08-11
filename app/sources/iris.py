@@ -1,5 +1,6 @@
 import datetime
 import syslog
+from app.sources.additional.http_proxy import proxy_kwargs
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.sources.additional.flatten import flatten_data
 
@@ -67,7 +68,7 @@ def execute_function_iris_get_alerts(parameters, source_object, data_map, curren
             'Authorization': f'Bearer {TOKEN}'
         }    
         
-        response = requests.get(f"""{url}/alerts/filter?cid=1&page=1&per_page={query["per_page"]}&sort=desc&source_start_date={parameters["start_date"]}&source_end_date={parameters["end_date"]}&{search_field}={search_value}""", headers=headers)
+        response = requests.get(f"""{url}/alerts/filter?cid=1&page=1&per_page={query["per_page"]}&sort=desc&source_start_date={parameters["start_date"]}&source_end_date={parameters["end_date"]}&{search_field}={search_value}""", headers=headers, **proxy_kwargs(source))
         if response.status_code != 200:
             error_message = f"fail: iris response code is {response.status_code}"
             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))

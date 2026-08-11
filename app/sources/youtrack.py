@@ -1,5 +1,6 @@
 import datetime
 import syslog
+from app.sources.additional.http_proxy import proxy_kwargs
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
 
@@ -64,7 +65,7 @@ def execute_youtrack_project_finder(parameters, source_object, data_map, current
         }
         response = requests.get(
             f"{url}/api/issues?fields=idReadable&query=project:{project}%20'{target}:'",
-            headers=headers, timeout = timeout
+            headers=headers, timeout = timeout, **proxy_kwargs(source)
         )
         if response.status_code != 200:
             error_message = f"fail: youtrack response code is {response.status_code}"
@@ -78,7 +79,7 @@ def execute_youtrack_project_finder(parameters, source_object, data_map, current
             try:
                 issue_response = requests.get(
                         f'{url}/api/issues/{idReadable}/?fields={fields_list_to_youtrack_fields(fields,",")}',
-                        headers=headers, timeout = timeout
+                        headers=headers, timeout = timeout, **proxy_kwargs(source)
                     )
                 if issue_response.status_code != 200:
                     continue
@@ -172,7 +173,7 @@ def execute_youtrack_all_project_issue_finder(parameters, source_object, data_ma
         response = requests.get(
                 #idReadable,project,description,summary,created,reporter,updated,updater,resolved
                 f"{url}/api/issues?fields={fields_list_to_youtrack_fields(fields,",")}&top={top}&flatten=true&query=\"{target}\"",
-                headers=headers, timeout=timeout
+                headers=headers, timeout=timeout, **proxy_kwargs(source)
             )
         if response.status_code != 200:
             error_message = f"fail: youtrack response code is {response.status_code}"
@@ -226,12 +227,12 @@ def execute_youtrack_all_articles_finder(parameters, source_object, data_map, cu
         if with_content_flag == True:
             response = requests.get(
                 f"{url}/api/articles?$top={top}&fields={fields_list_to_youtrack_fields(fields_with_content,",")}&query={{\"{target}\"}}",
-                headers=headers, timeout=timeout
+                headers=headers, timeout=timeout, **proxy_kwargs(source)
             )
         else:
             response = requests.get(
                 f"{url}/api/articles?$top={top}&fields={fields_list_to_youtrack_fields(fields,",")}&query={{\"{target}\"}}",
-                headers=headers, timeout=timeout
+                headers=headers, timeout=timeout, **proxy_kwargs(source)
             )
 
 

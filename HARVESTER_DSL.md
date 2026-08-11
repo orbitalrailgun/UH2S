@@ -338,6 +338,13 @@ DEF 1719100000000 AS start
   Вложенные значения (`dict`/`list` — например, из ndjson или CMDB) попадают в колонку **валидным JSON**,
   поэтому по ним работают JSON-функции движка: `json_extract(meta, '$.owner')`, `json_array_length(tags)`,
   `json_valid(...)` в SQLite и `meta->>'$.owner'`/`json_extract` в DuckDB. Пропуски (`None`/`NaN`/`NaT`) — пустая строка
+- **Прокси (все источники на `requests`)**: в json объекта — `"proxies": {"http": "...", "https": "..."}`
+  (как есть в requests). **Пустые значения отключают прокси**: `{"http": "", "https": ""}` — переданное
+  значение приоритетнее `HTTP_PROXY`/`HTTPS_PROXY` из окружения, а пустая строка для requests означает
+  «без прокси». Короткие формы: `"proxy": "http://host:3128"` (один адрес на обе схемы) и
+  `"no_proxy": true` (то же, что пустые значения). Работает в `elastic_requests`, `jira_sm`, `netbox`,
+  `irp_thehive`, `youtrack`, `gitlab`, `irp_iris`, `manticoresearch`, объектах `llm` и нотификаторах
+  (mattermost/telegram). Если ключей нет — поведение прежнее, окружение учитывается
 - `pandas_im:aggr/dynamic_aggr/shift/union/...` — агрегации/преобразования
 - `elastic_requests` (через console-proxy Kibana/OpenSearch Dashboards): `query(url, query, fields, sort, [size], [limit])`, `aggs_query(url, query, aggs)`, `pid_hierarchy`/`pid_siblings`, `list_indices(url)` — индексы уровня ES (`_cat/indices?format=json`), `list_data_views(url)` — data views / index patterns из saved objects (`/api/saved_objects/_find?type=index-pattern`). `auth_type`: `api_key` (по умолч.) или `basic_auth` (логин в `key.account`). Для мультитенантного OpenSearch — `securitytenant` в конфиге источника
   - **Отладка ошибок**: при 4xx/5xx в сообщение шага попадает диагностика ответа — статус с reason,

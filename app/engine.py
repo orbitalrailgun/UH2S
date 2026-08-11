@@ -226,8 +226,11 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "max_retries":2,                       # повторов при сетевой ошибке/таймауте/коде из retry_on_status
             "retry_backoff_seconds":0.5,           # базовая задержка (экспоненциальная, с джиттером)
             "retry_on_status":[429,502,503,504],   # HTTP-коды для повтора (4xx не повторяются)
-            "error_body_limit":1024                # сколько символов тела ответа тащить в сообщение об
+            "error_body_limit":1024,               # сколько символов тела ответа тащить в сообщение об
                                                    # ошибке (5xx от прокси/кластера); креды маскируются
+            "proxies":{"http":"","https":""}       # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
+                                                   # из окружения. Короткие формы: "proxy":"http://host:3128",
+                                                   # "no_proxy":true
         }
     },
     "opensearch":{
@@ -311,7 +314,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "max_threads":10
         },
         "unrequired":{
-            "verify":True
+            "verify":True,
+            "proxies":{"http":"","https":""}   # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
+                                               # окружения. Короткие формы: "proxy":"http://host:3128",
+                                               # "no_proxy":true
         }
     },
     "manticoresearch":{
@@ -332,7 +338,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "max_threads":10
         }, 
         "unrequired":{
-            "verify":False
+            "verify":False,
+            "proxies":{"http":"","https":""}   # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
+                                               # окружения. Короткие формы: "proxy":"http://host:3128",
+                                               # "no_proxy":true
         }
     },
     "sqlite3_im":{
@@ -480,7 +489,11 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             #"key":{"system":"foo", "account":"bar"},
             "max_threads":10
         }, 
-        "unrequired":{}
+        "unrequired":{
+            "proxies":{"http":"","https":""}   # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
+                                               # окружения. Короткие формы: "proxy":"http://host:3128",
+                                               # "no_proxy":true
+        }
     },
     "irp_iris":{
         "functions":{
@@ -500,7 +513,11 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             #"key":{"system":"foo", "account":"bar"},
             "max_threads":10
         },
-        "unrequired":{}
+        "unrequired":{
+            "proxies":{"http":"","https":""}   # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
+                                               # окружения. Короткие формы: "proxy":"http://host:3128",
+                                               # "no_proxy":true
+        }
     },
     "jira_sm":{
         "functions":{
@@ -644,7 +661,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
         "unrequired":{
             "verify":True,
             "email":"bot@example.ru",
-            "cmdb_path":"/rest/insight/1.0/iql/objects"
+            "cmdb_path":"/rest/insight/1.0/iql/objects",
+            "proxies":{"http":"","https":""}   # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
+                                               # окружения. Короткие формы: "proxy":"http://host:3128",
+                                               # "no_proxy":true
         }
     },
     "irp_thehive":{
@@ -673,7 +693,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "max_threads":10
         },
         "unrequired":{
-            "verify":False
+            "verify":False,
+            "proxies":{"http":"","https":""}   # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
+                                               # окружения. Короткие формы: "proxy":"http://host:3128",
+                                               # "no_proxy":true
         }
     },
     "teleport":{
@@ -732,7 +755,11 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             #"key":{"system":"foo", "account":"bar"},
             "max_threads":10
         }, 
-        "unrequired":{}
+        "unrequired":{
+            "proxies":{"http":"","https":""}   # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
+                                               # окружения. Короткие формы: "proxy":"http://host:3128",
+                                               # "no_proxy":true
+        }
     },
     "grafana":{
         # "functions":{
@@ -928,7 +955,10 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
         "unrequired":{
             "max_threads":4,                 # степень параллелизма пер-строчного line_analysis
             "max_retries":2,                 # повторов на строку/запрос при транзиентной ошибке
-            "retry_backoff_seconds":1.0       # базовая задержка backoff (экспоненциальная, с джиттером)
+            "retry_backoff_seconds":1.0,      # базовая задержка backoff (экспоненциальная, с джиттером)
+            "proxies":{"http":"","https":""}   # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
+                                               # окружения. Короткие формы: "proxy":"http://host:3128",
+                                               # "no_proxy":true
         }
     },
     "universal_harvester":{

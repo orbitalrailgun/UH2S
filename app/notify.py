@@ -1,16 +1,17 @@
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
+from app.sources.additional.http_proxy import proxies_from_source
 from app.db import get_secret
 
 
 
-def send_mattermost_notify(mattermost_host, api_key, target_username, message_text, current_state):
+def send_mattermost_notify(mattermost_host, api_key, target_username, message_text, current_state, proxies=None):
     import requests
     try:
         ###############################################################
         # Сначала надо получить собственный user id бота в mattermost
         ###############################################################
-        response = requests.get("https://"+mattermost_host+"/api/v4/users/me",headers = {'Authorization': f"Bearer {api_key}"})
+        response = requests.get("https://"+mattermost_host+"/api/v4/users/me",headers = {'Authorization': f"Bearer {api_key}"}, proxies=proxies)
         if response.status_code < 200 or response.status_code >=300:
             # ошибка, не можем получить себя
             error_message = f"Cannot get bot mattermost account for {mattermost_host}"
@@ -22,7 +23,7 @@ def send_mattermost_notify(mattermost_host, api_key, target_username, message_te
         ###############################################################
         # Получаем пользователя по его юзернейму (id кому отправляем уведомление)
         ###############################################################
-        response = requests.post("https://"+mattermost_host+"/api/v4/users/usernames",headers = {'Authorization': f"Bearer {api_key}",'Content-type': 'content_type_value'}, json = [target_username])
+        response = requests.post("https://"+mattermost_host+"/api/v4/users/usernames",headers = {'Authorization': f"Bearer {api_key}",'Content-type': 'content_type_value'}, json = [target_username], proxies=proxies)
         if response.status_code < 200 or response.status_code >=300:
             # ошибка, не можем получить пользователя
             error_message = f"Cannot get target user mattermost account {target_username} for server {mattermost_host}"
@@ -44,7 +45,7 @@ def send_mattermost_notify(mattermost_host, api_key, target_username, message_te
         ###############################################################
         # создаём приватный канал бот<->пользователь
         ###############################################################
-        response = requests.post("https://"+mattermost_host+"/api/v4/channels/direct",headers = {'Authorization': f"Bearer {api_key}",'Content-type': 'content_type_value'}, json = [bot_id, target_user_id])
+        response = requests.post("https://"+mattermost_host+"/api/v4/channels/direct",headers = {'Authorization': f"Bearer {api_key}",'Content-type': 'content_type_value'}, json = [bot_id, target_user_id], proxies=proxies)
         if response.status_code < 200 or response.status_code >=300:
             # ошибка создания канала
             error_message = f"Cannot create private bot<->user channel"
@@ -54,7 +55,7 @@ def send_mattermost_notify(mattermost_host, api_key, target_username, message_te
         channel_id = response.json()["id"]
     
         # 4. отправка сообщения
-        response = requests.post("https://"+mattermost_host+"/api/v4/posts",headers = {'Authorization': f"Bearer {api_key}",'Content-type': 'content_type_value'}, json = {"channel_id":channel_id,"message":message_text})
+        response = requests.post("https://"+mattermost_host+"/api/v4/posts",headers = {'Authorization': f"Bearer {api_key}",'Content-type': 'content_type_value'}, json = {"channel_id":channel_id,"message":message_text}, proxies=proxies)
         if response.status_code < 200 or response.status_code >=300:
             # ошибка отправки
             error_message = f"Cannot send message to user {target_username}"
@@ -101,12 +102,13 @@ def notify_mattermost_proc(notifier_object, notifier_user_conf, message, current
                             key, 
                             notifier_user_conf["username"], 
                             message, 
-                            current_state)
+                            current_state,
+                            proxies_from_source(notifier_object))
         if send_mattermost_notify_result[0] == False:
             logger_log(syslog.LOG_ERR, get_log_message(f"Ошибка нотификации mattermost: {send_mattermost_notify_result[1]}", currentFuncName(), current_state))
             return
         
-def send_telegram_notify(bot_token, chat_id, message_text, current_state):
+def send_telegram_notify(bot_token, chat_id, message_text, current_state, proxies=None):
     import requests
     try:
         # блок для получения chat_id
@@ -116,7 +118,7 @@ def send_telegram_notify(bot_token, chat_id, message_text, current_state):
         # print(requests.get(url).json())
 
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={chat_id}&text={message_text}"
-        response = requests.get(url)#.json()
+        response = requests.get(url, proxies=proxies)#.json()
 
         if response.status_code < 200 or response.status_code >=300:
             # ошибка, не можем получить себя
@@ -171,7 +173,8 @@ def notify_telegram_proc(notifier_object, notifier_user_conf, message, current_s
                             key, 
                             notifier_user_conf["chat_id"], 
                             message, 
-                            current_state)
+                            current_state,
+                            proxies_from_source(notifier_object))
         if send_telegram_notify_result[0] == False:
             logger_log(syslog.LOG_ERR, get_log_message(f"Ошибка нотификации telegram: {send_telegram_notify_result[1]}", currentFuncName(), current_state))
             return

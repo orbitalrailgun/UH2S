@@ -1,5 +1,6 @@
 import datetime
 import syslog
+from app.sources.additional.http_proxy import proxy_kwargs
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 
 def execute_gitlab_namespace_owner_request(parameters, source_object, data_map, current_state):
@@ -18,7 +19,7 @@ def execute_gitlab_namespace_owner_request(parameters, source_object, data_map, 
             #https://docs.gitlab.com/api/namespaces/ ???
             f"{gitlab_url}/api/v4/projects/{project_id}/search",
             params={"scope": "blobs", "search": namespace},
-            headers={"PRIVATE-TOKEN": token_gitlab}
+            headers={"PRIVATE-TOKEN": token_gitlab}, **proxy_kwargs(source)
         )
         
         if response.status_code != 200:
@@ -64,7 +65,7 @@ def execute_gitlab_search_request(parameters, source_object, data_map, current_s
             #https://docs.gitlab.com/api/search/
             f"{gitlab_url}/api/search",
             params={"scope": scope, "search": target},
-            headers={"PRIVATE-TOKEN": token_gitlab}
+            headers={"PRIVATE-TOKEN": token_gitlab}, **proxy_kwargs(source)
         )
         #print(response.status_code)
         #print(response.text)
