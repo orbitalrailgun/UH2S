@@ -347,7 +347,23 @@ DEF 1719100000000 AS start
 `ENGINE_SOURCES_AND_FUNCTIONS_MAP` (`app/engine.py`). Каждый тип задаёт `required`-параметры
 (проверяются и типизируются) и `unrequired` (опциональные). Примеры:
 - `irp_thehive:get_alerts(filter, limit, [sort], [extra_data], [flatten])`
-- `jira_sm`: `search_issues(jql, [limit], [fields], [expand], [raw])`, `get_issue(issue_id, [expand], [raw])`, `get_issue_changelog(issue_id, [raw])`, `get_issue_comments(issue_id, [limit], [raw])`, `get_issue_worklogs(issue_id, [limit], [raw])`, `get_issue_attachments(issue_id, [raw])` (метаданные + ссылка `content`, тело не скачивается), `get_issue_issuelinks(issue_id, [raw])`, `search_cmdb(aql, [limit], [cmdb_path], [shape], [sep], [max_values], [resolve_names])`, `search_cmdb_freetext(freetext, [schema], [attributes], [limit], [search_path], [timeout], [shape])`. Заявки разворачиваются в плоские поля; коллекции (`comment`/`worklog`/`attachment`/`issuelinks`) сводятся к `*_count` (детали — отдельными функциями); `customfield_*` переименовываются в человекочитаемые имена (через `expand=names`); `raw=true` — исходный JSON
+- `jira_sm`: `search_issues(jql, [limit], [fields], [expand], [raw])`, `get_issue(issue_id, [expand], [raw])`, `get_issue_changelog(issue_id, [raw])`, `get_issue_comments(issue_id, [limit], [raw])`, `get_issue_worklogs(issue_id, [limit], [raw])`, `get_issue_attachments(issue_id, [raw])` (метаданные + ссылка `content`, тело не скачивается), `get_issue_issuelinks(issue_id, [raw])`, `search_cmdb(aql, [limit], [cmdb_path], [shape], [sep], [max_values], [resolve_names])`, `search_cmdb_freetext(freetext, [schema], [attributes], [limit], [search_path], [timeout], [shape])`, `get_cmdb_history(object_key, [limit], [criteria], [order], [type], [since], [until], [audits_path], [raw])`. Заявки разворачиваются в плоские поля; коллекции (`comment`/`worklog`/`attachment`/`issuelinks`) сводятся к `*_count` (детали — отдельными функциями); `customfield_*` переименовываются в человекочитаемые имена (через `expand=names`); `raw=true` — исходный JSON
+  - **История объекта CMDB** (`get_cmdb_history`): audit log по КЛЮЧУ объекта (`HAM-2727707`, не числовой
+    id) через `GET /rest/insight-am/1/assets/{key}/audits`. Строки плоские: `objectKey`, `occurredAt`,
+    `type`, `action`, `title`, `message`, `author_key`/`author_name`/`author_displayName`/`author_active`
+    (аватары отбрасываются). Фильтры: `criteria` — текстовый на стороне Jira (напр.
+    `criteria="Изменение поля «Description»"`, кириллица кодируется автоматически); `since`/`until` —
+    отсечение по `occurredAt` на нашей стороне (ISO); `order` — `MOST_RECENT` (по умолч.) или
+    `LEAST_RECENT`; `type` — по умолчанию `AUDIT`, пустое значение убирает параметр из запроса.
+    Пагинация по `offset` до `limit` или до `metadata.total`; в статусе шага — `N of TOTAL`.
+    `objectKey` в каждой строке позволяет собирать историю нескольких объектов одной таблицей:
+    ```
+    GET cmdb:search_cmdb(aql="objectType = \"Laptop\" AND Status = \"Списано\"", limit=50) AS laptops
+    | GET APPLY:laptops(objectKey AS key):once cmdb:get_cmdb_history(object_key="%(key)s",
+          criteria="Изменение поля «Description»", since="2026-01-01") AS changes
+    | GET duckdb_im:query(type="table", queries=[
+        "SELECT author_displayName, COUNT(*) c FROM changes GROUP BY 1 ORDER BY c DESC"]) AS by_author
+    ```
   - **CMDB**: `shape` задаёт форму вывода. `table` (по умолчанию) — строка на объект, **колонка на атрибут по его имени**
     (метаданные объекта: `objectKey`, `id`, `label`, `objectType`, `objectTypeId`, `created`, `updated`, `archived`, `url`);
     ссылки сводятся к метке объекта, статусы — к имени статуса, даты берутся в машинном виде (ISO), мультизначные атрибуты

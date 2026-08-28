@@ -23,7 +23,7 @@ from app.sources.youtrack import execute_youtrack_project_finder, execute_youtra
 from app.sources.gitlab import execute_gitlab_namespace_owner_request, execute_gitlab_search_request
 from app.sources.iris import execute_function_iris_get_alerts
 from app.sources.thehive import execute_thehive_get_alerts
-from app.sources.jira_sm import execute_jira_search_issues, execute_jira_get_issue, execute_jira_get_issue_changelog, execute_jira_get_issue_comments, execute_jira_get_issue_worklogs, execute_jira_get_issue_attachments, execute_jira_get_issue_issuelinks, execute_jira_search_cmdb, execute_jira_search_cmdb_freetext
+from app.sources.jira_sm import execute_jira_search_issues, execute_jira_get_issue, execute_jira_get_issue_changelog, execute_jira_get_issue_comments, execute_jira_get_issue_worklogs, execute_jira_get_issue_attachments, execute_jira_get_issue_issuelinks, execute_jira_search_cmdb, execute_jira_search_cmdb_freetext, execute_jira_get_cmdb_history
 #from app.sources.teleport import execute_function_get_hosts_teleport
 from app.sources.dns import execute_dns_resolve
 from app.sources.mysql import execute_mysql
@@ -647,6 +647,25 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                 },
                 "functions":{
                     "query": execute_jira_search_cmdb_freetext,
+                    #"converter": lambda: None
+                }
+            },
+            "get_cmdb_history":{
+                "required":{
+                    "object_key":"HAM-2727707"    # КЛЮЧ объекта CMDB (не числовой id)
+                },
+                "unrequired":{
+                    "limit":50,                   # максимум записей (пагинация по offset)
+                    "criteria":"Изменение поля «Description»",  # текстовый фильтр на стороне Jira
+                    "order":"MOST_RECENT",        # MOST_RECENT | LEAST_RECENT
+                    "type":"AUDIT",               # тип записей истории
+                    "since":"2026-01-01",         # отсечь по occurredAt на нашей стороне (ISO)
+                    "until":"2026-12-31",
+                    "audits_path":"/rest/insight-am/1/assets",
+                    "raw":False                   # исходный JSON вместо плоских строк
+                },
+                "functions":{
+                    "query": execute_jira_get_cmdb_history,
                     #"converter": lambda: None
                 }
             }

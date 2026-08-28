@@ -698,3 +698,127 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
         error_message = f"jira search_cmdb_freetext fail: {str(e)}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []
+
+
+def _unfold_cmdb_audit(entry, object_key):
+    """Одна запись истории CMDB -> плоская строка.
+
+    Автор разворачивается в author_* (avatarUrl отбрасываем — как аватары в таблице объектов),
+    objectKey добавляется в строку, чтобы историю нескольких объектов (напр. через APPLY) можно было
+    склеивать и группировать одной таблицей."""
+    if not isinstance(entry, dict):
+        return {"objectKey": object_key, "value": entry}
+    row = {"objectKey": object_key}
+    for field in ("occurredAt", "type", "action", "title", "message", "id"):
+        if field in entry:
+            row[field] = entry.get(field)
+    author = entry.get("author")
+    if isinstance(author, dict):
+        for source_field, target_field in (("key", "author_key"), ("name", "author_name"),
+                                           ("displayName", "author_displayName"), ("active", "author_active")):
+            if source_field in author:
+                row[target_field] = author.get(source_field)
+    elif author is not None:
+        row["author"] = author
+    # прочие поля записи (кроме уже разобранных и шумных) — чтобы не потерять данные при смене API
+    for field, value in entry.items():
+        if field in ("author", "occurredAt", "type", "action", "title", "message", "id"):
+            continue
+        row[field] = flatten_data(value) if isinstance(value, dict) else value
+    return row
+
+
+def _audit_in_period(entry, since, until):
+    """Попадает ли запись в период по occurredAt (ISO-строки сравниваются лексикографически)?"""
+    occurred = str((entry or {}).get("occurredAt") or "")
+    if since and occurred and occurred < str(since):
+        return False
+    if until and occurred and occurred > str(until):
+        return False
+    return True
+
+
+def execute_jira_get_cmdb_history(parameters, source_object, data_map, current_state):
+    """История (audit log) объекта CMDB JSM: кто и когда менял поля.
+
+    Эндпоинт Insight AM: GET {audits_path}/{object_key}/audits?limit=&offset=&order=&type=&criteria=
+    (audits_path по умолчанию /rest/insight-am/1/assets).
+    Параметры: object_key -- ключ объекта, напр. HAM-2727707 (обяз.; ключ, а не числовой id);
+    limit -- максимум записей (пагинация по offset); criteria -- (опц.) текстовый фильтр на стороне
+    Jira, напр. 'Изменение поля «Description»'; order -- (опц.) MOST_RECENT (по умолч.) | LEAST_RECENT;
+    type -- (опц.) тип записей, по умолчанию AUDIT (пустое значение -> параметр не отправляется);
+    since/until -- (опц.) отсечь по occurredAt на нашей
+    стороне (ISO, напр. 2026-01-01); audits_path -- (опц.) путь эндпоинта; raw -- (опц.) исходный JSON.
+    Возврат: list of dict (плоские строки: objectKey, occurredAt, type, action, title, message, author_*)."""
+    import requests
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
+        query = parameters
+        source = source_object
+
+        object_key = str(query.get("object_key") or "").strip()
+        if not object_key:
+            error_message = "jira get_cmdb_history: object_key is required (e.g. HAM-2727707)"
+            logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), []
+        try:
+            limit = int(query["limit"]) if query.get("limit") else 50
+        except (TypeError, ValueError):
+            limit = 50
+        criteria = query.get("criteria") if query.get("criteria") not in (None, "") else None
+        order = query.get("order") or "MOST_RECENT"
+        # type не задан -> AUDIT (как в типовом запросе); задан пустым -> параметр не отправляем вовсе
+        # (запасной ход, если у API другой набор/значение по умолчанию)
+        audit_type = "AUDIT" if "type" not in query else (query.get("type") or None)
+        since = query.get("since") or None
+        until = query.get("until") or None
+        audits_path = query.get("audits_path") or source.get("insight_audits_path") or "/rest/insight-am/1/assets"
+        raw_flag = _as_bool(query.get("raw", False))
+
+        verify = source["verify"] if "verify" in source else True
+        timeout = source["timeout"] if "timeout" in source else 60
+        url = source["url"].rstrip("/")
+        headers = _jira_headers(source)
+
+        data = []
+        offset = 0
+        page_size = min(limit, 100)
+        total = None
+        while len(data) < limit:
+            request_params = {"limit": page_size, "offset": offset, "order": order}
+            if audit_type:
+                request_params["type"] = audit_type
+            if criteria:
+                request_params["criteria"] = criteria       # requests сам кодирует кириллицу в URL
+            response = requests.get(f"{url}{audits_path}/{object_key}/audits", headers=headers,
+                                    params=request_params, verify=verify, timeout=timeout,
+                                    **proxy_kwargs(source))
+            if response.status_code != 200:
+                return (False, f"jira get_cmdb_history http {response.status_code} ({response.text[:512]})",
+                        currentFuncName(), [])
+            payload = response.json()
+            entries = payload.get("results") if isinstance(payload, dict) else payload
+            entries = entries if isinstance(entries, list) else []
+            metadata = payload.get("metadata") if isinstance(payload, dict) else None
+            if isinstance(metadata, dict) and isinstance(metadata.get("total"), int):
+                total = metadata["total"]
+            if not entries:
+                break
+            for entry in entries:
+                if not _audit_in_period(entry, since, until):
+                    continue
+                data.append(entry if raw_flag else _unfold_cmdb_audit(entry, object_key))
+                if len(data) >= limit:
+                    break
+            offset += len(entries)
+            if len(entries) < page_size or (total is not None and offset >= total):
+                break
+
+        info = f"{len(data)}" if total is None else f"{len(data)} of {total}"
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {info} audit records", currentFuncName(), current_state))
+        return True, info, currentFuncName(), data
+
+    except Exception as e:
+        error_message = f"jira get_cmdb_history fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), []
