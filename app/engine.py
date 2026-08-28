@@ -1793,13 +1793,25 @@ def run_load_command(command, current_state):
     """LOAD(id[, ttl_ignore]) AS name — чтение из storage с обработкой TTL.
     Истёк без ttl_ignore -> ошибка с подсказкой (данные НЕ удаляются); истёк с ttl_ignore -> _warning
     + данные; отсутствует/битый -> ошибка. Возврат (ok, str(len)|msg, func, records|{})."""
-    from app.db import storage_load
+    from app.db import storage_file_load, storage_load
     key = command["load_id"]
     load_result = storage_load(key, current_state)
     if not load_result[0]:
         return False, load_result[1], currentFuncName(), {}
     envelope = load_result[3]
     if envelope is None:
+        # файловая запись хранилища: строк в БД нет, материализовать её в data_map нельзя
+        # (для этого она и файловая) — подсказываем читать через duckdb_im
+        file_result = storage_file_load(key, current_state)
+        if file_result[0] and file_result[3]:
+            meta = file_result[3]
+            rows = meta.get("rows")
+            rows_text = f"{rows} rows, " if rows is not None else ""
+            size_mb = (meta.get("size_bytes") or 0) / (1024 * 1024)
+            return (False, f"data '{key}' is a file-backed table ({rows_text}{size_mb:.0f} MB, "
+                           f"{meta.get('format')}): LOAD does not materialize it — query it in "
+                           f"duckdb_im, where it is available as table \"{key}\"",
+                    currentFuncName(), {})
         return False, f"data '{key}' not found in storage", currentFuncName(), {}
     data = envelope.get("data")
     if not isinstance(data, list):

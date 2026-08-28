@@ -1,3 +1,4 @@
+from app.sources.additional.sql_cells import dataframe_to_records
 import copy
 import json
 import syslog
@@ -357,7 +358,8 @@ def execute_pandas_union(parameters, source_object, data_map, current_state):
             df_target_data = pandas.DataFrame(data_map[target_data])
             df_target_data["_data_name_"] = target_data
 
-            unioned_data = unioned_data + df_target_data.to_dict('records')
+            # как и остальные функции pandas_im, отдаём JSON-сериализуемые записи (даты -> ISO)
+            unioned_data = unioned_data + dataframe_to_records(df_target_data)
 
         return True, "OK", currentFuncName(), unioned_data
 

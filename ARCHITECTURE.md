@@ -167,6 +167,7 @@ master key, зашифрованный `db_conf`, имя пользовател�
 | `objects` | name, roles(json), version, timestamp, type, owner, json | версионируемые source/script/notifier/llm |
 | `executions` | id, owner, timestamp, status, json | журнал запусков (script/steps/duration/status; раздел History) |
 | `storage` | id, owner, execution, json | persistent-кэш DSL (`SAVE→storage`/`LOAD`/`GET LOAD`); JSON-конверт `{created_ts,updated_ts,ttl,data}`; раздел «Хранилище» |
+| `storage_files` | id, owner, path, name, format, size_bytes, rows, columns, created_ts, updated_ts, ttl | **файловые** записи хранилища: данные лежат файлом на диске (`app/storage_files.py`, каталог `UH2S_STORAGE_DIR`), в БД только метаданные. Читает `duckdb_im` напрямую (авторегистрация VIEW по имени ключа); `LOAD`/`sqlite3_im` их не материализуют |
 | `api_keys` | key_hash, owner, comment, enabled, created_at, created_by, expires_at | ключи HTTP API (sha256), раздел настроек |
 | `schedules` | id, name, owner, script_name, cron, enabled, last_run, last_status, created_at, created_by, json | cron-расписания запуска script-объектов (раздел «Расписания») |
 | `ai_log` | timestamp, username, model, provider, *_tokens, duration_ms, ok | журнал вызовов LLM |

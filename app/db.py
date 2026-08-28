@@ -134,6 +134,12 @@ def db_init(current_state):
         cursor.execute("CREATE TABLE IF NOT EXISTS objects (name TEXT, roles TEXT, version INTEGER, timestamp TEXT, type TEXT, owner TEXT, json TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS executions (id TEXT, owner TEXT, timestamp TEXT, status INTEGER, json TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS storage (id TEXT, owner TEXT, execution TEXT, json TEXT);")
+        # файловые записи хранилища: сами данные лежат файлом на диске (app/storage_files.py), в БД —
+        # только метаданные. Отдельная таблица, а не поле в storage: duckdb_im запрашивает этот список
+        # на каждом вызове, и тянуть ради типа записи гигабайтные json-блобы нельзя.
+        cursor.execute("CREATE TABLE IF NOT EXISTS storage_files (id TEXT, owner TEXT, path TEXT, name TEXT, "
+                       "format TEXT, size_bytes INTEGER, rows INTEGER, columns TEXT, "
+                       "created_ts INTEGER, updated_ts INTEGER, ttl INTEGER);")
         cursor.execute("CREATE TABLE IF NOT EXISTS settings (scope TEXT, key TEXT, value TEXT);")
         cursor.execute("CREATE TABLE IF NOT EXISTS ai_log (timestamp TEXT, username TEXT, model TEXT, provider TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER, duration_ms INTEGER, ok INTEGER);")
         cursor.execute("CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT, owner TEXT, comment TEXT, enabled BOOLEAN, created_at TEXT, created_by TEXT, expires_at TEXT);")
@@ -1252,6 +1258,9 @@ def storage_save(key, records, ttl, current_state):
                     "data": records}
 
         cursor.execute(f"DELETE FROM storage WHERE id = {placeholder};", (key,))
+        # ключ не должен существовать в двух видах: одноимённая файловая запись снимается
+        # (сам файл станет сиротой и будет убран storage_files.sweep_orphans)
+        cursor.execute(f"DELETE FROM storage_files WHERE id = {placeholder};", (key,))
         cursor.execute(
             f"INSERT INTO storage (id, owner, execution, json) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder});",
             (key, owner, execution, json.dumps(envelope, ensure_ascii=False)))
@@ -1370,6 +1379,8 @@ def storage_list(current_state):
                 pass
             entries.append({
                 "id": key,
+                "kind": "data",
+                "format": "",
                 "owner": owner or "",
                 "created_ts": _iso_utc(created),
                 "updated_ts": _iso_utc(updated),
@@ -1378,8 +1389,171 @@ def storage_list(current_state):
                 "size_bytes": size_bytes,
                 "expired": expired,
             })
+        # файловые записи — из отдельной таблицы, в том же виде (kind="file")
+        file_list_result = storage_file_list(current_state)
+        if file_list_result[0]:
+            for meta in file_list_result[3]:
+                entries.append({
+                    "id": meta["id"],
+                    "kind": "file",
+                    "format": meta.get("format") or "",
+                    "owner": meta.get("owner") or "",
+                    "created_ts": _iso_utc(meta.get("created_ts")),
+                    "updated_ts": _iso_utc(meta.get("updated_ts")),
+                    "ttl": ("" if meta.get("ttl") is None else int(meta["ttl"])),
+                    "rows": (meta.get("rows") if meta.get("rows") is not None else ""),
+                    "size_bytes": meta.get("size_bytes") or 0,
+                    "expired": bool(meta.get("expired")),
+                })
         entries.sort(key=lambda e: e["updated_ts"], reverse=True)
         return True, "Ok", currentFuncName(), entries
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# storage_files — файловые записи хранилища: данные лежат файлом на диске
+# (app/storage_files.py), здесь только метаданные. Все запросы параметризованы.
+# ────────────────────────────────────────────────────────────────────────────
+def _storage_file_row_to_meta(row, now=None):
+    """Строка таблицы storage_files -> dict метаданных (+признак expired по ttl)."""
+    key, owner, path, name, fmt, size_bytes, rows, columns, created_ts, updated_ts, ttl = row
+    try:
+        column_list = json.loads(columns) if columns else []
+    except BaseException:
+        column_list = []
+    expired = False
+    if ttl is not None and created_ts is not None:
+        moment = int(time.time()) if now is None else int(now)
+        expired = (moment - int(created_ts)) > int(ttl)
+    return {"id": key, "owner": owner or "", "path": path, "name": name or "",
+            "format": fmt or "", "size_bytes": (int(size_bytes) if size_bytes is not None else 0),
+            "rows": (int(rows) if rows is not None else None), "columns": column_list,
+            "created_ts": created_ts, "updated_ts": updated_ts,
+            "ttl": (int(ttl) if ttl is not None else None), "expired": expired}
+
+
+def storage_file_save(key, meta, ttl, current_state):
+    """Сохранить метаданные файловой записи (upsert по ключу). Возврат (ok, msg, func, prev_path|None):
+    prev_path — путь прежнего файла того же ключа (вызывающий удаляет его через storage_files.remove_file).
+
+    Ключ не должен существовать в двух видах, поэтому одноимённая обычная запись удаляется."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        now = int(time.time())
+        owner = current_state.get("username", "")
+        cursor = connection.cursor()
+
+        created_ts = now
+        previous_path = None
+        cursor.execute(f"SELECT path, created_ts FROM storage_files WHERE id = {placeholder};", (key,))
+        existing = cursor.fetchone()
+        if existing:
+            previous_path = existing[0]
+            if existing[1] is not None:
+                created_ts = int(existing[1])
+
+        cursor.execute(f"DELETE FROM storage_files WHERE id = {placeholder};", (key,))
+        cursor.execute(f"DELETE FROM storage WHERE id = {placeholder};", (key,))
+        cursor.execute(
+            f"INSERT INTO storage_files (id, owner, path, name, format, size_bytes, rows, columns, "
+            f"created_ts, updated_ts, ttl) VALUES ({placeholder}, {placeholder}, {placeholder}, "
+            f"{placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, "
+            f"{placeholder}, {placeholder}, {placeholder});",
+            (key, owner, meta.get("path"), meta.get("name"), meta.get("format"),
+             meta.get("size_bytes"), meta.get("rows"),
+             json.dumps(meta.get("columns") or [], ensure_ascii=False),
+             created_ts, now, (int(ttl) if ttl is not None else None)))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), (previous_path if previous_path != meta.get("path") else None)
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def storage_file_load(key, current_state):
+    """Метаданные файловой записи по ключу. Отсутствие ключа -> (True, "Ok", .., None)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"SELECT id, owner, path, name, format, size_bytes, rows, columns, created_ts, "
+                       f"updated_ts, ttl FROM storage_files WHERE id = {placeholder};", (key,))
+        row = cursor.fetchone()
+        cursor.close()
+        connection.close()
+        if not row:
+            return True, "Ok", currentFuncName(), None
+        return True, "Ok", currentFuncName(), _storage_file_row_to_meta(row)
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def storage_file_list(current_state):
+    """Все файловые записи хранилища (метаданные, без чтения самих файлов)."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+
+        cursor = connection.cursor()
+        cursor.execute("SELECT id, owner, path, name, format, size_bytes, rows, columns, created_ts, "
+                       "updated_ts, ttl FROM storage_files;")
+        rows = cursor.fetchall()
+        cursor.close()
+        connection.close()
+
+        now = int(time.time())
+        return True, "Ok", currentFuncName(), [_storage_file_row_to_meta(row, now) for row in (rows or [])]
+
+    except BaseException as e:
+        if 'connection' in locals():
+            connection.close()
+        logger_log(syslog.LOG_ERR, get_log_message(f"fail: {str(e)}", currentFuncName(), current_state))
+        return False, str(e), currentFuncName(), None
+
+
+def storage_file_delete(key, current_state):
+    """Удалить файловую запись. Возврат (ok, msg, func, path|None) — файл удаляет вызывающий
+    (storage_files.remove_file), чтобы слой БД не трогал файловую систему."""
+    try:
+        create_db_connection_result = create_db_connection(current_state)
+        if create_db_connection_result[0] == False:
+            return False, create_db_connection_result[1], currentFuncName(), None
+        connection = create_db_connection_result[3]
+        placeholder = create_db_connection_result[1]
+
+        cursor = connection.cursor()
+        cursor.execute(f"SELECT path FROM storage_files WHERE id = {placeholder};", (key,))
+        row = cursor.fetchone()
+        cursor.execute(f"DELETE FROM storage_files WHERE id = {placeholder};", (key,))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return True, "Ok", currentFuncName(), (row[0] if row else None)
 
     except BaseException as e:
         if 'connection' in locals():

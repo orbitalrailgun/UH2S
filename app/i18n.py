@@ -41,6 +41,15 @@ TRANSLATIONS = {
         "storage.add.empty": "File parsed but contains no rows.",
         "storage.add.error": "Upload error: {error}",
         "storage.add.saved": "Saved '{name}' ({rows} rows) to storage.",
+        "storage.add.saved_file": "Saved '{name}' as a file ({format}, {mb} MB, {rows} rows). "
+                                  "Query it in duckdb_im as table \"{name}\".",
+        "storage.add.as_file": "Store as a file (for large tables)",
+        "storage.add.as_file_hint": "Off — chosen by size: files from {mb} MB are stored as files. A file-backed "
+                                    "table is read by duckdb_im directly (not available via LOAD / sqlite3_im).",
+        "storage.add.rejected": "File rejected by the browser: over the {mb} MB limit (UH2S_UPLOAD_MAX_BYTES).",
+        "storage.kind.data": "rows in DB", "storage.kind.file": "file",
+        "storage.preview_file_hint": "First {rows} rows of the file (read via duckdb).",
+        "storage.col.kind": "Kind", "storage.col.format": "Format",
         "storage.col.key": "Key", "storage.col.owner": "Owner", "storage.col.created": "Created",
         "storage.col.updated": "Updated", "storage.col.ttl": "TTL (sec)", "storage.col.rows": "Rows",
         "storage.col.size": "Size (bytes)", "storage.col.status": "Status",
@@ -293,6 +302,15 @@ TRANSLATIONS = {
         "storage.add.empty": "Файл разобран, но строк нет.",
         "storage.add.error": "Ошибка загрузки: {error}",
         "storage.add.saved": "Сохранено «{name}» ({rows} строк) в хранилище.",
+        "storage.add.saved_file": "Сохранено «{name}» файлом ({format}, {mb} МБ, строк: {rows}). "
+                                  "Запрашивайте в duckdb_im как таблицу \"{name}\".",
+        "storage.add.as_file": "Хранить файлом (для больших таблиц)",
+        "storage.add.as_file_hint": "Выключено — режим по размеру: от {mb} МБ файл хранится файлом. Файловую "
+                                    "таблицу читает duckdb_im напрямую (через LOAD / sqlite3_im она недоступна).",
+        "storage.add.rejected": "Файл отклонён браузером: больше предела {mb} МБ (UH2S_UPLOAD_MAX_BYTES).",
+        "storage.kind.data": "строки в БД", "storage.kind.file": "файл",
+        "storage.preview_file_hint": "Первые {rows} строк файла (чтение через duckdb).",
+        "storage.col.kind": "Вид", "storage.col.format": "Формат",
         "storage.col.key": "Ключ", "storage.col.owner": "Владелец", "storage.col.created": "Создано",
         "storage.col.updated": "Обновлено", "storage.col.ttl": "TTL (сек)", "storage.col.rows": "Строк",
         "storage.col.size": "Размер (байт)", "storage.col.status": "Статус",

@@ -1,6 +1,6 @@
 from app.login import try_login
 from app.validation import check_current_user_status
-from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled, storage_list, storage_load, storage_save, storage_delete, create_schedule, list_schedules, get_schedule, update_schedule, set_schedule_enabled, delete_schedule, knowledge_save, knowledge_search, knowledge_list, knowledge_get, knowledge_delete
+from app.db import get_user_by_username, get_all_actual_objects, get_all_object_versions, get_object_by_name_and_version, get_actual_object_by_name, create_new_object_version, create_new_object, db_get_secrets_list, update_secret_comment, update_secret_secret_comment, create_secret, delete_secret, create_execution, get_executions, get_execution_by_id, search_actual_objects, get_setting, set_setting, settings_user_scope, set_user_password, update_user_metadata, get_user_session_epoch, set_user_enabled, list_users, create_user, set_user_roles, get_ai_log, get_access_networks, create_access_network, delete_access_network, create_api_key, list_api_keys, delete_api_key, set_api_key_enabled, storage_list, storage_load, storage_save, storage_delete, storage_file_save, storage_file_load, storage_file_list, storage_file_delete, create_schedule, list_schedules, get_schedule, update_schedule, set_schedule_enabled, delete_schedule, knowledge_save, knowledge_search, knowledge_list, knowledge_get, knowledge_delete
 from app.llm import llm_health_check, llm_context_window, build_agent_system_prompt, llm_build_messages, llm_chat, llm_chat_stream, llm_truncate_to_tokens
 import syslog
 import asyncio
@@ -17,6 +17,11 @@ from engine import commands_executor
 from app.engine import command_parser, list_source_types, describe_source_functions, list_source_types_struct, describe_source_functions_struct
 from app.ai_pipeline import AGENT_ACTIONS, extract_action, extract_final_harvester, parse_save_object, parse_memory_save, rank_notes_by_query
 from app.tabular import parse_table_file
+from app.sources.additional.sql_cells import json_safe_value
+from app.storage_files import (describe_file, file_threshold_bytes as storage_file_threshold_bytes,
+                               preview_file, remove_file as remove_storage_file,
+                               stage_upload, storage_mode_for_upload, sweep_orphans,
+                               upload_max_bytes as storage_upload_max_bytes)
 from app.tree_builder import build_tree, tree_to_text
 from app.reference import (dsl_command_snippets, source_function_entries, script_object_entries,
                            knowledge_entries, object_get_entries, filter_entries, insert_snippet,
@@ -90,7 +95,10 @@ def records_to_aggrid_options(data, aggrid_theme="ag-theme-balham-dark", max_row
     row_data = []
     for row in data[:max_rows]:
         if isinstance(row, dict):
-            row_data.append({c: (_cell_to_str(row.get(c)) if isinstance(row.get(c), (dict, list)) else row.get(c, ""))
+            # json_safe_value — страховка: значение, которое orjson не умеет (напр. Timestamp из
+            # SQL-движка), рвало emit по websocket, и шаг выглядел «вечно выполняющимся»
+            row_data.append({c: (_cell_to_str(row.get(c)) if isinstance(row.get(c), (dict, list))
+                                 else json_safe_value(row.get(c, "")))
                              for c in columns})
         else:
             row_data.append({"value": _cell_to_str(row)})
@@ -488,11 +496,12 @@ except (TypeError, ValueError):
     DOWNLOAD_INLINE_MAX_BYTES = 50 * 1024 * 1024
 
 
-def _serve_download(path, filename, media_type=""):
-    """Инициировать скачивание готового temp-файла с диска. Небольшие файлы (<= DOWNLOAD_INLINE_MAX_BYTES)
+def _serve_download(path, filename, media_type="", delete_after=True):
+    """Инициировать скачивание готового файла с диска. Небольшие файлы (<= DOWNLOAD_INLINE_MAX_BYTES)
     отдаём blob'ом через websocket (надёжно, не зависит от доверия к TLS-сертификату); большие — потоковым
-    роутом /download/{token} (мимо websocket, но требует доверенного TLS в деплое). Temp-файл в любом случае
-    удаляется после отдачи. Возвращает токен роута (или None, если ушло blob'ом) — для тестов/диагностики."""
+    роутом /download/{token} (мимо websocket, но требует доверенного TLS в деплое).
+    delete_after=True — временный экспорт, файл удаляется после отдачи; False — постоянный файл хранилища
+    (app/storage_files.py), он остаётся на диске. Возвращает токен роута (или None, если ушло blob'ом)."""
     try:
         size = os.path.getsize(path)
     except OSError:
@@ -503,16 +512,17 @@ def _serve_download(path, filename, media_type=""):
             with open(path, "rb") as handle:
                 content = handle.read()
         finally:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+            if delete_after:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
         ui.download(content, filename, media_type or "application/octet-stream")
         return None
 
     # большой файл: потоковая отдача с диска (файл удалит роут после отдачи, см. front.py)
     from app.downloads import register_download
-    token = register_download(path, filename, media_type)
+    token = register_download(path, filename, media_type, delete_after=delete_after)
     ui.download.from_url(f"/download/{token}", filename)
     return token
 
@@ -1591,6 +1601,11 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     key_input = ui.input(tr("storage.add.key")).classes('w-full').props('dense')
                     ttl_input = ui.number(tr("storage.add.ttl"), value=None, min=0).classes('w-full').props('dense')
                     ui.label(tr("storage.add.ttl_hint")).classes('text-sm').style("opacity:0.75;")
+                    # режим хранения: по умолчанию по размеру (крупные — файлом), галка — явный выбор
+                    as_file_switch = ui.checkbox(tr("storage.add.as_file"), value=False).classes('w-full')
+                    ui.label(tr("storage.add.as_file_hint",
+                                mb=int(storage_file_threshold_bytes() / (1024 * 1024)))) \
+                        .classes('text-sm').style("opacity:0.75;")
 
                     async def handle_upload(event):
                         # NiceGUI 3.14: событие несёт event.file (FileUpload) с .name и async .read()
@@ -1613,6 +1628,33 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                             except (TypeError, ValueError):
                                 ui.notify(tr("storage.add.bad_ttl"), type="warning")
                                 return
+                        # файловый режим: файл кладётся на диск потоком, в БД — только метаданные.
+                        # Разбирать его в list-of-dict нельзя: 6.3 млн строк — это ~16 ГБ RAM и
+                        # ~3 ГБ JSON против предела 1 ГБ на ячейку БД
+                        try:
+                            file_size = int(upload_file.size())
+                        except BaseException:
+                            file_size = 0
+                        if storage_mode_for_upload(file_name, file_size, as_file_switch.value or None) == "file":
+                            stage_ok, stage_error, meta = await stage_upload(upload_file, file_name)
+                            if not stage_ok:
+                                ui.notify(tr("storage.add.error", error=stage_error), type="negative")
+                                return
+                            # колонки и точное число строк — duckdb по файлу (тяжёлое: в io_bound)
+                            columns, row_count = await run.io_bound(describe_file, meta["path"], meta["format"])
+                            meta["columns"], meta["rows"] = columns, row_count
+                            save_file_result = await run.io_bound(storage_file_save, key, meta, ttl, current_state)
+                            if not save_file_result[0]:
+                                remove_storage_file(meta["path"])
+                                ui.notify(tr("settings.common.error", error=save_file_result[1]), type="negative")
+                                return
+                            remove_storage_file(save_file_result[3])   # прежний файл того же ключа
+                            ui.notify(tr("storage.add.saved_file", name=key, format=meta["format"],
+                                         mb=round(meta["size_bytes"] / (1024 * 1024), 1),
+                                         rows=(row_count if row_count is not None else "—")), type="positive")
+                            add_dialog.close()
+                            refresh_storage_grid()
+                            return
                         try:
                             content = await upload_file.read()
                         except BaseException as read_error:
@@ -1636,10 +1678,19 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                         add_dialog.close()
                         refresh_storage_grid()
 
-                    # max_file_size/max_total_size — чтобы большой файл (до ~1 ГБ) не отклонялся клиентом
+                    def handle_rejected(_event):
+                        # без этого обработчика Quasar отбрасывает слишком большой файл МОЛЧА —
+                        # выглядело как «при выборе файла ничего не происходит»
+                        ui.notify(tr("storage.add.rejected",
+                                     mb=int(storage_upload_max_bytes() / (1024 * 1024))), type="negative")
+
+                    # предел размера — UH2S_UPLOAD_MAX_BYTES (по умолчанию 16 ГиБ): файл такого размера
+                    # имеет смысл только в файловом режиме, разбор в строки его не выдержит
+                    upload_limit = storage_upload_max_bytes()
                     ui.upload(label=tr("storage.add.upload"), auto_upload=True, on_upload=handle_upload,
-                              max_file_size=1024 * 1024 * 1024, max_total_size=1024 * 1024 * 1024) \
-                        .props('accept=".csv,.xlsx,.xls,.ndjson,.jsonl"').classes('w-full')
+                              on_rejected=handle_rejected,
+                              max_file_size=upload_limit, max_total_size=upload_limit) \
+                        .props('accept=".csv,.tsv,.xlsx,.xls,.ndjson,.jsonl,.parquet,.gz"').classes('w-full')
                     ui.button(tr("settings.btn.close"), on_click=add_dialog.close).classes('hover-glow')
                 add_dialog.open()
 
@@ -1647,9 +1698,17 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 result = storage_list(current_state)
                 rows = []
                 if result[0]:
+                    # файлы без записи в БД (напр. пересоздали контейнер без тома) — убираем с диска.
+                    # ВАЖНО: только при успешном запросе реестра — на ошибке БД список пуст, и sweep
+                    # снёс бы все файлы хранилища
+                    file_list_result = storage_file_list(current_state)
+                    if file_list_result[0]:
+                        sweep_orphans([f.get("path") for f in (file_list_result[3] or [])])
                     for e in result[3]:
                         rows.append({
                             "id": e["id"],
+                            "kind": (tr("storage.kind.file") if e.get("kind") == "file" else tr("storage.kind.data")),
+                            "format": e.get("format") or "",
                             "owner": e["owner"],
                             "created": e["created_ts"],
                             "updated": e["updated_ts"],
@@ -1662,6 +1721,8 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                     ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                 grid_storage.options["columnDefs"] = [
                     {"headerName": tr("storage.col.key"), "field": "id", "filter": True, "sortable": True, "resizable": True, "minWidth": 160},
+                    {"headerName": tr("storage.col.kind"), "field": "kind", "filter": True, "sortable": True, "resizable": True, "minWidth": 110},
+                    {"headerName": tr("storage.col.format"), "field": "format", "filter": True, "sortable": True, "resizable": True, "minWidth": 100},
                     {"headerName": tr("storage.col.owner"), "field": "owner", "filter": True, "sortable": True, "resizable": True, "minWidth": 120},
                     {"headerName": tr("storage.col.created"), "field": "created", "filter": True, "sortable": True, "resizable": True, "minWidth": 190},
                     {"headerName": tr("storage.col.updated"), "field": "updated", "filter": True, "sortable": True, "resizable": True, "minWidth": 190},
@@ -1682,6 +1743,14 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 row = (await grid_storage.get_selected_row()) or {}
                 return row.get("id")
 
+            async def _selected_file_meta():
+                """Метаданные выбранной записи, если она файловая; иначе None."""
+                key = await _selected_key()
+                if not key:
+                    return None, None
+                file_result = storage_file_load(key, current_state)
+                return key, (file_result[3] if file_result[0] else None)
+
             async def _load_selected_data():
                 key = await _selected_key()
                 if not key:
@@ -1694,6 +1763,23 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 return key, (load_result[3].get("data") or [])
 
             async def preview_entry():
+                # файловая запись: читаем первые строки через duckdb (файл целиком в RAM не поднимаем)
+                file_key, file_meta = await _selected_file_meta()
+                if file_meta:
+                    ok, error, data = await run.io_bound(preview_file, file_meta["path"], file_meta["format"], 200)
+                    if not ok:
+                        ui.notify(tr("storage.add.error", error=error), type="negative")
+                        return
+                    with ui.dialog() as file_preview_dialog, ui.card().classes('w-full max-w-5xl'):
+                        ui.label(tr("storage.preview_title", name=file_key)).style("font-weight:700; color: var(--title-color);")
+                        ui.label(tr("storage.preview_file_hint", rows=len(data))).classes('text-sm').style("opacity:0.75;")
+                        if data:
+                            ui.aggrid(records_to_aggrid_options(data, theme)).classes('w-full').style('height: 60vh')
+                        else:
+                            ui.markdown(tr("storage.preview_empty"))
+                        ui.button(tr("settings.btn.close"), on_click=file_preview_dialog.close).classes('hover-glow')
+                    file_preview_dialog.open()
+                    return
                 key, data = await _load_selected_data()
                 if data is None:
                     return
@@ -1707,6 +1793,12 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 preview_dialog.open()
 
             async def download_entry():
+                # файловая запись: отдаём сам файл как есть (без пересборки формата и без удаления)
+                file_key, file_meta = await _selected_file_meta()
+                if file_meta:
+                    _serve_download(file_meta["path"], file_meta.get("name") or file_key,
+                                    "application/octet-stream", delete_after=False)
+                    return
                 key, data = await _load_selected_data()
                 if data is None:
                     return
@@ -1732,6 +1824,10 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 if not result[0]:
                     ui.notify(tr("settings.common.error", error=result[1]), type="negative")
                     return
+                # файловая запись: снимаем и метаданные, и файл с диска
+                file_delete_result = storage_file_delete(key, current_state)
+                if file_delete_result[0]:
+                    remove_storage_file(file_delete_result[3])
                 ui.notify(tr("storage.deleted", name=key), type="positive")
                 refresh_storage_grid()
 

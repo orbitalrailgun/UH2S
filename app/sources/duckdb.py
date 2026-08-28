@@ -5,7 +5,56 @@ import datetime
 import syslog
 import traceback
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
-from app.sources.additional.sql_cells import normalize_object_columns
+from app.sources.additional.sql_cells import dataframe_to_records, normalize_object_columns
+from app.storage_files import quote_identifier
+
+
+def list_storage_file_tables(current_state):
+    """Файловые записи хранилища для авторегистрации: [{id, path, format, rows, expired}].
+
+    Отдельная функция (а не прямой вызов db) — чтобы тесты подменяли её без БД."""
+    try:
+        from app.db import storage_file_list
+    except ImportError:
+        return []
+    result = storage_file_list(current_state)
+    return result[3] if result[0] and result[3] else []
+
+
+def register_storage_file_tables(conn, data_map, current_state):
+    """Создать VIEW на каждую файловую запись хранилища: имя VIEW = ключ записи.
+
+    Скрипту объявлять ничего не нужно — файловая таблица видна в SQL сразу (ключи с пробелами/точками
+    берутся в двойные кавычки, как и колонки с точками). Истёкшие по TTL записи не регистрируются;
+    ключ, совпавший с таблицей текущего прогона, пропускается — данные прогона важнее (в лог WARNING).
+    Ошибка регистрации одной записи не роняет запрос: остальные таблицы продолжают работать."""
+    from app.storage_files import file_view_sql
+    registered = []
+    for meta in list_storage_file_tables(current_state):
+        key = meta.get("id")
+        path = meta.get("path")
+        if not key or not path:
+            continue
+        if meta.get("expired"):
+            logger_log(syslog.LOG_WARNING, get_log_message(
+                f"storage file table '{key}' skipped: expired by ttl", currentFuncName(), current_state))
+            continue
+        if key in (data_map or {}):
+            logger_log(syslog.LOG_WARNING, get_log_message(
+                f"storage file table '{key}' shadowed by collected data with the same name",
+                currentFuncName(), current_state))
+            continue
+        try:
+            conn.sql(file_view_sql(key, path, meta.get("format")))
+            registered.append(key)
+        except BaseException as register_error:
+            logger_log(syslog.LOG_WARNING, get_log_message(
+                f"storage file table '{key}' register fail: {_err_detail(register_error)}",
+                currentFuncName(), current_state))
+    if registered:
+        logger_log(syslog.LOG_DEBUG, get_log_message(
+            f"storage file tables registered: {', '.join(registered)}", currentFuncName(), current_state))
+    return registered
 
 
 def _err_detail(exc):
@@ -126,6 +175,10 @@ def execute_duckdb(parameters, source_object, data_map, current_state):
             logger_log(syslog.LOG_WARNING, get_log_message(
                 f"duckdb custom UDF unavailable (need duckdb>=0.8): {udf_error}", currentFuncName(), current_state))
 
+        # файловые записи хранилища — как таблицы по имени ключа (до заливки data_map, чтобы
+        # собранные в этом прогоне данные перекрывали одноимённую файловую таблицу)
+        register_storage_file_tables(conn, data_map, current_state)
+
         try:
             # теперь заполняем нашу БД таблицами из data_map
             df_list = []
@@ -143,7 +196,9 @@ def execute_duckdb(parameters, source_object, data_map, current_state):
                         df_list.append(input_df)
                         conn.register(table, df_list[-1])
                     elif data_representation_type == "table": # обычные таблицы, чуть медленнее, но больше возможностей
-                        conn.sql(f"CREATE TABLE {table} AS SELECT * FROM input_df")
+                        # имя в кавычках: имена таблиц (AS <имя>) бывают с точкой/пробелом —
+                        # без квотинга duckdb падал с syntax error
+                        conn.sql(f"CREATE TABLE {quote_identifier(table)} AS SELECT * FROM input_df")
                     else:
                         error_message = f"unknown data_representation_type: {data_representation_type}"
                         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
@@ -200,7 +255,9 @@ def execute_duckdb(parameters, source_object, data_map, current_state):
             logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
             return False, error_message, currentFuncName(), []
 
-        return True, "OK", currentFuncName(), output_df.to_dict('records')
+        # записи уходят и в UI (orjson), и в storage/SAVE (json.dumps) -> приводим типы duckdb
+        # (Timestamp/Decimal/numpy/BLOB) к JSON-сериализуемым
+        return True, "OK", currentFuncName(), dataframe_to_records(output_df)
 
     except BaseException as e:
         error_message = f"duckdb fail: {_err_detail(e)}"

@@ -5,7 +5,7 @@ import ipaddress
 import datetime
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
-from app.sources.additional.sql_cells import normalize_object_columns
+from app.sources.additional.sql_cells import dataframe_to_records, normalize_object_columns
 
 
 def field_collision_cutter(df):
@@ -148,7 +148,7 @@ def execute_sqlite3(parameters, source_object, data_map, current_state):
         # выполняем последний запрос, ожидается, что это SELECT из получившейся БД
         output_df = pandas.read_sql_query(query["queries"][-1], db)
         db.close()
-        records = output_df.to_dict('records')
+        records = dataframe_to_records(output_df)   # JSON-сериализуемые значения (даты -> ISO)
         # количество строк в статусе: пустой результат последнего SELECT перестаёт быть «молчаливым»
         return True, f"OK (rows {len(records)})", currentFuncName(), records
 

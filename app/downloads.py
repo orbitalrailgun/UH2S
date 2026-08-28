@@ -51,23 +51,27 @@ def _sweep_expired(now):
             _remove_quietly(entry[0])
 
 
-def register_download(path, filename, media_type=""):
-    """Зарегистрировать готовый temp-файл для одноразовой отдачи. Возвращает случайный token
-    (используется в URL /download/{token}). Заодно подчищает протухшие записи."""
+def register_download(path, filename, media_type="", delete_after=True):
+    """Зарегистрировать готовый файл для одноразовой отдачи. Возвращает случайный token
+    (используется в URL /download/{token}). Заодно подчищает протухшие записи.
+
+    delete_after=False — файл после отдачи НЕ удаляется (постоянные файлы хранилища, см.
+    app/storage_files.py: там файл — сами данные, а не одноразовый экспорт)."""
     token = secrets.token_urlsafe(32)
     now = time.monotonic()
     with _lock:
         _sweep_expired(now)
-        _registry[token] = (path, filename, media_type, now)
+        _registry[token] = (path, filename, media_type, now, bool(delete_after))
     return token
 
 
 def consume_download(token):
-    """Достать и УДАЛИТЬ запись по token (one-shot). Возвращает (path, filename, media_type)
-    или None, если токена нет/протух. Сам файл удаляет вызывающий после отдачи."""
+    """Достать и УДАЛИТЬ запись по token (one-shot). Возвращает (path, filename, media_type, delete_after)
+    или None, если токена нет/протух. Сам файл удаляет вызывающий после отдачи — но только при
+    delete_after=True (для файлов хранилища это False: файл там и есть данные)."""
     with _lock:
         entry = _registry.pop(token, None)
     if entry is None:
         return None
-    path, filename, media_type, _created = entry
-    return path, filename, media_type
+    path, filename, media_type, _created, delete_after = entry
+    return path, filename, media_type, delete_after

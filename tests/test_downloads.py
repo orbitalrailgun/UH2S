@@ -41,19 +41,27 @@ class TestDownloadsRegistry(unittest.TestCase):
         path = self._tempfile()
         token = register_download(path, "file.csv.zip", "application/zip")
         entry = consume_download(token)
-        self.assertEqual(entry, (path, "file.csv.zip", "application/zip"))
+        # 4-й элемент — delete_after: временный экспорт удаляется после отдачи
+        self.assertEqual(entry, (path, "file.csv.zip", "application/zip", True))
         # one-shot: повторно — уже нет
         self.assertIsNone(consume_download(token))
 
     def test_consume_unknown_token(self):
         self.assertIsNone(consume_download("nope"))
 
+    def test_persistent_file_is_marked_not_to_delete(self):
+        # файлы хранилища (app/storage_files.py) — это сами данные, после отдачи их удалять нельзя
+        path = self._tempfile()
+        token = register_download(path, "events.csv", "text/csv", delete_after=False)
+        self.assertEqual(consume_download(token), (path, "events.csv", "text/csv", False))
+        self.assertTrue(os.path.exists(path))
+
     def test_sweep_expired_removes_old_unclaimed_files(self):
         path = self._tempfile()
         token = register_download(path, "old.zip")
         # сделать запись «старой»
-        p, fn, mt, _created = _registry[token]
-        _registry[token] = (p, fn, mt, time.monotonic() - downloads.DOWNLOAD_TTL_SECONDS - 10)
+        p, fn, mt, _created, delete_after = _registry[token]
+        _registry[token] = (p, fn, mt, time.monotonic() - downloads.DOWNLOAD_TTL_SECONDS - 10, delete_after)
         _sweep_expired(time.monotonic())
         self.assertNotIn(token, _registry)     # запись убрана
         self.assertFalse(os.path.exists(path))  # файл удалён с диска

@@ -432,10 +432,11 @@ def main():
         entry = consume_download(token)
         if entry is None:
             raise HTTPException(status_code=404, detail="download not found or expired")
-        path, filename, media_type = entry
+        path, filename, media_type, delete_after = entry
+        # delete_after=False — постоянный файл хранилища: отдаём, но НЕ удаляем (там сами данные)
         return FileResponse(path, filename=filename,
                             media_type=media_type or "application/octet-stream",
-                            background=BackgroundTask(_remove_files, path))
+                            background=(BackgroundTask(_remove_files, path) if delete_after else None))
 
     ########################################
     # API: выполнение DSL-скрипта

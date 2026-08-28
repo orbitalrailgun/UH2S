@@ -632,6 +632,44 @@ class TestApplyScriptExec(unittest.TestCase):
         self.assertEqual(command["_info"], "once 2/3")
 
 
+class TestLoadFileBackedEntry(unittest.TestCase):
+    """LOAD файловой записи хранилища: понятная подсказка вместо «not found in storage»
+    (материализовать её в data_map нельзя — для этого она и файловая)."""
+
+    def _run_load(self, storage_envelope, file_meta):
+        import app.db as db
+        saved = (db.storage_load, db.storage_file_load)
+        db.storage_load = lambda key, cs: (True, "Ok", "f", storage_envelope)
+        db.storage_file_load = lambda key, cs: (True, "Ok", "f", file_meta)
+        try:
+            from app.engine import run_load_command
+            return run_load_command({"load_id": "big_events"}, CS)
+        finally:
+            db.storage_load, db.storage_file_load = saved
+
+    def test_file_entry_reports_how_to_query_it(self):
+        meta = {"id": "big_events", "path": "/data/x.csv", "format": "csv",
+                "rows": 6300000, "size_bytes": 1932735283}
+        ok, message, _func, data = self._run_load(None, meta)
+        self.assertFalse(ok)
+        self.assertIn("file-backed table", message)
+        self.assertIn("6300000 rows", message)
+        self.assertIn("duckdb_im", message)
+        self.assertIn('"big_events"', message)
+        self.assertEqual(data, {})
+
+    def test_missing_key_keeps_old_message(self):
+        ok, message, _func, _data = self._run_load(None, None)
+        self.assertFalse(ok)
+        self.assertIn("not found in storage", message)
+
+    def test_regular_entry_still_loads(self):
+        envelope = {"created_ts": 0, "updated_ts": 0, "ttl": None, "data": [{"a": 1}]}
+        ok, message, _func, data = self._run_load(envelope, None)
+        self.assertTrue(ok, message)
+        self.assertEqual(data, [{"a": 1}])
+
+
 class TestApplyScriptInjectionIsolation(unittest.TestCase):
     """Регрессия: APPLY поверх скрипта не должен наследовать параметры первой итерации.
 
