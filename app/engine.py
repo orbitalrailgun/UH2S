@@ -23,7 +23,7 @@ from app.sources.youtrack import execute_youtrack_project_finder, execute_youtra
 from app.sources.gitlab import execute_gitlab_namespace_owner_request, execute_gitlab_search_request
 from app.sources.iris import execute_function_iris_get_alerts
 from app.sources.thehive import execute_thehive_get_alerts
-from app.sources.jira_sm import execute_jira_search_issues, execute_jira_get_issue, execute_jira_get_issue_changelog, execute_jira_get_issue_comments, execute_jira_get_issue_worklogs, execute_jira_get_issue_attachments, execute_jira_get_issue_issuelinks, execute_jira_search_cmdb, execute_jira_search_cmdb_freetext, execute_jira_get_cmdb_history
+from app.sources.jira_sm import execute_jira_search_issues, execute_jira_get_issue, execute_jira_get_issue_changelog, execute_jira_get_issue_comments, execute_jira_get_issue_worklogs, execute_jira_get_issue_attachments, execute_jira_get_issue_issuelinks, execute_jira_search_cmdb, execute_jira_search_cmdb_freetext, execute_jira_get_cmdb_history, execute_jira_get_cmdb_object
 #from app.sources.teleport import execute_function_get_hosts_teleport
 from app.sources.dns import execute_dns_resolve
 from app.sources.mysql import execute_mysql
@@ -650,6 +650,23 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
                     #"converter": lambda: None
                 }
             },
+            "get_cmdb_object":{
+                "required":{
+                    "object_id":"HAM-2727707"     # id (5762496) ИЛИ ключ объекта — текст
+                },
+                "unrequired":{
+                    "shape":"table",              # table (колонка на атрибут) | long | flat | raw
+                    "sep":"; ",
+                    "max_values":0,
+                    "resolve_names":True,
+                    "cmdb_object_path":"/rest/insight/1.0/object",
+                    "cmdb_path":"/rest/insight/1.0/iql/objects"   # фолбэк-поиск по ключу
+                },
+                "functions":{
+                    "query": execute_jira_get_cmdb_object,
+                    #"converter": lambda: None
+                }
+            },
             "get_cmdb_history":{
                 "required":{
                     "object_key":"HAM-2727707"    # КЛЮЧ объекта CMDB (не числовой id)
@@ -681,9 +698,14 @@ ENGINE_SOURCES_AND_FUNCTIONS_MAP = {
             "verify":True,
             "email":"bot@example.ru",
             "cmdb_path":"/rest/insight/1.0/iql/objects",
-            "proxies":{"http":"","https":""}   # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
+            "proxies":{"http":"","https":""},  # прокси для requests; пустые значения ОТКЛЮЧАЮТ прокси
                                                # окружения. Короткие формы: "proxy":"http://host:3128",
                                                # "no_proxy":true
+            "max_retries":2,                   # повторов при сетевой ошибке/таймауте/коде из retry_on_status
+            "retry_backoff_seconds":0.5,       # базовая задержка (экспоненциальная, с джиттером);
+                                               # Retry-After от Jira приоритетнее
+            "retry_on_status":[429,502,503,504],  # HTTP-коды для повтора (прочие 4xx не повторяются)
+            "error_body_limit":1024            # сколько символов тела ответа тащить в сообщение об ошибке
         }
     },
     "irp_thehive":{
@@ -1547,15 +1569,20 @@ def command_parser(text:str, current_state:dict):
                         if not command["save_tables"]:
                             command["parsed"] = False
                             command["parsed_comment"] = "SAVE: empty table list"
-                        # storage-вариант: SAVE(dataname, storage[, ttl_sec]) AS dataname_id
-                        command["save_is_storage"] = (command["save_format"].strip().lower() == "storage")
+                        # storage-варианты: SAVE(dataname, storage[, ttl_sec]) AS dataname_id — строки в БД;
+                        # SAVE(dataname, storage_file[, ttl_sec]) AS dataname_id — файлом на диске
+                        # (parquet, иначе csv): для крупных промежуточных данных долгих прогонов,
+                        # предел ячейки БД (~1 ГБ) на них не действует, читает их duckdb_im
+                        storage_format = command["save_format"].strip().lower()
+                        command["save_is_storage"] = storage_format in ("storage", "storage_file")
+                        command["storage_as_file"] = (storage_format == "storage_file")
                         if command["save_is_storage"]:
                             if len(command["save_tables"]) != 1:
                                 command["parsed"] = False
-                                command["parsed_comment"] = "SAVE storage: exactly one dataname required"
+                                command["parsed_comment"] = "SAVE storage/storage_file: exactly one dataname required"
                             elif not command.get("save_filename"):
                                 command["parsed"] = False
-                                command["parsed_comment"] = "SAVE storage: AS dataname_id (storage key) required"
+                                command["parsed_comment"] = "SAVE storage/storage_file: AS dataname_id (storage key) required"
                             else:
                                 command["storage_key"] = command["save_filename"]
                                 command["storage_dataname"] = command["save_tables"][0]
@@ -1565,7 +1592,7 @@ def command_parser(text:str, current_state:dict):
                                     if ttl_raw != "":
                                         if not re.fullmatch(r"-?\d+", ttl_raw):
                                             command["parsed"] = False
-                                            command["parsed_comment"] = "SAVE storage: ttl_seconds must be an integer"
+                                            command["parsed_comment"] = "SAVE storage/storage_file: ttl_seconds must be an integer"
                                         else:
                                             command["storage_ttl"] = int(ttl_raw)
             case "LOAD":
@@ -1844,10 +1871,13 @@ def run_load_command(command, current_state):
 
 
 def run_save_storage_command(command, data_map, variables, current_state):
-    """SAVE(dataname, storage[, ttl]) AS key — сохранить таблицу в storage. Возврат сентинела
-    (ok, msg, func, key); данные результата не используются другими шагами как таблица.
-    Таблица берётся из результатов GET/LOAD (data_map), иначе из переменных DEF (variables)."""
-    from app.db import storage_save
+    """SAVE(dataname, storage|storage_file[, ttl]) AS key — сохранить таблицу в storage.
+
+    storage — строки JSON-конвертом в ячейке БД (предел ~1 ГБ на запись, читается LOAD);
+    storage_file — файлом на диске (parquet, иначе csv), в БД только метаданные: для крупных
+    промежуточных результатов долгих прогонов. Файловую запись читает duckdb_im (таблица по имени
+    ключа), LOAD её не материализует. Возврат сентинела (ok, msg, func, key)."""
+    from app.db import storage_file_save, storage_save
     key = command["storage_key"]
     dataname = command["storage_dataname"]
     records = data_map.get(dataname)
@@ -1855,6 +1885,24 @@ def run_save_storage_command(command, data_map, variables, current_state):
         records = variables.get(dataname)
     if not isinstance(records, list):
         return False, f"SAVE storage: no table data '{dataname}'", currentFuncName(), {}
+
+    if command.get("storage_as_file"):
+        from app.storage_files import remove_file, write_records_file
+        if not records:
+            return False, f"SAVE storage_file: table '{dataname}' is empty", currentFuncName(), {}
+        write_ok, write_error, meta = write_records_file(records)
+        if not write_ok:
+            return False, f"SAVE storage_file error: {write_error}", currentFuncName(), {}
+        meta["name"] = f"{key}.{meta['extension']}"          # человекочитаемое имя для UI/скачивания
+        save_result = storage_file_save(key, meta, command.get("storage_ttl"), current_state)
+        if not save_result[0]:
+            remove_file(meta["path"])                        # запись не легла — файл не оставляем
+            return False, f"SAVE storage_file error: {save_result[1]}", currentFuncName(), {}
+        remove_file(save_result[3])                          # прежний файл того же ключа
+        size_mb = meta["size_bytes"] / (1024 * 1024)
+        return (True, f"stored '{key}' as file ({len(records)} rows, {meta['format']}, {size_mb:.1f} MB, "
+                      f"ttl={command.get('storage_ttl')})", currentFuncName(), key)
+
     save_result = storage_save(key, records, command.get("storage_ttl"), current_state)
     if not save_result[0]:
         return False, f"SAVE storage error: {save_result[1]}", currentFuncName(), {}

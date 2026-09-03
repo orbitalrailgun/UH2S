@@ -208,6 +208,16 @@ SAVE(<таблица> | [<t1>, <t2>, ...], <format>) [AS <имя_файла>]
   50 МБ) скачиваются потоковым роутом и требуют **доверенного TLS** в деплое — под самоподписанным
   сертификатом такое скачивание браузер отклоняет. Небольшие файлы скачиваются напрямую и работают всегда.
   Настройка деплоя — см. README/DOCKER.
+- **Несколько `SAVE` в одном скрипте**: файлы отдаются **одним архивом** `harvester_<дата>.zip`
+  (по файлу на каждый `SAVE`, имена внутри архива — как у отдельных файлов, коллизии разводятся
+  суффиксом `_1`). Причина: браузер из нескольких автоматических скачиваний подряд оставляет только
+  последнее, остальные молча теряются. Уже сжатые форматы (`xlsx`, `*.zip`) в архив кладутся без
+  повторного сжатия, сборка идёт потоком с диска — память не зависит от размера выгрузок.
+  Один `SAVE` в прогоне отдаётся как раньше, без архива.
+- **Долгие прогоны**: скачивание в браузер — не механизм сохранности (к концу прогона вкладки может уже
+  не быть). Промежуточные результаты складывайте на сервер: `SAVE(<таблица>, storage[, ttl]) AS <ключ>`
+  для небольших наборов и `SAVE(<таблица>, storage_file[, ttl]) AS <ключ>` для крупных — ни то, ни другое
+  не зависит от браузера и открытой вкладки.
 ```
 SAVE(alerts, xlsx)
 SAVE([alerts, by_sev], json_in_zip) AS soc_dump
@@ -215,10 +225,25 @@ SAVE([alerts, by_sev], json_in_zip) AS soc_dump
 
 ### SAVE → storage — персистентный кэш (с TTL)
 ```
-SAVE(<таблица>, storage[, <ttl_сек>]) AS <ключ>
+SAVE(<таблица>, storage[, <ttl_сек>]) AS <ключ>          /* строки в БД, читается LOAD */
+SAVE(<таблица>, storage_file[, <ttl_сек>]) AS <ключ>     /* файлом на диске, читает duckdb_im */
 ```
 Сохраняет таблицу в БД под стабильным `<ключ>` (перезапись по ключу, с новым TTL). Без `ttl` — не истекает.
 Кэш **общий** для всех пользователей (ключ глобальный). Требуется `AS <ключ>` и ровно одна таблица.
+
+**`storage_file` — для крупных промежуточных результатов долгих прогонов.** Таблица пишется файлом в
+каталог хранилища (`parquet`, если установлен duckdb, иначе `csv`), в БД остаются только метаданные:
+- предел ячейки БД (~1 ГБ на запись обычного `storage`) на такие данные не действует;
+- запись сразу видна в `duckdb_im` как таблица с именем ключа; `LOAD` её не материализует (вернёт
+  подсказку читать через `duckdb_im`) — в скрипт попадает результат выборки, а не все строки;
+- запись сжатая и типизированная: 1 млн строк дали 4.3 МБ parquet против 133 МБ JSON у обычного `storage`;
+- фактический формат виден в колонке «Формат» раздела «Хранилище», там же запись можно скачать/удалить.
+```
+GET siem:query(...) AS raw_events
+| SAVE(raw_events, storage_file, 86400) AS long_run_step1     /* промежуток на сутки */
+| GET duckdb_im:query(type="table", queries=[
+    "SELECT level, COUNT(*) c FROM long_run_step1 GROUP BY 1"]) AS by_level
+```
 ```
 GET irp_thehive:get_alerts(...) AS alerts
 | SAVE(alerts, storage, 3600) AS alerts_cache
@@ -347,7 +372,13 @@ DEF 1719100000000 AS start
 `ENGINE_SOURCES_AND_FUNCTIONS_MAP` (`app/engine.py`). Каждый тип задаёт `required`-параметры
 (проверяются и типизируются) и `unrequired` (опциональные). Примеры:
 - `irp_thehive:get_alerts(filter, limit, [sort], [extra_data], [flatten])`
-- `jira_sm`: `search_issues(jql, [limit], [fields], [expand], [raw])`, `get_issue(issue_id, [expand], [raw])`, `get_issue_changelog(issue_id, [raw])`, `get_issue_comments(issue_id, [limit], [raw])`, `get_issue_worklogs(issue_id, [limit], [raw])`, `get_issue_attachments(issue_id, [raw])` (метаданные + ссылка `content`, тело не скачивается), `get_issue_issuelinks(issue_id, [raw])`, `search_cmdb(aql, [limit], [cmdb_path], [shape], [sep], [max_values], [resolve_names])`, `search_cmdb_freetext(freetext, [schema], [attributes], [limit], [search_path], [timeout], [shape])`, `get_cmdb_history(object_key, [limit], [criteria], [order], [type], [since], [until], [audits_path], [raw])`. Заявки разворачиваются в плоские поля; коллекции (`comment`/`worklog`/`attachment`/`issuelinks`) сводятся к `*_count` (детали — отдельными функциями); `customfield_*` переименовываются в человекочитаемые имена (через `expand=names`); `raw=true` — исходный JSON
+- `jira_sm`: `search_issues(jql, [limit], [fields], [expand], [raw])`, `get_issue(issue_id, [expand], [raw])`, `get_issue_changelog(issue_id, [raw])`, `get_issue_comments(issue_id, [limit], [raw])`, `get_issue_worklogs(issue_id, [limit], [raw])`, `get_issue_attachments(issue_id, [raw])` (метаданные + ссылка `content`, тело не скачивается), `get_issue_issuelinks(issue_id, [raw])`, `search_cmdb(aql, [limit], [cmdb_path], [shape], [sep], [max_values], [resolve_names])`, `search_cmdb_freetext(freetext, [schema], [attributes], [limit], [search_path], [timeout], [shape])`, `get_cmdb_object(object_id, [shape], [sep], [max_values], [resolve_names], [cmdb_object_path], [cmdb_path])`, `get_cmdb_history(object_key, [limit], [criteria], [order], [type], [since], [until], [audits_path], [raw])`. Повторы транзиентных неудач (сеть/таймаут, 429/5xx) — `max_retries` (деф. 2), `retry_backoff_seconds`, `retry_on_status` в конфиге источника; `Retry-After` от Jira уважается, прочие 4xx не повторяются. Заявки разворачиваются в плоские поля; коллекции (`comment`/`worklog`/`attachment`/`issuelinks`) сводятся к `*_count` (детали — отдельными функциями); `customfield_*` переименовываются в человекочитаемые имена (через `expand=names`); `raw=true` — исходный JSON
+  - **Один объект CMDB** (`get_cmdb_object`): `object_id` — **id (`5762496`) ИЛИ ключ (`HAM-2727707`)**,
+    текстом. Возвращает одну строку в том же виде, что `search_cmdb` (`shape=table` по умолчанию:
+    колонка на атрибут по его имени). Часть версий Insight отдаёт объект без блока `attributes` —
+    тогда атрибуты догружаются вторым запросом; если по ключу эндпоинт объект не отдал, работает
+    фолбэк на поиск `objectKey = "<ключ>"`. Объекта нет — шаг успешен с пустой таблицей (не ошибка).
+    Идентификатор проверяется перед подстановкой в путь URL (только id/ключ, без слэшей и пробелов).
   - **История объекта CMDB** (`get_cmdb_history`): audit log по КЛЮЧУ объекта (`HAM-2727707`, не числовой
     id) через `GET /rest/insight-am/1/assets/{key}/audits`. Строки плоские: `objectKey`, `occurredAt`,
     `type`, `action`, `title`, `message`, `author_key`/`author_name`/`author_displayName`/`author_active`

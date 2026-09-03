@@ -14,10 +14,15 @@ import time
 
 
 class RetryableError(Exception):
-    """Сигнал «повторяемой» ошибки (напр. транзиентный HTTP-статус 429/503)."""
-    def __init__(self, message, status=None):
+    """Сигнал «повторяемой» ошибки (напр. транзиентный HTTP-статус 429/503).
+
+    retry_after — пауза (сек), которую назвал сервер (заголовок Retry-After): если она задана,
+    retry_call ждёт именно её, а не экспоненциальный backoff, иначе повтор придёт раньше
+    разрешённого и снова получит 429."""
+    def __init__(self, message, status=None, retry_after=None):
         super().__init__(message)
         self.status = status
+        self.retry_after = retry_after
 
 
 def retry_call(fn, attempts=3, backoff=0.5, max_backoff=30.0, jitter=0.2,
@@ -28,7 +33,8 @@ def retry_call(fn, attempts=3, backoff=0.5, max_backoff=30.0, jitter=0.2,
     attempts            — общее число попыток (включая первую), >= 1.
     backoff             — базовая задержка (сек); n-я пауза = backoff*2**(n-1), <= max_backoff.
     jitter              — доля случайного разброса задержки [0..1].
-    retryable_exceptions— кортеж классов исключений, при которых повторяем.
+    retryable_exceptions— кортеж классов исключений, при которых повторяем (если у исключения есть
+                          атрибут retry_after — пауза берётся из него, см. RetryableError).
     should_retry_result — callable(result)->bool: повторить по «плохому» результату (опц.).
     sleep / on_retry    — для тестов/логирования (on_retry(attempt_index, error_or_result, delay)).
     Возвращает результат fn() либо пробрасывает последнее исключение."""
@@ -49,6 +55,12 @@ def retry_call(fn, attempts=3, backoff=0.5, max_backoff=30.0, jitter=0.2,
             if attempt >= attempts:
                 raise
             delay = _delay(attempt, backoff, max_backoff, jitter)
+            server_delay = getattr(exc, "retry_after", None)     # Retry-After приоритетнее backoff
+            if server_delay is not None:
+                try:
+                    delay = max(0.0, float(server_delay))
+                except (TypeError, ValueError):
+                    pass
             if on_retry:
                 on_retry(attempt, exc, delay)
             sleep(delay)

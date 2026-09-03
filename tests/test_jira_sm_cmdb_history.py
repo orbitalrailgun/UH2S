@@ -97,6 +97,9 @@ class TestGetCmdbHistory(unittest.TestCase):
     def _install(self, pages, status_code=200):
         fake = FakeRequests(pages, status_code)
         module = types.ModuleType("requests")
+        # request_with_retry смотрит requests.exceptions (ретраи по сети/таймауту)
+        module.exceptions = types.SimpleNamespace(ConnectionError=ConnectionError,
+                                                 Timeout=TimeoutError)
         module.get = fake.get
         sys.modules["requests"] = module
         return fake
@@ -195,6 +198,9 @@ class TestGetCmdbHistory(unittest.TestCase):
     def test_proxies_from_source_are_passed(self):
         fake = FakeRequests([self._page([AUDIT_NEW], total=1)])
         module = types.ModuleType("requests")
+        # request_with_retry смотрит requests.exceptions (ретраи по сети/таймауту)
+        module.exceptions = types.SimpleNamespace(ConnectionError=ConnectionError,
+                                                 Timeout=TimeoutError)
         captured = {}
 
         def get(url, headers=None, params=None, verify=None, timeout=None, **kwargs):

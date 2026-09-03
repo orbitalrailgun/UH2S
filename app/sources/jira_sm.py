@@ -1,7 +1,9 @@
+import re
 import syslog
 from app.logging import currentTimestamp, get_log_message, logger_log, currentFuncName
 from app.sources.additional.flatten import flatten_data
 from app.sources.additional.http_proxy import proxies_from_source, proxy_kwargs
+from app.sources.additional.http_retry import request_with_retry, retry_config
 from app.sources.additional.cmdb import (attribute_name_map, attribute_names_from_objects,
                                          cmdb_objects_to_long, cmdb_objects_to_table,
                                          object_type_ids_with_unnamed_attributes)
@@ -107,6 +109,8 @@ def execute_jira_search_issues(parameters, source_object, data_map, current_stat
         timeout = source["timeout"] if "timeout" in source else 60
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
+        # повторы транзиентных неудач (сеть/таймаут/429/5xx) — параметры из конфига источника
+        retry_kwargs = retry_config(source, current_state, currentFuncName())
 
         # для раскрытия customfield_* запрашиваем карту имён (expand=names), кроме raw-режима.
         # В POST /search поле expand ДОЛЖНО быть списком (не строкой) — иначе Jira отвечает 400.
@@ -123,7 +127,7 @@ def execute_jira_search_issues(parameters, source_object, data_map, current_stat
                 body["fields"] = fields
             if expand_parts:
                 body["expand"] = expand_parts
-            response = requests.post(f"{url}/rest/api/2/search", headers=headers, json=body, verify=verify, timeout=timeout, **proxy_kwargs(source))
+            response = request_with_retry(lambda: requests.post(f"{url}/rest/api/2/search", headers=headers, json=body, verify=verify, timeout=timeout, **proxy_kwargs(source)), **retry_kwargs)
             if response.status_code != 200:
                 return False, f"jira search_issues http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
@@ -167,6 +171,8 @@ def execute_jira_get_issue(parameters, source_object, data_map, current_state):
         timeout = source["timeout"] if "timeout" in source else 60
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
+        # повторы транзиентных неудач (сеть/таймаут/429/5xx) — параметры из конфига источника
+        retry_kwargs = retry_config(source, current_state, currentFuncName())
 
         # для раскрытия customfield_* запрашиваем карту имён (expand=names), кроме raw-режима
         request_expand = expand if raw_flag else _expand_with_names(expand)
@@ -174,7 +180,7 @@ def execute_jira_get_issue(parameters, source_object, data_map, current_state):
         if request_expand:
             request_params["expand"] = request_expand
 
-        response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source))
+        response = request_with_retry(lambda: requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source)), **retry_kwargs)
         if response.status_code != 200:
             return False, f"jira get_issue http {response.status_code} ({response.text[:512]})", currentFuncName(), []
 
@@ -208,8 +214,10 @@ def execute_jira_get_issue_changelog(parameters, source_object, data_map, curren
         timeout = source["timeout"] if "timeout" in source else 60
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
+        # повторы транзиентных неудач (сеть/таймаут/429/5xx) — параметры из конфига источника
+        retry_kwargs = retry_config(source, current_state, currentFuncName())
 
-        response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params={"expand": "changelog"}, verify=verify, timeout=timeout, **proxy_kwargs(source))
+        response = request_with_retry(lambda: requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params={"expand": "changelog"}, verify=verify, timeout=timeout, **proxy_kwargs(source)), **retry_kwargs)
         if response.status_code != 200:
             return False, f"jira get_issue_changelog http {response.status_code} ({response.text[:512]})", currentFuncName(), []
 
@@ -267,13 +275,15 @@ def execute_jira_get_issue_comments(parameters, source_object, data_map, current
         timeout = source["timeout"] if "timeout" in source else 60
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
+        # повторы транзиентных неудач (сеть/таймаут/429/5xx) — параметры из конфига источника
+        retry_kwargs = retry_config(source, current_state, currentFuncName())
 
         data = []
         start_at = 0
         page_size = min(limit, 100)
         while len(data) < limit:
             request_params = {"startAt": start_at, "maxResults": page_size}
-            response = requests.get(f"{url}/rest/api/2/issue/{issue_id}/comment", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source))
+            response = request_with_retry(lambda: requests.get(f"{url}/rest/api/2/issue/{issue_id}/comment", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source)), **retry_kwargs)
             if response.status_code != 200:
                 return False, f"jira get_issue_comments http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
@@ -324,13 +334,15 @@ def execute_jira_get_issue_worklogs(parameters, source_object, data_map, current
         timeout = source["timeout"] if "timeout" in source else 60
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
+        # повторы транзиентных неудач (сеть/таймаут/429/5xx) — параметры из конфига источника
+        retry_kwargs = retry_config(source, current_state, currentFuncName())
 
         data = []
         start_at = 0
         page_size = min(limit, 100)
         while len(data) < limit:
             request_params = {"startAt": start_at, "maxResults": page_size}
-            response = requests.get(f"{url}/rest/api/2/issue/{issue_id}/worklog", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source))
+            response = request_with_retry(lambda: requests.get(f"{url}/rest/api/2/issue/{issue_id}/worklog", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source)), **retry_kwargs)
             if response.status_code != 200:
                 return False, f"jira get_issue_worklogs http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
@@ -372,8 +384,9 @@ def _fetch_issue_field_list(parameters, source_object, current_state, field_name
     timeout = source["timeout"] if "timeout" in source else 60
     url = source["url"].rstrip("/")
     headers = _jira_headers(source)
+    retry_kwargs = retry_config(source, current_state, currentFuncName())
 
-    response = requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params={"fields": field_name}, verify=verify, timeout=timeout, **proxy_kwargs(source))
+    response = request_with_retry(lambda: requests.get(f"{url}/rest/api/2/issue/{issue_id}", headers=headers, params={"fields": field_name}, verify=verify, timeout=timeout, **proxy_kwargs(source)), **retry_kwargs)
     if response.status_code != 200:
         return False, f"http {response.status_code} ({response.text[:512]})", []
 
@@ -432,6 +445,19 @@ def execute_jira_get_issue_issuelinks(parameters, source_object, data_map, curre
         return False, error_message, currentFuncName(), []
 
 
+def _cmdb_path_identifier(value):
+    """Идентификатор объекта CMDB для подстановки в ПУТЬ URL -> (ok, safe_or_error).
+
+    Пропускаем только id/ключи вида 5762496 / HAM-2727707: без слэшей, точек-переходов и пробелов,
+    поэтому подстановка не может увести запрос на другой путь. Дополнительно квотируем (для набора
+    выше это no-op, но страхует при расширении набора)."""
+    from urllib.parse import quote
+    text = str(value or "").strip()
+    if not text or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", text):
+        return False, f"некорректный идентификатор объекта CMDB: {text!r} (ожидается id или ключ вида HAM-123)"
+    return True, quote(text, safe="")
+
+
 def _cmdb_shape(query):
     """Форма вывода CMDB: table (по умолчанию) | long | flat | raw.
 
@@ -457,7 +483,8 @@ def _cmdb_api_base(cmdb_path):
     return "/rest/insight/1.0"
 
 
-def _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, verify, timeout, current_state, proxies=None):
+def _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, verify, timeout,
+                                       current_state, proxies=None, retry_kwargs=None):
     """Имена атрибутов типа объекта: GET {api_base}/objecttype/{id}/attributes -> {str(id): имя}.
 
     id типа проверяется как целое (подстановка в путь URL); ошибка/недоступность не роняют выборку —
@@ -472,8 +499,9 @@ def _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, v
             currentFuncName(), current_state))
         return names
     try:
-        response = requests.get(f"{url}{api_base}/objecttype/{type_id}/attributes",
-                                headers=headers, verify=verify, timeout=timeout, proxies=proxies)
+        response = request_with_retry(lambda: requests.get(f"{url}{api_base}/objecttype/{type_id}/attributes",
+                                headers=headers, verify=verify, timeout=timeout, proxies=proxies),
+                                     **(retry_kwargs or {}))
         if response.status_code != 200:
             logger_log(syslog.LOG_WARNING, get_log_message(
                 f"cmdb attribute names for objectType {type_id}: http {response.status_code}",
@@ -491,13 +519,15 @@ def _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, v
     return names
 
 
-def _resolve_cmdb_attribute_names(objects, names, url, api_base, headers, verify, timeout, current_state, proxies=None):
+def _resolve_cmdb_attribute_names(objects, names, url, api_base, headers, verify, timeout,
+                                  current_state, proxies=None, retry_kwargs=None):
     """Дополнить карту id->имя: имена из самих объектов (Assets) + догрузка по типам, где имён не хватает."""
     resolved = dict(names or {})
     for attr_id, label in attribute_names_from_objects(objects).items():
         resolved.setdefault(attr_id, label)
     for object_type_id in object_type_ids_with_unnamed_attributes(objects, resolved):
-        fetched = _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, verify, timeout, current_state, proxies)
+        fetched = _fetch_object_type_attribute_names(url, api_base, object_type_id, headers, verify,
+                                                    timeout, current_state, proxies, retry_kwargs)
         for attr_id, label in fetched.items():
             resolved.setdefault(attr_id, label)
     return resolved
@@ -550,6 +580,8 @@ def execute_jira_search_cmdb(parameters, source_object, data_map, current_state)
         timeout = source["timeout"] if "timeout" in source else 60
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
+        # повторы транзиентных неудач (сеть/таймаут/429/5xx) — параметры из конфига источника
+        retry_kwargs = retry_config(source, current_state, currentFuncName())
 
         objects = []
         names = {}
@@ -560,7 +592,7 @@ def execute_jira_search_cmdb(parameters, source_object, data_map, current_state)
             if named_shape:
                 # карта id -> имя атрибута приходит в том же ответе (иначе в атрибутах только objectTypeAttributeId)
                 request_params["includeTypeAttributes"] = "true"
-            response = requests.get(f"{url}{cmdb_path}", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source))
+            response = request_with_retry(lambda: requests.get(f"{url}{cmdb_path}", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source)), **retry_kwargs)
             if response.status_code != 200:
                 return False, f"jira search_cmdb http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
@@ -582,7 +614,7 @@ def execute_jira_search_cmdb(parameters, source_object, data_map, current_state)
             # в выборке могут быть объекты разных типов (у каждого свои id атрибутов) -> добираем по типам
             names = _resolve_cmdb_attribute_names(objects, names, url, _cmdb_api_base(cmdb_path),
                                                   headers, verify, timeout, current_state,
-                                                  proxies_from_source(source))
+                                                  proxies_from_source(source), retry_kwargs)
         data = _shape_cmdb_objects(objects, shape, names, query)
 
         logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(objects)} objects, {len(data)} rows ({shape})",
@@ -650,6 +682,8 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
             timeout = 60
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
+        # повторы транзиентных неудач (сеть/таймаут/429/5xx) — параметры из конфига источника
+        retry_kwargs = retry_config(source, current_state, currentFuncName())
 
         # без schema FREETEXT сканирует все схемы -> частые таймауты; предупреждаем
         if schema in (None, ""):
@@ -666,7 +700,7 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
                               "attributes": attributes, "offset": offset, "limit": page_size}
             if schema not in (None, ""):
                 request_params["schema"] = schema
-            response = requests.get(f"{url}{search_path}", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source))
+            response = request_with_retry(lambda: requests.get(f"{url}{search_path}", headers=headers, params=request_params, verify=verify, timeout=timeout, **proxy_kwargs(source)), **retry_kwargs)
             if response.status_code != 200:
                 return False, f"jira search_cmdb_freetext http {response.status_code} ({response.text[:512]})", currentFuncName(), []
             payload = response.json()
@@ -687,7 +721,7 @@ def execute_jira_search_cmdb_freetext(parameters, source_object, data_map, curre
         if named_shape and resolve_names:
             names = _resolve_cmdb_attribute_names(objects, names, url, api_base,
                                                   headers, verify, timeout, current_state,
-                                                  proxies_from_source(source))
+                                                  proxies_from_source(source), retry_kwargs)
         data = _shape_cmdb_objects(objects, shape, names, query)
 
         logger_log(syslog.LOG_DEBUG, get_log_message(f"done, {len(objects)} objects, {len(data)} rows ({shape})",
@@ -756,9 +790,11 @@ def execute_jira_get_cmdb_history(parameters, source_object, data_map, current_s
         query = parameters
         source = source_object
 
-        object_key = str(query.get("object_key") or "").strip()
-        if not object_key:
-            error_message = "jira get_cmdb_history: object_key is required (e.g. HAM-2727707)"
+        key_ok, object_key = _cmdb_path_identifier(query.get("object_key"))
+        if not key_ok:
+            error_message = ("jira get_cmdb_history: object_key is required (e.g. HAM-2727707)"
+                             if not str(query.get("object_key") or "").strip()
+                             else f"jira get_cmdb_history: {object_key}")
             logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
             return False, error_message, currentFuncName(), []
         try:
@@ -779,6 +815,8 @@ def execute_jira_get_cmdb_history(parameters, source_object, data_map, current_s
         timeout = source["timeout"] if "timeout" in source else 60
         url = source["url"].rstrip("/")
         headers = _jira_headers(source)
+        # повторы транзиентных неудач (сеть/таймаут/429/5xx) — параметры из конфига источника
+        retry_kwargs = retry_config(source, current_state, currentFuncName())
 
         data = []
         offset = 0
@@ -790,9 +828,9 @@ def execute_jira_get_cmdb_history(parameters, source_object, data_map, current_s
                 request_params["type"] = audit_type
             if criteria:
                 request_params["criteria"] = criteria       # requests сам кодирует кириллицу в URL
-            response = requests.get(f"{url}{audits_path}/{object_key}/audits", headers=headers,
+            response = request_with_retry(lambda: requests.get(f"{url}{audits_path}/{object_key}/audits", headers=headers,
                                     params=request_params, verify=verify, timeout=timeout,
-                                    **proxy_kwargs(source))
+                                    **proxy_kwargs(source)), **retry_kwargs)
             if response.status_code != 200:
                 return (False, f"jira get_cmdb_history http {response.status_code} ({response.text[:512]})",
                         currentFuncName(), [])
@@ -820,5 +858,110 @@ def execute_jira_get_cmdb_history(parameters, source_object, data_map, current_s
 
     except Exception as e:
         error_message = f"jira get_cmdb_history fail: {str(e)}"
+        logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
+        return False, error_message, currentFuncName(), []
+
+
+def execute_jira_get_cmdb_object(parameters, source_object, data_map, current_state):
+    """Один объект CMDB JSM (Assets/Insight) по id или ключу.
+
+    Эндпоинт Insight: GET {cmdb_object_path}/{object_id} (cmdb_object_path по умолчанию
+    /rest/insight/1.0/object). Часть версий Insight отдаёт объект БЕЗ блока attributes — тогда атрибуты
+    догружаются вторым запросом GET {cmdb_object_path}/{object_id}/attributes. Если по ключу
+    (HAM-123) эндпоинт объект не отдал, делается фолбэк на поиск по AQL `objectKey = "<ключ>"`.
+
+    Параметры: object_id -- id (5762496) ИЛИ ключ (HAM-2727707) — текст (обяз.);
+    shape -- (опц.) форма вывода: table (по умолчанию, колонка на атрибут по его имени) | long | flat |
+    raw; sep/max_values -- (опц.) склейка и ограничение мультизначных атрибутов; resolve_names --
+    (опц., по умолч. true) догружать имена атрибутов; cmdb_object_path/cmdb_path -- (опц.) пути
+    эндпоинтов. Возврат: list из одного dict (пустой список, если объекта нет)."""
+    import requests
+    try:
+        logger_log(syslog.LOG_DEBUG, get_log_message("start", currentFuncName(), current_state))
+        query = parameters
+        source = source_object
+
+        id_ok, object_id = _cmdb_path_identifier(query.get("object_id"))
+        if not id_ok:
+            error_message = f"jira get_cmdb_object: {object_id}"
+            logger_log(syslog.LOG_ERR, get_log_message(error_message, currentFuncName(), current_state))
+            return False, error_message, currentFuncName(), []
+
+        object_path = (query.get("cmdb_object_path") or source.get("cmdb_object_path")
+                       or "/rest/insight/1.0/object")
+        cmdb_path = query.get("cmdb_path") or source.get("cmdb_path") or "/rest/insight/1.0/iql/objects"
+        shape = _cmdb_shape(query)
+        named_shape = shape in ("table", "long")
+        resolve_names = _as_bool(query.get("resolve_names", True), default=True)
+
+        verify = source["verify"] if "verify" in source else True
+        timeout = source["timeout"] if "timeout" in source else 60
+        url = source["url"].rstrip("/")
+        headers = _jira_headers(source)
+        retry_kwargs = retry_config(source, current_state, currentFuncName())
+
+        response = request_with_retry(lambda: requests.get(f"{url}{object_path}/{object_id}", headers=headers,
+                                                           verify=verify, timeout=timeout,
+                                                           **proxy_kwargs(source)), **retry_kwargs)
+        cmdb_object = None
+        if response.status_code == 200:
+            payload = response.json()
+            if isinstance(payload, dict) and (payload.get("id") is not None or payload.get("objectKey")):
+                cmdb_object = payload
+        elif response.status_code not in (400, 404):
+            return (False, f"jira get_cmdb_object http {response.status_code} ({response.text[:512]})",
+                    currentFuncName(), [])
+
+        # ключ вместо числового id: не все версии принимают его в пути -> ищем объект по AQL
+        if cmdb_object is None and not object_id.isdigit():
+            iql_response = request_with_retry(
+                lambda: requests.get(f"{url}{cmdb_path}", headers=headers,
+                                     params={"iql": f'objectKey = "{object_id}"', "page": 1,
+                                             "resultPerPage": 1, "includeAttributes": "true",
+                                             "includeTypeAttributes": "true"},
+                                     verify=verify, timeout=timeout, **proxy_kwargs(source)), **retry_kwargs)
+            if iql_response.status_code != 200:
+                return (False, f"jira get_cmdb_object http {iql_response.status_code} "
+                               f"({iql_response.text[:512]})", currentFuncName(), [])
+            iql_payload = iql_response.json()
+            entries = iql_payload.get("objectEntries") or []
+            if entries:
+                cmdb_object = entries[0]
+
+        if cmdb_object is None:
+            logger_log(syslog.LOG_WARNING, get_log_message(
+                f"cmdb object '{object_id}' not found", currentFuncName(), current_state))
+            return True, "0", currentFuncName(), []
+
+        # атрибуты приходят не во всех версиях Insight -> добираем отдельным запросом
+        if not cmdb_object.get("attributes"):
+            attributes_response = request_with_retry(
+                lambda: requests.get(f"{url}{object_path}/{object_id}/attributes", headers=headers,
+                                     verify=verify, timeout=timeout, **proxy_kwargs(source)), **retry_kwargs)
+            if attributes_response.status_code == 200:
+                attributes = attributes_response.json()
+                if isinstance(attributes, list):
+                    cmdb_object["attributes"] = attributes
+            else:
+                logger_log(syslog.LOG_WARNING, get_log_message(
+                    f"cmdb object '{object_id}' attributes http {attributes_response.status_code}",
+                    currentFuncName(), current_state))
+
+        names = {}
+        if named_shape:
+            if resolve_names:
+                names = _resolve_cmdb_attribute_names([cmdb_object], names, url, _cmdb_api_base(cmdb_path),
+                                                      headers, verify, timeout, current_state,
+                                                      proxies_from_source(source), retry_kwargs)
+            else:
+                names = attribute_names_from_objects([cmdb_object])
+        data = _shape_cmdb_objects([cmdb_object], shape, names, query)
+
+        logger_log(syslog.LOG_DEBUG, get_log_message(f"done, object '{object_id}' ({shape})",
+                                                     currentFuncName(), current_state))
+        return True, str(len(data)), currentFuncName(), data
+
+    except Exception as e:
+        error_message = f"jira get_cmdb_object fail: {str(e)}"
         logger_log(syslog.LOG_ERR, get_log_message(f"{error_message}", currentFuncName(), current_state))
         return False, error_message, currentFuncName(), []

@@ -160,6 +160,78 @@ async def stage_upload(file_upload, original_name=None, max_bytes=None):
                         "extension": extension, "size_bytes": real_size}
 
 
+def _fieldnames(records):
+    """Объединение колонок всех строк с сохранением порядка первого появления."""
+    names, seen = [], set()
+    for row in records:
+        if isinstance(row, dict):
+            for key in row:
+                if key not in seen:
+                    seen.add(key)
+                    names.append(str(key))
+    return names or ["value"]
+
+
+def _write_records_csv(records, path):
+    """Записать строки в CSV потоком (stdlib): память не зависит от числа строк."""
+    import csv
+    fieldnames = _fieldnames(records)
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for row in records:
+            writer.writerow(row if isinstance(row, dict) else {"value": row})
+    return fieldnames
+
+
+def write_records_file(records, prefer_parquet=True):
+    """Таблицу (list-of-dict) -> файл в каталоге хранилища. Возврат (ok, error|None, meta).
+
+    Пишем сначала CSV потоком (память O(1) от числа строк), затем, если доступен duckdb, конвертируем
+    в parquet через `COPY (SELECT * FROM read_csv_auto(...)) TO ... (FORMAT PARQUET)` — duckdb делает это
+    сам, тоже не поднимая таблицу в память. Parquet типизирован и в разы компактнее, а duckdb_im читает
+    его быстрее всего; без duckdb остаётся CSV. Фактический формат — в meta['format'] и в колонке
+    «Формат» раздела «Хранилище»."""
+    if not isinstance(records, list) or not records:
+        return False, "нет строк для сохранения", {}
+    csv_path = staged_path("csv")
+    try:
+        columns = _write_records_csv(records, csv_path)
+    except BaseException as write_error:
+        remove_file(csv_path)
+        return False, f"не удалось записать csv: {write_error}", {}
+
+    if not prefer_parquet:
+        return True, None, {"path": csv_path, "format": "csv", "extension": "csv",
+                            "size_bytes": os.path.getsize(csv_path), "rows": len(records),
+                            "columns": columns}
+    try:
+        import duckdb
+    except ImportError:
+        return True, None, {"path": csv_path, "format": "csv", "extension": "csv",
+                            "size_bytes": os.path.getsize(csv_path), "rows": len(records),
+                            "columns": columns}
+
+    parquet_path = staged_path("parquet")
+    try:
+        connection = duckdb.connect(":memory:")
+        try:
+            connection.execute(f"COPY (SELECT * FROM read_csv_auto({quote_literal(csv_path)})) "
+                               f"TO {quote_literal(parquet_path)} (FORMAT PARQUET)")
+        finally:
+            connection.close()
+    except BaseException as convert_error:
+        # не смогли в parquet (напр. duckdb не разобрал csv) — оставляем csv, это рабочий формат
+        remove_file(parquet_path)
+        return True, None, {"path": csv_path, "format": "csv", "extension": "csv",
+                            "size_bytes": os.path.getsize(csv_path), "rows": len(records),
+                            "columns": columns, "note": f"parquet failed: {convert_error}"}
+    remove_file(csv_path)
+    return True, None, {"path": parquet_path, "format": "parquet", "extension": "parquet",
+                        "size_bytes": os.path.getsize(parquet_path), "rows": len(records),
+                        "columns": columns}
+
+
 def remove_file(path):
     """Идемпотентно удалить файл хранилища (нет файла — не ошибка)."""
     if not path:

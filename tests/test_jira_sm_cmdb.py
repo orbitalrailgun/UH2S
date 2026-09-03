@@ -224,6 +224,9 @@ class TestSearchCmdbConnector(unittest.TestCase):
         self.fake = _FakeRequests()
         self._saved = sys.modules.get("requests")
         module = types.ModuleType("requests")
+        # request_with_retry смотрит requests.exceptions (ретраи по сети/таймауту)
+        module.exceptions = types.SimpleNamespace(ConnectionError=ConnectionError,
+                                                 Timeout=TimeoutError)
         module.get = self.fake.get
         sys.modules["requests"] = module
         self.source = {"url": "https://jira.example.ru/", "key": {"value": "token"},
