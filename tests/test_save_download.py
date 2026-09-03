@@ -172,5 +172,90 @@ class TestServeDownload(unittest.TestCase):
         self.assertTrue(os.path.exists(self.path))      # файл удалит роут после отдачи, не _serve_download
 
 
+class TestPackDownloadArtifacts(unittest.TestCase):
+    """Несколько SAVE прогона -> ОДИН zip: браузер из нескольких автоматических скачиваний подряд
+    оставляет только последнее, поэтому файлы уходят одним архивом."""
+
+    def setUp(self):
+        import tempfile
+        import app.interface as interface
+        self.interface = interface
+        self.dir = tempfile.mkdtemp(prefix="uh2s_pack_")
+        self._paths = []
+
+    def tearDown(self):
+        import shutil
+        for path in self._paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _artifact(self, name, content=b"payload"):
+        # имя на диске всегда безопасное (его задаёт сервер), в архив идёт переданное name
+        path = os.path.join(self.dir, f"src_{len(os.listdir(self.dir))}_{os.path.basename(name)}")
+        with open(path, "wb") as handle:
+            handle.write(content)
+        return path, name
+
+    def _pack(self, artifacts, base="harvester_run"):
+        zip_path, zip_name, media_type = self.interface.pack_download_artifacts(artifacts, base)
+        self._paths.append(zip_path)
+        return zip_path, zip_name, media_type
+
+    def test_all_artifacts_in_one_archive_in_order(self):
+        artifacts = [self._artifact("table1.xlsx", b"a" * 100), self._artifact("table2.csv.zip", b"b" * 50)]
+        zip_path, zip_name, media_type = self._pack(artifacts)
+        self.assertEqual((zip_name, media_type), ("harvester_run.zip", "application/zip"))
+        with zipfile.ZipFile(zip_path) as archive:
+            self.assertEqual(archive.namelist(), ["table1.xlsx", "table2.csv.zip"])
+            self.assertEqual(archive.read("table1.xlsx"), b"a" * 100)
+            self.assertIsNone(archive.testzip())
+
+    def test_duplicate_names_are_separated(self):
+        artifacts = [self._artifact("export.xlsx", b"first"), self._artifact("export.xlsx", b"second")]
+        # оба SAVE без AS дают одно имя — внутри архива они не должны затирать друг друга
+        with zipfile.ZipFile(self._pack(artifacts)[0]) as archive:
+            self.assertEqual(archive.namelist(), ["export.xlsx", "export_1.xlsx"])
+            self.assertEqual(archive.read("export_1.xlsx"), b"second")
+
+    def test_compressed_formats_are_stored_as_is(self):
+        artifacts = [self._artifact("t.xlsx", b"x" * 1000), self._artifact("t.log", b"y" * 1000)]
+        with zipfile.ZipFile(self._pack(artifacts)[0]) as archive:
+            methods = {info.filename: info.compress_type for info in archive.infolist()}
+        self.assertEqual(methods["t.xlsx"], zipfile.ZIP_STORED)     # уже сжат — не перепаковываем
+        self.assertEqual(methods["t.log"], zipfile.ZIP_DEFLATED)
+
+    def test_empty_list_raises(self):
+        with self.assertRaises(ValueError):
+            self.interface.pack_download_artifacts([], "harvester_run")
+
+    def test_missing_source_raises_and_cleans_up(self):
+        from app.downloads import _EXPORT_DIR
+        before = set(os.listdir(_EXPORT_DIR))
+        with self.assertRaises(OSError):
+            self.interface.pack_download_artifacts([(os.path.join(self.dir, "absent.xlsx"), "absent.xlsx")],
+                                                   "harvester_run")
+        # недособранный архив за собой не оставляем
+        new_files = {f for f in set(os.listdir(_EXPORT_DIR)) - before if f.startswith("uh2s_export_")}
+        self.assertEqual(new_files, set())
+
+    def test_double_extension_collision(self):
+        artifacts = [self._artifact("export.csv.zip", b"one"), self._artifact("export.csv.zip", b"two")]
+        with zipfile.ZipFile(self._pack(artifacts)[0]) as archive:
+            self.assertEqual(archive.namelist(), ["export.csv.zip", "export_1.csv.zip"])
+
+    def test_unsafe_names_are_sanitized(self):
+        # имя внутри архива не должно содержать разделителей пути: тогда распаковка не может
+        # записать файл вне целевого каталога (сами точки безобидны — это просто часть имени)
+        artifacts = [self._artifact("../../etc/passwd.xlsx", b"z")]
+        with zipfile.ZipFile(self._pack(artifacts)[0]) as archive:
+            name = archive.namelist()[0]
+        self.assertNotIn("/", name)
+        self.assertNotIn("\\", name)
+        self.assertTrue(name.endswith(".xlsx"), name)
+
+
 if __name__ == "__main__":
     unittest.main()

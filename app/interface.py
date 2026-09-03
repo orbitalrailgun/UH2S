@@ -391,6 +391,54 @@ def _unique_zip_name(stem, ext, used):
 EXCEL_MAX_ROWS = 1_048_576
 
 
+def _split_name_extension(name):
+    """Имя файла -> (stem, extension) с учётом двойных расширений (.csv.zip, .json.zip, .csv.gz)."""
+    lowered = name.lower()
+    for double in (".csv.zip", ".json.zip", ".csv.gz", ".json.gz", ".ndjson.gz", ".tsv.gz"):
+        if lowered.endswith(double):
+            return name[:-len(double)], name[-len(double):]
+    stem, extension = os.path.splitext(name)
+    return stem, extension
+
+
+# эти расширения уже сжаты — переупаковывать их deflate'ом только жечь CPU на гигабайтах
+_ALREADY_COMPRESSED_SUFFIXES = (".xlsx", ".xls", ".zip", ".gz", ".parquet", ".7z")
+
+
+def pack_download_artifacts(artifacts, base_name="harvester"):
+    """Несколько готовых файлов -> ОДИН zip на диске. Возврат (path, filename, media_type).
+
+    artifacts — список (path, filename) в порядке появления в скрипте. Записи добавляются потоком с
+    диска (`ZipFile.write`), поэтому память не зависит от размера файлов; уже сжатые форматы (xlsx, zip,
+    gz, parquet) кладутся без повторного сжатия. Одинаковые имена разводятся суффиксом `_2`, `_3`.
+
+    Зачем: прогон с несколькими SAVE отдавал файлы по одному, и браузер из нескольких автоматических
+    скачиваний оставлял только последнее. Один архив — одно скачивание."""
+    import zipfile
+    from app.downloads import export_tempfile
+    if not artifacts:
+        raise ValueError("нет файлов для упаковки")
+    zip_path = export_tempfile(".zip")
+    used = set()
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for source_path, source_name in artifacts:
+                # имя внутри архива — как у отдельного файла; коллизии разводим по stem, учитывая
+                # двойные расширения (export.csv.zip -> export_1.csv.zip, а не export.csv_1.zip)
+                stem, extension = _split_name_extension(_safe_filename(source_name) or "file")
+                name = _unique_zip_name(stem, extension, used)
+                compress = (zipfile.ZIP_STORED
+                            if name.lower().endswith(_ALREADY_COMPRESSED_SUFFIXES) else zipfile.ZIP_DEFLATED)
+                archive.write(source_path, arcname=name, compress_type=compress)
+    except BaseException:
+        try:
+            os.remove(zip_path)
+        except OSError:
+            pass
+        raise
+    return zip_path, f"{_safe_filename(base_name) or 'harvester'}.zip", "application/zip"
+
+
 def records_to_download(tables_data, fmt, base_name):
     """Собрать файл выгрузки НА ДИСКЕ и вернуть (path, filename, media_type, warning).
 
@@ -496,12 +544,16 @@ except (TypeError, ValueError):
     DOWNLOAD_INLINE_MAX_BYTES = 50 * 1024 * 1024
 
 
-def _serve_download(path, filename, media_type="", delete_after=True):
+def _serve_download(path, filename, media_type="", mode=None):
     """Инициировать скачивание готового файла с диска. Небольшие файлы (<= DOWNLOAD_INLINE_MAX_BYTES)
     отдаём blob'ом через websocket (надёжно, не зависит от доверия к TLS-сертификату); большие — потоковым
     роутом /download/{token} (мимо websocket, но требует доверенного TLS в деплое).
-    delete_after=True — временный экспорт, файл удаляется после отдачи; False — постоянный файл хранилища
-    (app/storage_files.py), он остаётся на диске. Возвращает токен роута (или None, если ушло blob'ом)."""
+    mode (см. app/downloads): export — одноразовый экспорт, файл удаляется после отдачи; reusable —
+    ссылка живёт до TTL (кнопка «Скачать» у прогонов с несколькими SAVE); external — файл принадлежит
+    хранилищу и не удаляется. Возвращает токен роута (или None, если ушло blob'ом)."""
+    from app.downloads import MODE_EXPORT
+    mode = mode or MODE_EXPORT
+    delete_after = (mode == MODE_EXPORT)
     try:
         size = os.path.getsize(path)
     except OSError:
@@ -522,7 +574,7 @@ def _serve_download(path, filename, media_type="", delete_after=True):
 
     # большой файл: потоковая отдача с диска (файл удалит роут после отдачи, см. front.py)
     from app.downloads import register_download
-    token = register_download(path, filename, media_type, delete_after=delete_after)
+    token = register_download(path, filename, media_type, mode=mode)
     ui.download.from_url(f"/download/{token}", filename)
     return token
 
@@ -1796,8 +1848,9 @@ def draw_storage(interface_container: ui.card, current_state: dict) -> Tuple[boo
                 # файловая запись: отдаём сам файл как есть (без пересборки формата и без удаления)
                 file_key, file_meta = await _selected_file_meta()
                 if file_meta:
+                    from app.downloads import MODE_EXTERNAL
                     _serve_download(file_meta["path"], file_meta.get("name") or file_key,
-                                    "application/octet-stream", delete_after=False)
+                                    "application/octet-stream", mode=MODE_EXTERNAL)
                     return
                 key, data = await _load_selected_data()
                 if data is None:
@@ -3292,7 +3345,27 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 ui.markdown(f"*SHOW: {_md_escape(command['_info'])}*")
                 return False
 
-        async def _render_save(command, variables, result_map):
+        async def _serve_artifacts_archive(artifacts):
+            """Упаковать файлы всех SAVE прогона в один zip и отдать одним скачиванием.
+
+            Сборка архива — в отдельном потоке (на гигабайтах это заметная работа с диском); отдельные
+            артефакты после упаковки удаляются, наружу уходит только архив."""
+            base = f"harvester_{currentTimestamp()[:19].replace(':', '-')}"
+            try:
+                zip_path, zip_name, media_type = await run.io_bound(pack_download_artifacts, artifacts, base)
+            except BaseException as pack_error:
+                ui.markdown(f"*SAVE error: {_md_escape(str(pack_error))}*")
+                ui.notify(str(pack_error), type="negative")
+                return
+            for artifact_path, _artifact_name in artifacts:
+                try:
+                    os.remove(artifact_path)
+                except OSError:
+                    pass
+            _serve_download(zip_path, zip_name, media_type)
+            ui.markdown(tr("harv.save.packed", filename=_md_escape(zip_name), count=len(artifacts)))
+
+        async def _render_save(command, variables, result_map, auto_download=True, artifacts=None):
             # SAVE→storage исполняется движком (commands_executor), не как файловая выгрузка:
             # статус/сообщение уже проставлены, здесь только показываем результат.
             if command.get("save_is_storage"):
@@ -3342,10 +3415,20 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                 ui.markdown(f"*⚠️ {_md_escape(overflow_msg)}*")
                 ui.notify(overflow_msg, type="warning")
 
-            # отдаём потоком с диска (мимо websocket) — файл удалится после скачивания
-            _serve_download(path, filename, media_type)
             total = sum(len(d) for d in tables_data.values())
-            ui.markdown(tr("harv.save.downloading", filename=_md_escape(filename), tables=len(tables_data), rows=total))
+            if auto_download:
+                # один SAVE в прогоне — как раньше: файл уезжает сам и удаляется после отдачи
+                _serve_download(path, filename, media_type)
+                ui.markdown(tr("harv.save.downloading", filename=_md_escape(filename),
+                               tables=len(tables_data), rows=total))
+                return True
+
+            # несколько SAVE в прогоне: браузер из нескольких автоматических скачиваний подряд
+            # оставляет только последнее, поэтому файлы не отдаём по одному — складываем и упакуем
+            # все артефакты прогона в ОДИН zip (см. вызов pack_download_artifacts ниже)
+            artifacts.append((path, filename))
+            ui.markdown(tr("harv.save.ready", filename=_md_escape(filename),
+                           tables=len(tables_data), rows=total))
             return True
 
         def _update_datavars(variables, result_map):
@@ -3502,6 +3585,10 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
 
                 # последовательный вывод PRINT/SHOW в порядке их следования в скрипте
                 card_results.clear()
+                # файловых SAVE несколько -> собираем их в один zip (одно скачивание вместо N)
+                file_saves = sum(1 for c in parsed_command
+                                 if c["command"] == "SAVE" and not c.get("save_is_storage"))
+                artifacts = []
                 with card_results:
                     rendered = 0
                     for command in parsed_command:
@@ -3510,11 +3597,17 @@ def draw_harvester(interface_container: ui.card, current_state: dict) -> Tuple[b
                         elif command["command"] == "SHOW":
                             ok = _render_show(command, variables, result_map)
                         elif command["command"] == "SAVE":
-                            ok = await _render_save(command, variables, result_map)
+                            ok = await _render_save(command, variables, result_map,
+                                                    auto_download=(file_saves <= 1), artifacts=artifacts)
                         else:
                             continue
                         command["_status"] = "done" if ok else "error"
                         rendered += 1
+                    if len(artifacts) > 1:
+                        await _serve_artifacts_archive(artifacts)
+                    elif len(artifacts) == 1:
+                        # единственный собранный артефакт (напр. часть SAVE упала) — отдаём как есть
+                        _serve_download(artifacts[0][0], artifacts[0][1], "")
                     if rendered == 0:
                         ui.markdown(tr("harv.no_output"))
 

@@ -260,6 +260,9 @@ TRANSLATIONS = {
         "harv.show.tree_info": "tree: {nodes} nodes, {roots} root(s)",
         "harv.save.no_data": "no table data: {tables}", "harv.save.no_tables": "no tables specified",
         "harv.save.downloading": "💾 Downloading **{filename}** ({tables} tbl., {rows} rows)",
+        "harv.save.ready": "💾 **{filename}** is ready ({tables} tbl., {rows} rows)",
+        "harv.save.packed": "📦 Downloading **{filename}** — {count} files in one archive "
+                            "(several automatic downloads in a row are dropped by the browser)",
         "harv.save.stored": "stored to '{name}'",
         "harv.save.xlsx_overflow": "{rows} rows exceed the xlsx sheet limit ({limit}); saved as csv_in_zip instead",
         # History
@@ -521,6 +524,9 @@ TRANSLATIONS = {
         "harv.show.tree_info": "дерево: узлов {nodes}, корней {roots}",
         "harv.save.no_data": "нет табличных данных: {tables}", "harv.save.no_tables": "не указаны таблицы",
         "harv.save.downloading": "💾 Скачивание **{filename}** ({tables} табл., {rows} строк)",
+        "harv.save.ready": "💾 **{filename}** готов ({tables} табл., {rows} строк)",
+        "harv.save.packed": "📦 Скачивание **{filename}** — файлов в одном архиве: {count} "
+                            "(несколько автоматических скачиваний подряд браузер отбрасывает)",
         "harv.save.stored": "сохранено в '{name}'",
         "harv.save.xlsx_overflow": "{rows} строк не помещаются в лист xlsx (лимит {limit}); сохранено как csv_in_zip",
         # History

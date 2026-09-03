@@ -3,8 +3,8 @@ import os
 import time
 import unittest
 
-from app.downloads import (register_download, consume_download, export_tempfile,
-                           _registry, _sweep_expired)
+from app.downloads import (MODE_EXTERNAL, MODE_REUSABLE, register_download, consume_download,
+                           export_tempfile, _registry, _sweep_expired)
 import app.downloads as downloads
 
 
@@ -49,10 +49,43 @@ class TestDownloadsRegistry(unittest.TestCase):
     def test_consume_unknown_token(self):
         self.assertIsNone(consume_download("nope"))
 
-    def test_persistent_file_is_marked_not_to_delete(self):
+    def _expire(self, token):
+        path, filename, media_type, _created, mode = _registry[token]
+        _registry[token] = (path, filename, media_type,
+                            time.monotonic() - downloads.DOWNLOAD_TTL_SECONDS - 10, mode)
+
+    def test_sweep_keeps_external_files_on_disk(self):
+        # ссылка истекает, но сам файл хранилища остаётся: иначе через час данные пропали бы,
+        # а запись в БД осталась
+        path = self._tempfile()
+        token = register_download(path, "events.csv", "text/csv", mode=MODE_EXTERNAL)
+        self._expire(token)
+        _sweep_expired(time.monotonic())
+        self.assertNotIn(token, _registry)      # ссылка убрана
+        self.assertTrue(os.path.exists(path))   # файл на месте
+
+    def test_sweep_removes_reusable_export_after_ttl(self):
+        # переиспользуемый экспорт SAVE — всё-таки temp-файл: по TTL он должен убираться
+        path = self._tempfile()
+        token = register_download(path, "export.xlsx", "", mode=MODE_REUSABLE)
+        self._expire(token)
+        _sweep_expired(time.monotonic())
+        self.assertFalse(os.path.exists(path))
+
+    def test_reusable_link_can_be_consumed_twice(self):
+        # несколько SAVE в прогоне отдаются кнопками, поэтому ссылка не одноразовая
+        path = self._tempfile()
+        token = register_download(path, "export.xlsx", "", mode=MODE_REUSABLE)
+        first = consume_download(token)
+        second = consume_download(token)
+        self.assertEqual(first, (path, "export.xlsx", "", False))
+        self.assertEqual(second, first)
+        self.assertTrue(os.path.exists(path))
+
+    def test_external_file_is_marked_not_to_delete(self):
         # файлы хранилища (app/storage_files.py) — это сами данные, после отдачи их удалять нельзя
         path = self._tempfile()
-        token = register_download(path, "events.csv", "text/csv", delete_after=False)
+        token = register_download(path, "events.csv", "text/csv", mode=MODE_EXTERNAL)
         self.assertEqual(consume_download(token), (path, "events.csv", "text/csv", False))
         self.assertTrue(os.path.exists(path))
 
@@ -60,8 +93,7 @@ class TestDownloadsRegistry(unittest.TestCase):
         path = self._tempfile()
         token = register_download(path, "old.zip")
         # сделать запись «старой»
-        p, fn, mt, _created, delete_after = _registry[token]
-        _registry[token] = (p, fn, mt, time.monotonic() - downloads.DOWNLOAD_TTL_SECONDS - 10, delete_after)
+        self._expire(token)
         _sweep_expired(time.monotonic())
         self.assertNotIn(token, _registry)     # запись убрана
         self.assertFalse(os.path.exists(path))  # файл удалён с диска

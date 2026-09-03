@@ -1,11 +1,11 @@
-"""Реестр одноразовых файловых загрузок для больших SAVE-экспортов.
+"""Реестр файловых загрузок для больших SAVE-экспортов и файлов хранилища.
 
 Большие экспорты собираются в temp-файл на диске (не в RAM) и отдаются потоком через роут
 /download/{token} (см. front.py), а не байтами через websocket NiceGUI — иначе на гигабайтах
 рвётся соединение (браузер ловит nomodule-заглушку) и результат теряется.
 
 Безопасность: token = secrets.token_urlsafe (неугадываемый, capability-URL, как подписанная ссылка);
-доступ one-shot (после отдачи запись удаляется); путь всегда генерируется сервером во временном каталоге
+доступ по умолчанию one-shot (режим export; см. MODE_* ниже); путь всегда генерируется сервером
 (нет пользовательского ввода в путь -> нет path traversal); незабранные файлы подчищаются по TTL.
 """
 import os
@@ -20,8 +20,19 @@ DOWNLOAD_TTL_SECONDS = 3600
 # каталог для temp-экспортов: UH2S_EXPORT_DIR или системный tempdir
 _EXPORT_DIR = os.environ.get("UH2S_EXPORT_DIR") or tempfile.gettempdir()
 
+# режимы владения файлом:
+#   export   — одноразовый экспорт: удаляется сразу после отдачи (SAVE с одним файлом);
+#   reusable — ссылка живёт до TTL и переиспользуется (несколько SAVE в одном прогоне: файл нужен
+#              повторно, потому что скачивание инициирует пользователь кнопкой), файл убирает sweep;
+#   external — файл принадлежит другой подсистеме (файловые записи хранилища, app/storage_files.py):
+#              этот модуль его НЕ удаляет ни после отдачи, ни по TTL.
+MODE_EXPORT = "export"
+MODE_REUSABLE = "reusable"
+MODE_EXTERNAL = "external"
+
+
 _lock = threading.Lock()
-# token -> (path, filename, media_type, created_monotonic)
+# token -> (path, filename, media_type, created_monotonic, mode)
 _registry = {}
 
 
@@ -44,34 +55,39 @@ def _remove_quietly(path):
 
 
 def _sweep_expired(now):
-    """Удалить с диска и из реестра записи старше TTL (незабранные)."""
+    """Убрать из реестра записи старше TTL; файл удаляется у export/reusable, но не у external.
+
+    external — файлы хранилища: у них истекает только ссылка, сам файл принадлежит storage_files,
+    иначе через час после первого скачивания данные пропали бы, а запись в БД осталась."""
     for token in [t for t, v in _registry.items() if now - v[3] > DOWNLOAD_TTL_SECONDS]:
         entry = _registry.pop(token, None)
-        if entry:
+        if entry and entry[4] != MODE_EXTERNAL:
             _remove_quietly(entry[0])
 
 
-def register_download(path, filename, media_type="", delete_after=True):
-    """Зарегистрировать готовый файл для одноразовой отдачи. Возвращает случайный token
+def register_download(path, filename, media_type="", mode=MODE_EXPORT):
+    """Зарегистрировать готовый файл для отдачи. Возвращает случайный token
     (используется в URL /download/{token}). Заодно подчищает протухшие записи.
 
-    delete_after=False — файл после отдачи НЕ удаляется (постоянные файлы хранилища, см.
-    app/storage_files.py: там файл — сами данные, а не одноразовый экспорт)."""
+    mode — export | reusable | external (см. константы выше)."""
     token = secrets.token_urlsafe(32)
     now = time.monotonic()
     with _lock:
         _sweep_expired(now)
-        _registry[token] = (path, filename, media_type, now, bool(delete_after))
+        _registry[token] = (path, filename, media_type, now, str(mode))
     return token
 
 
 def consume_download(token):
-    """Достать и УДАЛИТЬ запись по token (one-shot). Возвращает (path, filename, media_type, delete_after)
-    или None, если токена нет/протух. Сам файл удаляет вызывающий после отдачи — но только при
-    delete_after=True (для файлов хранилища это False: файл там и есть данные)."""
+    """Достать запись по token. Возвращает (path, filename, media_type, delete_after) или None.
+
+    Режим export — запись одноразовая (убирается из реестра), файл удаляет вызывающий после отдачи.
+    Режимы reusable/external — запись остаётся до TTL (ссылку можно нажать повторно), файл не удаляется."""
     with _lock:
-        entry = _registry.pop(token, None)
+        entry = _registry.get(token)
+        if entry is not None and entry[4] == MODE_EXPORT:
+            _registry.pop(token, None)
     if entry is None:
         return None
-    path, filename, media_type, _created, delete_after = entry
-    return path, filename, media_type, delete_after
+    path, filename, media_type, _created, mode = entry
+    return path, filename, media_type, (mode == MODE_EXPORT)
